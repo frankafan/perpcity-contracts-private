@@ -1,0 +1,11 @@
+# codeowners for all files in the repo
+* @koko1123 @rdave8
+
+# codeowners for all files in the tests directory
+tests/ @koko1123 @rdave8
+
+# codeowners for all files in the src directory
+src/ @koko1123 @rdave8
+
+# codeowners for all files in the scripts directory
+scripts/ @koko1123 @rdave8
