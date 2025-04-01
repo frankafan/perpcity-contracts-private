@@ -1,0 +1,39 @@
+# Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
+
+[profile.default]
+  auto_detect_solc = false
+  block_timestamp = 1_738_368_000 # Feb 1, 2025 at 00:00 GMT
+  bytecode_hash = "none"
+  evm_version = "shanghai"
+  fuzz = { runs = 1_000 }
+  gas_reports = ["*"]
+  optimizer = true
+  optimizer_runs = 10_000
+  out = "out"
+  script = "script"
+  solc = "0.8.28"
+  src = "src"
+  test = "tests"
+
+[profile.ci]
+  fuzz = { runs = 10_000 }
+  verbosity = 4
+
+[fmt]
+  bracket_spacing = true
+  int_types = "long"
+  line_length = 120
+  multiline_func_header = "all"
+  number_underscore = "thousands"
+  quote_style = "double"
+  tab_width = 4
+  wrap_comments = true
+
+[etherscan]
+  base = { key = "${API_KEY_BASESCAN}" }
+  base_sepolia = { key = "${API_KEY_BASESCAN}" }
+
+[rpc_endpoints]
+  base = "https://mainnet.base.org"
+  base_sepolia = "https://sepolia.base.org"
+  localhost = "http://localhost:8545"
