@@ -5,36 +5,26 @@
 [license]: https://opensource.org/licenses/GPL-3.0
 [license-badge]: https://img.shields.io/badge/License-GNU%20GPL-blue
 
-The Strobe protocol is an on-chain protocol to create an evidence-based society.
+perp.city allows permissionless perpetual swaps on anything.
 
 ## Quick Start
 
-Ensure you have `npm` and `docker` installed
+Ensure you have `pnpm` installed
 
 ```sh
-make quickstart
+pnpm install
+```
+
+## Build
+
+```sh
+pnpm build
 ```
 
 ## Run Tests
 
 ```sh
-make test
-```
-
-## Contributing
-
-found a bug or have some suggestions for the team about new features? go [here](https://github.com/StrobeLabs/strobe-protocol/issues/new/choose)
-
-you can create a pull request for us, check if it passes CI with:
-
-```sh
-make dev-cycle
-```
-
-check out our other fun utilities with
-
-```sh
-make help
+pnpm test
 ```
 
 ## License
