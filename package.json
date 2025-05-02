@@ -1,19 +1,15 @@
 {
-  "name": "@strobelabs/strobe-protocol",
+  "name": "@strobelabs/perpcity-contracts",
   "version": "1.0.0",
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.1",
-    "@openzeppelin/contracts-upgradeable": "^5.2.0",
     "prettier-plugin-solidity": "^1.4.2"
   },
   "devDependencies": {
-    "forge-std": "github:foundry-rs/forge-std#v1.8.1",
     "prettier": "^3.0.0",
     "solhint": "^3.6.2"
   },
   "private": true,
   "scripts": {
-    "clean": "rm -rf cache out",
     "build": "forge build --via-ir",
     "lint": "pnpm run lint:sol && pnpm run prettier:check",
     "lint:sol": "forge fmt --check && pnpm solhint \"{script,src,tests}/**/*.sol\"",
