@@ -9,20 +9,33 @@
 
 ## Quick Start
 
-Ensure you have `pnpm` installed
+Ensure you have `pnpm` and `foundry` installed
 
 ```sh
+forge install
 pnpm install
 ```
 
+`forge install` will install the smart contract dependencies, and `pnpm install` will install dependencies for linting (e.g. `prettier` & `solhint`).
+
 ## Build
 
+
+```sh
+forge build
+```
+or
 ```sh
 pnpm build
 ```
+or
 
 ## Run Tests
 
+```sh
+forge test
+```
+or
 ```sh
 pnpm test
 ```
