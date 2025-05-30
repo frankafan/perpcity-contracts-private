@@ -12,14 +12,10 @@
 Ensure you have `pnpm` and `foundry` installed
 
 ```sh
-forge install
 pnpm install
 ```
 
-`forge install` will install the smart contract dependencies, and `pnpm install` will install dependencies for linting (e.g. `prettier` & `solhint`).
-
 ## Build
-
 
 ```sh
 forge build
