@@ -7,6 +7,28 @@ on:
     branches:
       - "main"
 
+# Define reusable cache configurations using YAML anchors
+x-cache-config: &cache-config
+  pnpm-cache: &pnpm-cache
+    name: "Cache Node.js dependencies"
+    uses: actions/cache@v3
+    with:
+      path: ~/.pnpm-store
+      key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+      restore-keys: |
+        ${{ runner.os }}-pnpm-
+
+  foundry-cache: &foundry-cache
+    name: "Cache Foundry dependencies"
+    uses: actions/cache@v3
+    with:
+      path: |
+        ~/.foundry
+        lib
+      key: ${{ runner.os }}-foundry-${{ hashFiles('**/foundry.toml', '**/remappings.txt') }}
+      restore-keys: |
+        ${{ runner.os }}-foundry-
+
 jobs:
   lint:
     runs-on: "ubuntu-latest"
@@ -22,26 +44,15 @@ jobs:
         with:
           version: 8
 
-      - name: "Cache Node.js dependencies"
-        uses: actions/cache@v3
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+      - <<: *pnpm-cache
 
-      - name: "Cache Foundry dependencies"
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.foundry
-            lib
-          key: ${{ runner.os }}-foundry-${{ hashFiles('**/foundry.toml', '**/remappings.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-foundry-
+      - <<: *foundry-cache
 
-      - name: "Install the Node.js dependencies"
-        run: "forge install && pnpm install"
+      - name: "Install Foundry dependencies"
+        run: "forge install"
+
+      - name: "Install Node.js dependencies"
+        run: "pnpm install"
 
       - name: "Lint the code"
         run: "pnpm lint"
@@ -65,26 +76,15 @@ jobs:
         with:
           version: 8
 
-      - name: "Cache Node.js dependencies"
-        uses: actions/cache@v3
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+      - <<: *pnpm-cache
 
-      - name: "Cache Foundry dependencies"
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.foundry
-            lib
-          key: ${{ runner.os }}-foundry-${{ hashFiles('**/foundry.toml', '**/remappings.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-foundry-
+      - <<: *foundry-cache
 
-      - name: "Install the Node.js dependencies"
-        run: "forge install && pnpm install"
+      - name: "Install Foundry dependencies"
+        run: "forge install"
+
+      - name: "Install Node.js dependencies"
+        run: "pnpm install"
 
       - name: "Build the contracts and print their size"
         run: "pnpm build"
@@ -109,26 +109,15 @@ jobs:
         with:
           version: 8
 
-      - name: "Cache Node.js dependencies"
-        uses: actions/cache@v3
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+      - <<: *pnpm-cache
 
-      - name: "Cache Foundry dependencies"
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.foundry
-            lib
-          key: ${{ runner.os }}-foundry-${{ hashFiles('**/foundry.toml', '**/remappings.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-foundry-
+      - <<: *foundry-cache
 
-      - name: "Install the Node.js dependencies"
-        run: "forge install && pnpm install"
+      - name: "Install Foundry dependencies"
+        run: "forge install"
+
+      - name: "Install Node.js dependencies"
+        run: "pnpm install"
 
       - name: "Show the Foundry config"
         run: "forge config"
