@@ -1,2 +1,2 @@
-tests/utils/forks/DeployPermit2.sol
-tests/utils/forks/Permit2Bytecode.sol
+test/utils/forks/DeployPermit2.sol
+test/utils/forks/Permit2Bytecode.sol

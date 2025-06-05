@@ -13,7 +13,7 @@
   script = "script"
   solc = "0.8.26"
   src = "src"
-  test = "tests"
+  test = "test"
   via_ir = true
 
 [profile.lite]
