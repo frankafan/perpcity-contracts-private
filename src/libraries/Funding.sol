@@ -2,17 +2,15 @@
 pragma solidity ^0.8.26;
 
 import { Tick } from "./Tick.sol";
-import { PerpMath } from "./PerpMath.sol";
-import { PerpSafeCast } from "./PerpSafeCast.sol";
-import { PerpFixedPoint96 } from "./PerpFixedPoint96.sol";
+import { MoreSignedMath } from "./MoreSignedMath.sol";
+import { FixedPoint96 } from "./FixedPoint96.sol";
 import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import { SignedMath } from "@openzeppelin/contracts/utils/math/SignedMath.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 library Funding {
-    using PerpSafeCast for uint256;
-    using PerpSafeCast for uint128;
-    using SignedMath for int256;
+    using MoreSignedMath for int256;
+    using SafeCast for *;
 
     //
     // STRUCT
@@ -47,9 +45,8 @@ library Funding {
         pure
         returns (int256)
     {
-        int256 balanceCoefficientInFundingPayment = PerpMath.mulDiv(
-            baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, uint256(PerpFixedPoint96._IQ96)
-        );
+        int256 balanceCoefficientInFundingPayment =
+            baseBalance.mulDiv(fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, FixedPoint96.UINT_Q96);
 
         return (liquidityCoefficientInFundingPayment - balanceCoefficientInFundingPayment);
     }
@@ -82,10 +79,8 @@ library Funding {
         // ΔtwPremiumDivBySqrtPriceGrowthInsideX96
         * (
             fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96
-                - PerpMath.mulDiv(
-                    fundingGrowthRangeInfo.twPremiumGrowthInsideX96, PerpFixedPoint96._IQ96, sqrtPriceX96AtUpperTick
-                )
+                - fundingGrowthRangeInfo.twPremiumGrowthInsideX96.mulDiv(FixedPoint96.INT_Q96, sqrtPriceX96AtUpperTick)
         );
-        return (fundingBelowX96 + fundingInsideX96) / PerpFixedPoint96._IQ96;
+        return (fundingBelowX96 + fundingInsideX96) / FixedPoint96.INT_Q96;
     }
 }

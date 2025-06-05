@@ -4,8 +4,11 @@ pragma solidity ^0.8.26;
 import { Script, console2 } from "forge-std/Script.sol";
 import { Perp } from "../src/Perp.sol";
 import { FixedPoint96 } from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
+import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 
 contract DeployPerp is Script {
+    using SafeCast for *;
+
     Perp public perp;
 
     address constant POOL_MANAGER = 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408;
@@ -15,13 +18,13 @@ contract DeployPerp is Script {
     address constant USDC = 0x4F4e46307114d7c02C5dee116dd51Bd34faCf39a;
     address constant BEACON = 0xB4BF59f4958e5EDE1A463A3AeB587d4Cc2D8aDF6;
     uint24 constant TRADING_FEE = 10_000;
-    uint256 constant MIN_MARGIN = 1e6;
-    uint256 constant MAX_MARGIN = type(uint256).max;
-    uint256 constant MIN_OPENING_LEVERAGE_X96 = 1 * FixedPoint96.Q96 / 10;
-    uint256 constant MAX_OPENING_LEVERAGE_X96 = 10 * FixedPoint96.Q96;
-    uint256 constant LIQUIDATION_MARGIN_RATIO_X96 = 15 * FixedPoint96.Q96 / 100; // 0.15
-    uint256 constant LIQUIDATION_FEE_X96 = 5 * FixedPoint96.Q96 / 100; // 0.05
-    uint256 constant LIQUIDATION_FEE_SPLIT_X96 = 50 * FixedPoint96.Q96 / 100; // 0.50
+    uint128 MIN_MARGIN = 1e6;
+    uint128 MAX_MARGIN = type(uint128).max;
+    uint128 MIN_OPENING_LEVERAGE_X96 = (1 * FixedPoint96.Q96 / 10).toUint128();
+    uint128 MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128();
+    uint128 LIQUIDATION_MARGIN_RATIO_X96 = (15 * FixedPoint96.Q96 / 100).toUint128(); // 0.15
+    uint128 LIQUIDATION_FEE_X96 = (5 * FixedPoint96.Q96 / 100).toUint128(); // 0.05
+    uint128 LIQUIDATION_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128(); // 0.50
     int24 constant TICK_SPACING = 30;
     address constant HOOK = 0x93C35f4Cee88C914Ed3916aC6114816A99F1EAA0;
     uint160 constant STARTING_SQRT_PRICE_X96 = 560_227_709_747_861_399_187_319_863_744; // 2 ** 96 * sqrt(50)

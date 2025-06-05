@@ -3,18 +3,13 @@ pragma solidity ^0.8.26;
 
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
 import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
-import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
-import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
 import { Commands } from "@uniswap/universal-router/contracts/libraries/Commands.sol";
 import { IV4Router } from "@uniswap/v4-periphery/src/interfaces/IV4Router.sol";
 import { Actions } from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 
 library UniswapV4Utility {
     function _approveTokenWithPermit2(
@@ -39,7 +34,7 @@ library UniswapV4Utility {
         uint24 fee
     )
         internal
-        returns (uint128 amountOut)
+        returns (uint256 amountOut)
     {
         // Encode the Universal Router command
         bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
@@ -81,7 +76,7 @@ library UniswapV4Utility {
 
         // Verify and return the output amount
         uint256 outputCurrencyBalanceAfter = outputCurrency.balanceOfSelf();
-        amountOut = SafeCast.toUint128(outputCurrencyBalanceAfter - outputCurrencyBalanceBefore);
+        amountOut = outputCurrencyBalanceAfter - outputCurrencyBalanceBefore;
     }
 
     function _swapExactOutputSingle(
@@ -93,7 +88,7 @@ library UniswapV4Utility {
         uint24 fee
     )
         internal
-        returns (uint128 amountIn)
+        returns (uint256 amountIn)
     {
         // Encode the Universal Router command
         bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
@@ -135,7 +130,7 @@ library UniswapV4Utility {
 
         // Verify and return the output amount
         uint256 inputCurrencyBalanceAfter = inputCurrency.balanceOfSelf();
-        amountIn = SafeCast.toUint128(inputCurrencyBalanceBefore - inputCurrencyBalanceAfter);
+        amountIn = inputCurrencyBalanceBefore - inputCurrencyBalanceAfter;
     }
 
     function _mintLiquidityPosition(
@@ -152,7 +147,7 @@ library UniswapV4Utility {
     {
         bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
 
-        bytes[] memory params = new bytes[](2); // new bytes[](3) for ETH liquidity positions
+        bytes[] memory params = new bytes[](2);
 
         params[0] =
             abi.encode(poolKey, tickLower, tickUpper, liquidity, amount0Max, amount1Max, address(this), bytes(""));

@@ -33,6 +33,7 @@ contract PerpTest is Test, Fixtures {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
+    using SafeCast for *;
 
     int24 constant TICK_SPACING = 60;
 
@@ -95,12 +96,12 @@ contract PerpTest is Test, Fixtures {
             beacon: address(beacon),
             tradingFee: 10_000,
             minMargin: 0,
-            maxMargin: type(uint256).max,
-            minOpeningLeverageX96: 1 * FixedPoint96.Q96 / 10,
-            maxOpeningLeverageX96: 10 * FixedPoint96.Q96,
-            liquidationMarginRatioX96: 15 * FixedPoint96.Q96 / 100,
-            liquidationFeeX96: 5 * FixedPoint96.Q96 / 100,
-            liquidationFeeSplitX96: 50 * FixedPoint96.Q96 / 100
+            maxMargin: type(uint128).max,
+            minOpeningLeverageX96: (1 * FixedPoint96.Q96 / 10).toUint128(),
+            maxOpeningLeverageX96: (10 * FixedPoint96.Q96).toUint128(),
+            liquidationMarginRatioX96: (15 * FixedPoint96.Q96 / 100).toUint128(),
+            liquidationFeeX96: (5 * FixedPoint96.Q96 / 100).toUint128(),
+            liquidationFeeSplitX96: (50 * FixedPoint96.Q96 / 100).toUint128()
         });
 
         Perp.UniswapV4PoolConfig memory uniswapV4PoolConfig = Perp.UniswapV4PoolConfig({
