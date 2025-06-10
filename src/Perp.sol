@@ -1,36 +1,207 @@
+/**
+ * @title Perp Implementation on Uniswap V4
+ * @author Perp City
+ * @notice This contract implements a perpetual futures protocol using Uniswap V4 pools for price discovery, margin trading, and continuous funding.
+ * @dev
+ * 
+ * SYSTEM OVERVIEW
+ * ----------------------------------------------------------------------------
+ * This contract is the core of a perpetual futures protocol, leveraging Uniswap V4 as the price discovery engine.
+ * It enables two main user roles:
+ *   - **Makers (LPs):** Provide liquidity to a Uniswap V4 pool using two custom accounting tokens (Perp AT and USD AT), and earn fees and funding payments.
+ *   - **Takers (Traders):** Take leveraged long or short positions by swapping between the accounting tokens in the pool.
+ * 
+ * The protocol maintains a mark price (from the Uniswap V4 pool) and an index price (from an external Beacon contract).
+ * Continuous funding payments are exchanged between longs and shorts to keep the mark price in line with the index price.
+ * 
+ * KEY COMPONENTS
+ * ----------------------------------------------------------------------------
+ * 1. **Uniswap V4 Pool (Price Discovery):**
+ *    - The pool uses two custom ERC20 accounting tokens: Perp AT (perpetual asset) and USD AT (USD stablecoin).
+ *    - The relative price of these tokens in the pool determines the mark price for the perpetual.
+ *    - All swaps and liquidity operations are routed through this pool.
+ * 
+ * 2. **Accounting Tokens:**
+ *    - **Perp Accounting Token (Perp AT):** Represents the perpetual asset.
+ *    - **USD Accounting Token (USD AT):** Represents the stablecoin side.
+ *    - These tokens are minted/burned as needed for pool operations, but are not transferrable outside the protocol.
+ * 
+ * 3. **Maker Positions:**
+ *    - Makers provide liquidity in a tick range, similar to Uniswap V4 LPs, but with additional tracking for margin, funding, and PnL.
+ *    - Each MakerPosition records the user's margin, liquidity, tick range, and entry funding state.
+ *    - When closing, the protocol calculates PnL and funding, burns the LP position, and returns margin + PnL.
+ * 
+ * 4. **Taker Positions:**
+ *    - Takers open long/short positions by swapping between USD AT and Perp AT in the pool, using leverage.
+ *    - Each TakerPosition records margin, size, direction (long/short), entry value, and entry funding state.
+ *    - Closing a position involves the reverse swap and PnL/funding calculation.
+ * 
+ * 5. **Funding Mechanism:**
+ *    - Funding is calculated continuously, based on the difference between the mark price (from the pool) and the index price (from the Beacon).
+ *    - Funding payments are settled on every trade, using a time-weighted premium accumulator.
+ *    - This incentivizes the mark price to track the index price.
+ * 
+ * 6. **Beacon (Index Price Oracle):**
+ *    - The Beacon contract provides the external index price for the perpetual, used in funding calculations.
+ *    - It is not involved in price discovery or swaps.
+ * 
+ * 7. **Utilities and Libraries:**
+ *    - Custom libraries (e.g., Funding, Tick, UniswapV4Utility) encapsulate funding math, tick management, and Uniswap V4 interactions.
+ *    - See inline comments and referenced files for details.
+ * 
+ * ARCHITECTURE & FLOW
+ * ----------------------------------------------------------------------------
+ * - **Makers (LPs):**
+ *     - Open positions by providing liquidity in a tick range to the Uniswap V4 pool, using Perp Accounting Token (Perp AT) and USD Accounting Token (USD AT).
+ *     - The contract mints these accounting tokens and deposits them into the pool on behalf of the maker.
+ *     - Maker positions are tracked with additional margin, funding, and PnL logic beyond standard Uniswap V4 LPs.
+ *     - When closing, the contract burns the LP position, settles funding and PnL, and returns margin + PnL in USDC.
+ *
+ * - **Takers (Traders):**
+ *     - Open long or short positions by swapping between USD AT and Perp AT in the Uniswap V4 pool.
+ *     - The contract mints/burns accounting tokens as needed for the swap, and tracks taker positions with margin, size, direction, and entry funding state.
+ *     - Closing a position involves the reverse swap, funding/PnL settlement, and margin return.
+ *
+ * - **Uniswap V4 Integration:**
+ *     - All liquidity and swap operations are routed through the Uniswap V4 pool using the custom accounting tokens.
+ *     - The contract interacts directly with the Uniswap V4 PoolManager, PositionManager, and Router.
+ *     - The PerpHook contract is used to enforce protocol-specific fee logic and restrict pool interactions to this contract.
+ *
+ * - **Accounting Tokens:**
+ *     - Perp AT and USD AT are non-transferrable ERC20 tokens minted/burned by this contract for pool operations.
+ *     - They represent the protocol's internal accounting for perpetual and USD value, and are never held by users directly.
+ *
+ * - **Funding & Mark/Index Price:**
+ *     - The mark price is derived from the Uniswap V4 pool (ratio of Perp AT to USD AT).
+ *     - The index price is provided by the Beacon contract (external oracle).
+ *     - Funding is calculated continuously and settled on every trade, using a time-weighted premium accumulator.
+ *     - This mechanism incentivizes the mark price to track the index price.
+ *
+ * - **Transaction Flow:**
+ *     - All user actions (open/close maker, open/close taker) are initiated via Perp.sol, which handles all Uniswap V4 and accounting token logic.
+ *     - The PerpHook ensures only Perp.sol can interact with the pool, and applies protocol-specific fee logic.
+ *     - See `docs/perp-actions-visual.png` for a step-by-step visual of these flows.
+ *
+ * - **Security & Invariants:**
+ *     - All state transitions, funding calculations, and Uniswap V4 interactions are performed atomically within Perp.sol.
+ *     - The contract enforces margin, leverage, and liquidation requirements at every step.
+ *     - All critical calculations are documented inline for auditability.
+ * 
+ */
+
+///  ┌─────────────────────────────────────────────────────────────────────────────┐
+///  │                                 Perp.sol                                   │
+///  │ ────────────────────────────────────────────────────────────────────────── │
+///  │                                                                             │
+///  │  [State: funding, mark price, index price, positions, tick info, etc.]      │
+///  │                                                                             │
+///  │   ┌──────────────┐        ┌──────────────┐                                  │
+///  │   │   Maker      │        │   Taker      │                                  │
+///  │   │  (LP User)   │        │  (Trader)    │                                  │
+///  │   └─────┬────────┘        └─────┬────────┘                                  │
+///  │         │                         │                                         │
+///  │         │ Provide liquidity       │ Open/close long/short                   │
+///  │         │ (margin, tick range)    │ (swap USD AT <-> Perp AT)               │
+///  │         │                         │                                         │
+///  │         ▼                         ▼                                         │
+///  │   ┌─────────────────────────────────────────────┐                            │
+///  │   │   Mint/Burn Perp AT & USD AT (accounting)   │                            │
+///  │   └─────────────────────────────────────────────┘                            │
+///  │         │                         │                                         │
+///  │         └────────────┬────────────┘                                         │
+///  │                      │                                                      │
+///  │                      ▼                                                      │
+///  │         ┌─────────────────────────────────────────────┐                      │
+///  │         │         Uniswap V4 Pool (Perp AT/USD AT)    │                      │
+///  │         │ ─────────────────────────────────────────── │                      │
+///  │         │  - Holds Perp AT and USD AT                 │                      │
+///  │         │  - AMM logic for swaps and LP positions     │                      │
+///  │         │  - Mark price = Perp AT / USD AT            │                      │
+///  │         │  - Fees, tick accounting, liquidity math    │                      │
+///  │         └─────────────────────────────────────────────┘                      │
+///  │                      │                                                      │
+///  │                      ▼                                                      │
+///  │         ┌───────────────────────────────┐                                    │
+///  │         │      PerpHook.sol             │                                    │
+///  │         │  - Restricts pool access      │                                    │
+///  │         │  - Enforces fee logic         │                                    │
+///  │         └───────────────────────────────┘                                    │
+///  │                                                                             │
+///  │   [Perp.sol stores and updates:]                                            │
+///  │     - fundingRateX96 (funding)                                             │
+///  │     - twPremiumX96 (funding accumulator)                                    │
+///  │     - mark price (from V4 pool)                                            │
+///  │     - index price (from Beacon)                                            │
+///  │     - all open positions (maker/taker)                                     │
+///  │                                                                             │
+///  │   [External:]                                                              │
+///  │     ┌──────────────┐                                                       │
+///  │     │   Beacon     │                                                       │
+///  │     │ (Index Oracle)│                                                      │
+///  │     └─────┬────────┘                                                       │
+///  │           │                                                                │
+///  │           ▼                                                                │
+///  │     Supplies index price to Perp.sol for funding calculations              │
+///  └─────────────────────────────────────────────────────────────────────────────┘
+
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { AccountingToken } from "./AccountingToken.sol";
+// ──────────────────────────────
+// External Imports
+// ──────────────────────────────
+
+// OpenZeppelin
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+// Uniswap V4 - Types
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
 import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
+import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
+import { BalanceDelta, BalanceDeltaLibrary } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+
+// Uniswap V4 - Interfaces
 import { IHooks } from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
+
+// Uniswap V4 - Libraries: Math
 import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { IBeacon } from "./interfaces/IBeacon.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
-import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
-import { Pool } from "@uniswap/v4-core/src/libraries/Pool.sol";
-import { BalanceDelta, BalanceDeltaLibrary } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import { SwapMath } from "@uniswap/v4-core/src/libraries/SwapMath.sol";
-import { BitMath } from "@uniswap/v4-core/src/libraries/BitMath.sol";
-import { ProtocolFeeLibrary } from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
-import { UnsafeMath } from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
-import { FixedPoint128 } from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
 import { LiquidityMath } from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
+import { FixedPoint128 } from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
+import { UnsafeMath } from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
+
+// Uniswap V4 - Libraries: Pool/Fees
+import { Pool } from "@uniswap/v4-core/src/libraries/Pool.sol";
+import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import { ProtocolFeeLibrary } from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
+import { SwapMath } from "@uniswap/v4-core/src/libraries/SwapMath.sol";
+import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import { BitMath } from "@uniswap/v4-core/src/libraries/BitMath.sol";
+import { CustomRevert } from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
+
+// Uniswap V4 - Utilities
+import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+
+// Other External
+import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
+import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
+
+// ──────────────────────────────
+// Internal Project Imports
+// ──────────────────────────────
+
+// Core Contracts
+import { AccountingToken } from "./AccountingToken.sol";
+import { IBeacon } from "./interfaces/IBeacon.sol";
+
+// Utilities / Libraries
 import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
 import { Tick } from "./libraries/Tick.sol";
-import { CustomRevert } from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
 import { Funding } from "./libraries/Funding.sol";
 import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
 import { FixedPoint192 } from "./libraries/FixedPoint192.sol";
-import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 import { TokenMath } from "./libraries/TokenMath.sol";
 import { MoreSignedMath } from "./libraries/MoreSignedMath.sol";
 
@@ -44,83 +215,102 @@ contract Perp {
     using TokenMath for uint256;
     using TokenMath for uint128;
 
+    // ──────────────
+    // Type Declarations
+    // ──────────────
+
+    /// @dev Stores addresses of core Uniswap V4 contracts used by the protocol.
     struct UniswapV4Contracts {
-        address poolManager;
-        address router;
-        address positionManager;
-        address permit2;
+        address poolManager;      // Uniswap V4 PoolManager contract
+        address router;           // Uniswap V4 UniversalRouter contract
+        address positionManager;  // Uniswap V4 PositionManager contract
+        address permit2;          // Permit2 contract for token approvals
     }
 
+    /// @dev Stores protocol configuration parameters (fees, margin, leverage, etc.).
     struct PerpConfig {
-        address usdc;
-        address beacon;
-        uint24 tradingFee;
-        uint128 minMargin;
-        uint128 maxMargin;
-        uint128 minOpeningLeverageX96;
-        uint128 maxOpeningLeverageX96;
-        uint128 liquidationMarginRatioX96;
-        uint128 liquidationFeeX96;
-        uint128 liquidationFeeSplitX96;
+        address usdc;                    // USDC token address
+        address beacon;                  // Index price oracle (Beacon)
+        uint24 tradingFee;               // Trading fee (basis points)
+        uint128 minMargin;               // Minimum margin required
+        uint128 maxMargin;               // Maximum margin allowed
+        uint128 minOpeningLeverageX96;   // Minimum leverage (Q96)
+        uint128 maxOpeningLeverageX96;   // Maximum leverage (Q96)
+        uint128 liquidationMarginRatioX96; // Liquidation margin ratio (Q96)
+        uint128 liquidationFeeX96;       // Liquidation fee (Q96)
+        uint128 liquidationFeeSplitX96;  // Split of liquidation fee (Q96)
     }
 
+    /// @dev Stores Uniswap V4 pool configuration (tick spacing, hook, initial price).
     struct UniswapV4PoolConfig {
-        int24 tickSpacing;
-        address hook;
-        uint160 startingSqrtPriceX96;
+        int24 tickSpacing;               // Tick spacing for the pool
+        address hook;                    // PerpHook contract address
+        uint160 startingSqrtPriceX96;    // Initial sqrt price (Q96)
     }
 
+    /// @dev Represents a Maker (LP) position, including margin, liquidity, and funding state.
     struct MakerPosition {
-        address holder;
-        int24 tickLower;
-        int24 tickUpper;
-        uint160 sqrtPriceLowerX96;
-        uint160 sqrtPriceUpperX96;
-        uint128 margin;
-        uint128 liquidity;
-        uint128 perpsBorrowed;
-        uint128 usdBorrowed;
-        int128 entryTwPremiumX96;
-        int128 entryTwPremiumDivBySqrtMarkX96;
+        address holder;                  // Owner of the position
+        int24 tickLower;                 // Lower tick of the LP range
+        int24 tickUpper;                 // Upper tick of the LP range
+        uint160 sqrtPriceLowerX96;       // Sqrt price at lower tick (Q96)
+        uint160 sqrtPriceUpperX96;       // Sqrt price at upper tick (Q96)
+        uint128 margin;                  // Margin posted by the maker
+        uint128 liquidity;               // Liquidity provided
+        uint128 perpsBorrowed;           // Perp AT borrowed (for LP accounting)
+        uint128 usdBorrowed;             // USD AT borrowed (for LP accounting)
+        int128 entryTwPremiumX96;        // Funding accumulator at entry (Q96)
+        int128 entryTwPremiumDivBySqrtMarkX96; // Funding accumulator (divided by sqrt mark) at entry (Q96)
     }
 
+    /// @dev Represents a Taker (trader) position, including margin, size, direction, and funding state.
     struct TakerPosition {
-        address holder;
-        bool isLong;
-        uint128 size;
-        uint128 margin;
-        uint128 entryValue;
-        int128 entryTwPremiumX96;
+        address holder;                  // Owner of the position
+        bool isLong;                     // True if long, false if short
+        uint128 size;                    // Position size (in Perp AT)
+        uint128 margin;                  // Margin posted by the taker
+        uint128 entryValue;              // Entry value in USD AT
+        int128 entryTwPremiumX96;        // Funding accumulator at entry (Q96)
     }
 
-    IPoolManager private immutable POOL_MANAGER;
-    IUniversalRouter private immutable ROUTER;
-    IPositionManager private immutable POSITION_MANAGER;
+    // ──────────────
+    // State Variables
+    // ──────────────
+
+    // --- Core contract addresses and configuration ---
+    IPoolManager private immutable POOL_MANAGER;        // Uniswap V4 pool manager
+    IUniversalRouter private immutable ROUTER;          // Uniswap V4 router
+    IPositionManager private immutable POSITION_MANAGER;// Uniswap V4 position manager
+    IERC20 public immutable USDC;                      // USDC token used for margin
+    IBeacon public immutable BEACON;                   // Index price oracle
+
+    // --- Protocol parameters (immutable) ---
+    uint24 private immutable TRADING_FEE;              // Trading fee in basis points
+    uint128 public immutable MIN_MARGIN;               // Minimum margin required
+    uint128 public immutable MAX_MARGIN;               // Maximum margin allowed
+    uint128 public immutable MIN_OPENING_LEVERAGE_X96; // Minimum leverage (Q96)
+    uint128 public immutable MAX_OPENING_LEVERAGE_X96; // Maximum leverage (Q96)
+    uint128 private immutable LIQUIDATION_MARGIN_RATIO_X96; // Liquidation margin ratio (Q96)
+    uint128 private immutable LIQUIDATION_FEE_X96;     // Liquidation fee (Q96)
+    uint128 private immutable LIQUIDATION_FEE_SPLIT_X96; // Split of liquidation fee (Q96)
+
+    // --- Funding and price state ---
+    int128 public fundingRateX96;                      // Current funding rate (Q96)
+    int128 private twPremiumX96;                       // Funding accumulator (Q96)
+    int128 private twPremiumDivBySqrtMarkX96;          // Funding accumulator divided by sqrt mark (Q96)
+    int128 private lastFundingUpdate;                  // Last funding update timestamp
+
+    // --- Position tracking ---
+    uint128 private nextTakerPosId;                    // Next taker position ID
+    mapping(uint256 => TakerPosition) public takerPositions; // All taker positions
+    mapping(uint256 => MakerPosition) public makerPositions; // All maker positions
+    mapping(int24 => Tick.GrowthInfo) private tickGrowthInfo; // Funding growth per tick
+
+    // --- Constants ---
+    int256 private constant FUNDING_PERIOD = 1 days;   // Funding period in seconds
 
     PoolKey private poolKey;
     PoolId private poolId;
-
-    IERC20 public immutable USDC;
-    IBeacon public immutable BEACON;
-    uint24 private immutable TRADING_FEE;
-    uint128 public immutable MIN_MARGIN;
-    uint128 public immutable MAX_MARGIN;
-    uint128 public immutable MIN_OPENING_LEVERAGE_X96;
-    uint128 public immutable MAX_OPENING_LEVERAGE_X96;
-    uint128 private immutable LIQUIDATION_MARGIN_RATIO_X96;
-    uint128 private immutable LIQUIDATION_FEE_X96;
-    uint128 private immutable LIQUIDATION_FEE_SPLIT_X96;
-
-    int128 public fundingRateX96;
-    int128 private twPremiumX96;
-    int128 private twPremiumDivBySqrtMarkX96;
-    int128 private lastFundingUpdate;
-    uint128 private nextTakerPosId;
-    mapping(uint256 takerPosId => TakerPosition takerPos) public takerPositions;
-    mapping(uint256 makerPosId => MakerPosition makerPos) public makerPositions;
-    mapping(int24 => Tick.GrowthInfo) private tickGrowthInfo;
-
-    int256 private constant FUNDING_PERIOD = 1 days;
 
     event MakerPositionOpened(
         uint256 makerPosId,
