@@ -625,6 +625,7 @@ contract Perp {
             FullMath.mulDiv((uint256(effectiveMargin) - liquidationFee), FixedPoint96.UINT_Q96, notionalValue)
                 < LIQUIDATION_MARGIN_RATIO_X96
         ) {
+            // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
             USDC.transfer(msg.sender, (uint256(effectiveMargin) - liquidationFee).scale18To6());
             USDC.transfer(
                 msg.sender,
@@ -729,6 +730,10 @@ contract Perp {
      * @param takerPosId Unique ID of the taker position to close
      */
     function closeTakerPosition(uint256 takerPosId) external {
+        // ─────────────────────────────────────────────
+        // 1. Reverse Swap, Funding, and PnL Calculation
+        // ─────────────────────────────────────────────
+
         // Update funding accumulators before closing
         _updateTwPremiums();
 
@@ -739,8 +744,10 @@ contract Perp {
         int256 pnl;
 
         // Perform the reverse swap in Uniswap V4 pool to close the position
+        // For a long: sell Perp AT for USD AT (swap in Perp, get out USD)
         if (takerPos.isLong) {
             uint128 amountIn = takerPos.size;
+            // Simulate swap: Perp in, USD out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: int128(amountIn),
@@ -750,10 +757,14 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // Execute swap: Perp in, USD out
             notionalValue = UniswapV4Utility._swapExactInputSingle(ROUTER, poolKey, true, amountIn, 0, 0);
+            // PnL: USD received minus entry value
             pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
         } else {
+            // For a short: buy back Perp AT with USD AT (swap in USD, get out Perp)
             uint128 amountOut = takerPos.size;
+            // Simulate swap: USD in, Perp out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: -int128(amountOut),
@@ -763,9 +774,11 @@ contract Perp {
                     lpFeeOverride: TRADING_FEE
                 })
             );
+            // Execute swap: USD in, Perp out
             notionalValue = UniswapV4Utility._swapExactOutputSingle(
                 ROUTER, poolKey, false, amountOut, type(uint128).max, TRADING_FEE
             );
+            // PnL: entry value minus USD paid to close
             pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
         }
 
@@ -773,13 +786,19 @@ contract Perp {
         _updateFundingRate();
 
         // Calculate funding owed for the taker position
+        // Funding is the difference in time-weighted premium, scaled by position size
         int256 funding = MoreSignedMath.mulDiv(
             twPremiumX96 - takerPos.entryTwPremiumX96, takerPos.size.toInt256(), FixedPoint96.UINT_Q96
         );
+        // Shorts pay/receive the opposite funding sign
         if (!takerPos.isLong) funding = -funding;
 
         // Calculate effective margin after PnL and funding
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        // ─────────────────────────────────────────────
+        // 2. Liquidation, Payout, and Cleanup
+        // ─────────────────────────────────────────────
 
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
@@ -796,6 +815,7 @@ contract Perp {
             FullMath.mulDiv((uint256(effectiveMargin) - liquidationFee), FixedPoint96.UINT_Q96, notionalValue)
                 < LIQUIDATION_MARGIN_RATIO_X96
         ) {
+            // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
             USDC.transfer(takerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6());
             USDC.transfer(
                 msg.sender,
@@ -814,11 +834,24 @@ contract Perp {
         delete takerPositions[takerPosId];
     }
 
+    /**
+     * @notice Validates that the provided margin is within allowed bounds.
+     * @dev Reverts if margin is less than MIN_MARGIN or greater than MAX_MARGIN.
+     * @param margin The margin amount to validate
+     */
     function _validateMargin(uint256 margin) internal view {
         if (margin < MIN_MARGIN) revert MarginTooLow(margin, MIN_MARGIN);
         if (margin > MAX_MARGIN) revert MarginTooHigh(margin, MAX_MARGIN);
     }
 
+    /**
+     * @notice Validates that the leverage for a maker position is within allowed bounds.
+     * @dev Converts liquidity to notional value, computes leverage, and checks against min/max.
+     * @param margin Margin posted by the maker
+     * @param liquidity Liquidity provided
+     * @param sqrtPriceLowerX96 Sqrt price at lower tick (Q96)
+     * @param sqrtPriceUpperX96 Sqrt price at upper tick (Q96)
+     */
     function _validateMakerLeverage(
         uint256 margin,
         uint128 liquidity,
@@ -828,33 +861,54 @@ contract Perp {
         internal
         view
     {
+        // Get current pool price
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
 
+        // Convert liquidity to token amounts at current price
         (uint256 amount0, uint256 amount1) =
             LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
 
+        // Convert amount0 (Perp AT) to USD AT using current price
         uint256 amount0InAmount1 =
             FullMath.mulDiv(amount0, _sqrtPriceX96ToPriceX96(sqrtPriceX96), FixedPoint96.UINT_Q96);
 
+        // Notional value is sum of USD AT and Perp AT (converted to USD AT)
         uint256 notionalValue = amount1 + amount0InAmount1;
 
+        // Compute leverage as notional value divided by margin
         uint256 leverageX96 = FullMath.mulDiv(notionalValue, FixedPoint96.UINT_Q96, margin.scale6To18());
 
+        // Check leverage bounds
         _validateLeverage(leverageX96);
     }
 
+    /**
+     * @notice Validates that the leverage is within allowed bounds.
+     * @param leverageX96 The leverage value to validate (Q96)
+     */
     function _validateLeverage(uint256 leverageX96) internal view {
         if (leverageX96 < MIN_OPENING_LEVERAGE_X96) revert LeverageTooLow(leverageX96, MIN_OPENING_LEVERAGE_X96);
         if (leverageX96 > MAX_OPENING_LEVERAGE_X96) revert LeverageTooHigh(leverageX96, MAX_OPENING_LEVERAGE_X96);
     }
 
+    /**
+     * @notice Converts a sqrt price (Q96) to a price (Q96).
+     * @param sqrtPriceX96 The sqrt price (Q96)
+     * @return priceX96 The price (Q96)
+     */
     function _sqrtPriceX96ToPriceX96(uint256 sqrtPriceX96) internal pure returns (uint256) {
         return FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.UINT_Q96);
     }
 
+    /**
+     * @notice Settles excess Perp AT when closing a maker position.
+     * @dev If excessPerps < 0, buys Perp AT to pay back debt; if > 0, sells excess Perp AT. Returns PnL from the swap.
+     * @param excessPerps The net Perp AT to settle (positive = excess, negative = debt)
+     * @return pnl The profit or loss from settling excess Perp AT
+     */
     function _settleExcessPerps(int128 excessPerps) internal returns (int256 pnl) {
         if (excessPerps < 0) {
-            // buy more perps to pay back debt
+            // Negative: buy Perp AT to pay back debt
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: excessPerps,
@@ -864,13 +918,14 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // PnL is negative: cost to buy back Perp AT
             pnl = -(
                 UniswapV4Utility._swapExactOutputSingle(
                     ROUTER, poolKey, false, (-excessPerps).toUint128(), type(uint128).max, 0
                 ).toInt256()
             );
         } else {
-            // sell excess perps
+            // Positive: sell excess Perp AT
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: excessPerps,
@@ -880,40 +935,67 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // PnL is positive: proceeds from selling Perp AT
             pnl =
                 UniswapV4Utility._swapExactInputSingle(ROUTER, poolKey, true, excessPerps.toUint128(), 0, 0).toInt256();
         }
     }
 
-    /// @notice Updates twPremiumX96 & twPremiumDivBySqrtMarkX96
-    /// @dev Should be called before interactions with the pool
+    /**
+     * @notice Updates the time-weighted premium accumulators for funding payments.
+     * @dev Should be called before pool interactions. Updates twPremiumX96 and twPremiumDivBySqrtMarkX96 based on time elapsed.
+     */
     function _updateTwPremiums() internal {
+        // Calculate time since last funding update
         int128 timeSinceLastUpdate = block.timestamp.toInt128() - lastFundingUpdate;
-        // funding owed per second * time since last update (in seconds)
+        // Update twPremiumX96: funding owed per second * time since last update
         twPremiumX96 += fundingRateX96 * timeSinceLastUpdate;
 
+        // Get current sqrt price from the pool
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
+        // Update twPremiumDivBySqrtMarkX96: funding per second, scaled by sqrt price
         twPremiumDivBySqrtMarkX96 += MoreSignedMath.mulDiv(
             fundingRateX96, int256(timeSinceLastUpdate) * FixedPoint96.INT_Q96, sqrtPriceX96
         ).toInt128();
 
+        // Update last funding update timestamp
         lastFundingUpdate = block.timestamp.toInt128();
     }
 
+    /**
+     * @notice Updates the funding rate based on the difference between mark price and index price.
+     * @dev Funding rate is set so a notional size 1 long position pays (markPrice - indexPrice) over the next funding period.
+     */
     function _updateFundingRate() internal {
+        // Get current sqrt price from the pool
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
+        // Calculate mark price from sqrt price
         uint256 markPriceX96 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), FixedPoint96.UINT_Q96);
 
+        // Get index price from the beacon
         (uint256 indexPriceX96,) = BEACON.getData();
 
-        // a notional size 1 long position would pay (markPrice - indexPrice) over the next FUNDING_PERIOD
+        // Funding rate: (markPrice - indexPrice) / FUNDING_PERIOD
         fundingRateX96 = ((int256(markPriceX96) - int256(indexPriceX96)) / FUNDING_PERIOD).toInt128();
     }
 
+    /**
+     * @notice Simulates a swap in the Uniswap V4 pool, updating protocol state as if a swap occurred.
+     * @dev Re-implements Uniswap V4 swap logic with additional funding and tick growth logic for the Perp protocol.
+     *      Used for margin, funding, and PnL calculations without actually moving tokens.
+     * @param params Swap parameters (amount, direction, price limits, fee override)
+     * @return swapDelta The net token delta for the swap
+     * @return amountToProtocol The protocol fee collected
+     * @return swapFee The swap fee used
+     * @return result The final pool state after the simulated swap
+     */
     function _simulateSwap(Pool.SwapParams memory params)
         internal
         returns (BalanceDelta swapDelta, uint256 amountToProtocol, uint24 swapFee, Pool.SwapResult memory result)
     {
+        // ─────────────────────────────────────────────
+        // 1. Initialize Swap State
+        // ─────────────────────────────────────────────
         (uint160 slot0sqrtPriceX96, int24 slot0tick, uint24 slot0protocolFee, uint24 slot0lpFee) =
             POOL_MANAGER.getSlot0(poolId);
         bool zeroForOne = params.zeroForOne;
@@ -931,6 +1013,9 @@ contract Perp {
         // initialize to the current liquidity
         result.liquidity = POOL_MANAGER.getLiquidity(poolId);
 
+        // ─────────────────────────────────────────────
+        // 2. Determine Swap Fee
+        // ─────────────────────────────────────────────
         {
             // if the beforeSwap hook returned a valid fee override, use that as the LP fee, otherwise load from storage
             // lpFee, swapFee, and protocolFee are all in pips
@@ -940,6 +1025,9 @@ contract Perp {
             swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
         }
 
+        // ─────────────────────────────────────────────
+        // 3. Check Swap Feasibility
+        // ─────────────────────────────────────────────
         // a swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely
         // consumed by the fee
         if (swapFee >= SwapMath.MAX_SWAP_FEE) {
@@ -973,15 +1061,19 @@ contract Perp {
             }
         }
 
+        // ─────────────────────────────────────────────
+        // 4. Main Swap Loop
+        // ─────────────────────────────────────────────
+
         Pool.StepComputations memory step;
 
         (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128) = POOL_MANAGER.getFeeGrowthGlobals(poolId);
         step.feeGrowthGlobalX128 = zeroForOne ? feeGrowthGlobal0X128 : feeGrowthGlobal1X128;
 
-        // continue swapping as long as we haven't used the entire input/output and haven't reached the price limit
+        // Continue swapping as long as we haven't used the entire input/output and haven't reached the price limit
         while (!(amountSpecifiedRemaining == 0 || result.sqrtPriceX96 == params.sqrtPriceLimitX96)) {
+            // 4a. Find Next Tick and Target Price
             step.sqrtPriceStartX96 = result.sqrtPriceX96;
-
             (step.tickNext, step.initialized) =
                 _nextInitializedTickWithinOneWord(result.tick, params.tickSpacing, zeroForOne);
 
@@ -996,6 +1088,7 @@ contract Perp {
             // get the price for the next tick
             step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);
 
+            // 4b. Compute Swap Step
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
                 result.sqrtPriceX96,
@@ -1005,6 +1098,7 @@ contract Perp {
                 swapFee
             );
 
+            // 4c. Update Amounts and Fees
             // if exactOutput
             if (params.amountSpecified > 0) {
                 unchecked {
@@ -1019,6 +1113,7 @@ contract Perp {
                 amountCalculated += step.amountOut.toInt256();
             }
 
+            // 4d. Handle Protocol Fee
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
             if (protocolFee > 0) {
                 unchecked {
@@ -1036,7 +1131,7 @@ contract Perp {
                 }
             }
 
-            // update global fee tracker
+            // 4e. Update Global Fee Tracker
             if (result.liquidity > 0) {
                 unchecked {
                     // FullMath.mulDiv isn't needed as the numerator can't overflow uint256 since tokens have a max
@@ -1046,6 +1141,7 @@ contract Perp {
                 }
             }
 
+            // 4f. Handle Tick Crossing
             // Shift tick if we reached the next price, and preemptively decrement for zeroForOne swaps to tickNext - 1.
             // If the swap doesn't continue (if amountRemaining == 0 or sqrtPriceLimit is met), slot0.tick will be 1
             // less
@@ -1055,6 +1151,7 @@ contract Perp {
             if (result.sqrtPriceX96 == step.sqrtPriceNextX96) {
                 // if the tick is initialized, run the tick transition
                 if (step.initialized) {
+                    // Update funding growth at the tick
                     tickGrowthInfo.cross(
                         step.tickNext,
                         Tick.GrowthInfo({
@@ -1159,7 +1256,13 @@ contract Perp {
         }
     }
 
-    function liveMark() public view returns (uint256) {
+    /**
+     * @notice Returns the current mark price from the Uniswap V4 pool.
+     * @dev Mark price is calculated as price = sqrtPrice^2 / 2^96.
+     * @return markPriceX96 The current mark price (Q96)
+     */
+    function liveMark() public view returns (uint256 markPriceX96) {
+        // Get current sqrt price from the pool and convert to price
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
         return _sqrtPriceX96ToPriceX96(sqrtPriceX96);
     }
