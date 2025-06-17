@@ -2,8 +2,14 @@
 pragma solidity ^0.8.26;
 
 import { BitMath } from "@uniswap/v4-core/src/libraries/BitMath.sol";
+import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 
 library Tick {
+    using StateLibrary for IPoolManager;
+
+    /// @dev Funding helpers per tick
     struct GrowthInfo {
         int256 twPremiumX96;
         int256 twPremiumDivBySqrtPriceX96;
@@ -101,17 +107,17 @@ library Tick {
     /// @param tick The starting tick
     /// @param tickSpacing The spacing between usable ticks
     /// @param lte Whether to search for the next initialized tick to the left (less than or equal to the starting tick)
-    /// @param tickBitmap The bitmap word containing the tick
     /// @return next The next initialized or uninitialized tick up to 256 ticks away from the current tick
     /// @return initialized Whether the next tick is initialized, as the function only searches within up to 256 ticks
     function nextInitializedTickWithinOneWord(
+        IPoolManager poolManager,
+        PoolId poolId,
         int24 tick,
         int24 tickSpacing,
-        bool lte,
-        uint256 tickBitmap
+        bool lte
     )
         internal
-        pure
+        view
         returns (int24 next, bool initialized)
     {
         unchecked {
@@ -121,7 +127,7 @@ library Tick {
                 (int16 wordPos, uint8 bitPos) = position(compressed);
                 // all the 1s at or to the right of the current bitPos
                 uint256 mask = type(uint256).max >> (uint256(type(uint8).max) - bitPos);
-                uint256 masked = tickBitmap & mask;
+                uint256 masked = poolManager.getTickBitmap(poolId, wordPos) & mask;
 
                 // if there are no initialized ticks to the right of or at the current tick, return rightmost in the
                 // word
@@ -135,7 +141,7 @@ library Tick {
                 (int16 wordPos, uint8 bitPos) = position(++compressed);
                 // all the 1s at or to the left of the bitPos
                 uint256 mask = ~((1 << bitPos) - 1);
-                uint256 masked = tickBitmap & mask;
+                uint256 masked = poolManager.getTickBitmap(poolId, wordPos) & mask;
 
                 // if there are no initialized ticks to the left of the current tick, return leftmost in the word
                 initialized = masked != 0;
