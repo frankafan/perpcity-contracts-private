@@ -1,42 +1,67 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { AccountingToken } from "./AccountingToken.sol";
+// ──────────────────────────────
+// External Imports
+// ──────────────────────────────
+
+// OpenZeppelin
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+// Uniswap V4 - Types
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
 import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
+import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
+import { BalanceDelta, BalanceDeltaLibrary } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+
+// Uniswap V4 - Interfaces
 import { IHooks } from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
+
+// Uniswap V4 - Libraries: Math
 import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { IBeacon } from "./interfaces/IBeacon.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
-import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
-import { Pool } from "@uniswap/v4-core/src/libraries/Pool.sol";
-import { BalanceDelta, BalanceDeltaLibrary } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import { SwapMath } from "@uniswap/v4-core/src/libraries/SwapMath.sol";
-import { BitMath } from "@uniswap/v4-core/src/libraries/BitMath.sol";
-import { ProtocolFeeLibrary } from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
-import { UnsafeMath } from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
-import { FixedPoint128 } from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
 import { LiquidityMath } from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
+import { FixedPoint128 } from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
+import { UnsafeMath } from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
+
+// Uniswap V4 - Libraries: Pool/Fees
+import { Pool } from "@uniswap/v4-core/src/libraries/Pool.sol";
+import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import { ProtocolFeeLibrary } from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
+import { SwapMath } from "@uniswap/v4-core/src/libraries/SwapMath.sol";
+import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import { CustomRevert } from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
+
+// Uniswap V4 - Utilities
+import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+
+// Other External
+import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
+import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
+
+// ──────────────────────────────
+// Internal Project Imports
+// ──────────────────────────────
+
+// Core Contracts
+import { AccountingToken } from "./AccountingToken.sol";
+import { IBeacon } from "./interfaces/IBeacon.sol";
+
+// Utilities / Libraries
 import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
 import { Tick } from "./libraries/Tick.sol";
-import { CustomRevert } from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
 import { Funding } from "./libraries/Funding.sol";
 import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
 import { FixedPoint192 } from "./libraries/FixedPoint192.sol";
-import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 import { TokenMath } from "./libraries/TokenMath.sol";
 import { MoreSignedMath } from "./libraries/MoreSignedMath.sol";
 
 contract Perp {
     using StateLibrary for IPoolManager;
     using Tick for mapping(int24 => Tick.GrowthInfo);
+    using Tick for IPoolManager;
     using SafeCast for *;
     using ProtocolFeeLibrary for *;
     using LPFeeLibrary for uint24;
@@ -44,84 +69,116 @@ contract Perp {
     using TokenMath for uint256;
     using TokenMath for uint128;
 
+    // ──────────────
+    // Type Declarations
+    // ──────────────
+
+    /// @dev Stores addresses of core Uniswap V4 contracts used by the protocol.
     struct UniswapV4Contracts {
-        address poolManager;
-        address router;
-        address positionManager;
-        address permit2;
+        address poolManager; // Uniswap V4 PoolManager contract
+        address router; // Uniswap V4 UniversalRouter contract
+        address positionManager; // Uniswap V4 PositionManager contract
+        address permit2; // Permit2 contract for token approvals
     }
 
+    /// @dev Stores protocol configuration parameters (fees, margin, leverage, etc.).
     struct PerpConfig {
-        address usdc;
-        address beacon;
-        uint24 tradingFee;
-        uint128 minMargin;
-        uint128 maxMargin;
-        uint128 minOpeningLeverageX96;
-        uint128 maxOpeningLeverageX96;
-        uint128 liquidationMarginRatioX96;
-        uint128 liquidationFeeX96;
-        uint128 liquidationFeeSplitX96;
+        address usdc; // USDC token address
+        address beacon; // Index price oracle (Beacon)
+        uint24 tradingFee; // Trading fee (basis points)
+        uint128 minMargin; // Minimum margin required
+        uint128 maxMargin; // Maximum margin allowed
+        uint128 minOpeningLeverageX96; // Minimum leverage (Q96)
+        uint128 maxOpeningLeverageX96; // Maximum leverage (Q96)
+        uint128 liquidationMarginRatioX96; // Liquidation margin ratio (Q96)
+        uint128 liquidationFeeX96; // Liquidation fee (Q96)
+        uint128 liquidationFeeSplitX96; // Split of liquidation fee (Q96)
     }
 
+    /// @dev Stores Uniswap V4 pool configuration (tick spacing, hook, initial price).
     struct UniswapV4PoolConfig {
-        int24 tickSpacing;
-        address hook;
-        uint160 startingSqrtPriceX96;
+        int24 tickSpacing; // Tick spacing for the pool
+        address hook; // PerpHook contract address
+        uint160 startingSqrtPriceX96; // Initial sqrt price (Q96)
     }
 
+    /// @dev Represents a Maker (LP) position, including margin, liquidity, and funding helper variables.
     struct MakerPosition {
-        address holder;
-        int24 tickLower;
-        int24 tickUpper;
-        uint160 sqrtPriceLowerX96;
-        uint160 sqrtPriceUpperX96;
-        uint128 margin;
-        uint128 liquidity;
-        uint128 perpsBorrowed;
-        uint128 usdBorrowed;
-        int128 entryTwPremiumX96;
-        int128 entryTwPremiumDivBySqrtMarkX96;
+        address holder; // Owner of the position
+        int24 tickLower; // Lower tick of the LP range
+        int24 tickUpper; // Upper tick of the LP range
+        uint160 sqrtPriceLowerX96; // Sqrt price at lower tick (Q96)
+        uint160 sqrtPriceUpperX96; // Sqrt price at upper tick (Q96)
+        uint128 margin; // Margin posted by the maker
+        uint128 liquidity; // Liquidity provided
+        uint128 perpsBorrowed; // Perp AT borrowed (for LP accounting)
+        uint128 usdBorrowed; // USD AT borrowed (for LP accounting)
+        int128 entryTwPremiumX96; // Funding accumulator at entry (Q96)
+        int128 entryTwPremiumDivBySqrtMarkX96; // Funding accumulator (divided by sqrt mark) at entry (Q96)
     }
 
+    /// @dev Represents a Taker (trader) position, including margin, size, direction, and funding helper variables.
     struct TakerPosition {
-        address holder;
-        bool isLong;
-        uint128 size;
-        uint128 margin;
-        uint128 entryValue;
-        int128 entryTwPremiumX96;
+        address holder; // Owner of the position
+        bool isLong; // True if long, false if short
+        uint128 size; // Position size (in Perp AT)
+        uint128 margin; // Margin posted by the taker
+        uint128 entryValue; // Entry value in USD AT
+        int128 entryTwPremiumX96; // Funding accumulator at entry (Q96)
     }
 
-    IPoolManager private immutable POOL_MANAGER;
-    IUniversalRouter private immutable ROUTER;
-    IPositionManager private immutable POSITION_MANAGER;
+    // ──────────────
+    // State Variables
+    // ──────────────
+
+    // --- Core contract addresses and configuration ---
+    IPoolManager private immutable POOL_MANAGER; // Uniswap V4 pool manager
+    IUniversalRouter private immutable ROUTER; // Uniswap V4 router
+    IPositionManager private immutable POSITION_MANAGER; // Uniswap V4 position manager
+    IERC20 public immutable USDC; // USDC token used for margin
+    IBeacon public immutable BEACON; // Index price oracle
+
+    // --- Protocol parameters (immutable) ---
+    uint24 private immutable TRADING_FEE; // Trading fee in basis points
+    uint128 public immutable MIN_MARGIN; // Minimum margin required
+    uint128 public immutable MAX_MARGIN; // Maximum margin allowed
+    uint128 public immutable MIN_OPENING_LEVERAGE_X96; // Minimum leverage (Q96)
+    uint128 public immutable MAX_OPENING_LEVERAGE_X96; // Maximum leverage (Q96)
+    uint128 private immutable LIQUIDATION_MARGIN_RATIO_X96; // Liquidation margin ratio (Q96)
+    uint128 private immutable LIQUIDATION_FEE_X96; // Liquidation fee (Q96)
+    uint128 private immutable LIQUIDATION_FEE_SPLIT_X96; // Split of liquidation fee (Q96)
+
+    // --- Funding and price state ---
+    int128 public fundingRateX96; // Current funding rate (Q96)
+    int128 private twPremiumX96; // time weighted premium growth (Q96)
+    int128 private twPremiumDivBySqrtMarkX96; // time weighted premium growth divided by sqrt mark (Q96)
+    int128 private lastFundingUpdate; // Last funding update timestamp
+
+    // --- Position tracking ---
+    uint128 private nextTakerPosId; // Next taker position ID
+    mapping(uint256 => TakerPosition) public takerPositions; // All taker positions
+    mapping(uint256 => MakerPosition) public makerPositions; // All maker positions
+    mapping(int24 => Tick.GrowthInfo) private tickGrowthInfo; // Funding helpers per tick
+
+    // --- Constants ---
+    int256 private constant FUNDING_PERIOD = 1 days; // Funding period in seconds
 
     PoolKey private poolKey;
     PoolId private poolId;
 
-    IERC20 public immutable USDC;
-    IBeacon public immutable BEACON;
-    uint24 private immutable TRADING_FEE;
-    uint128 public immutable MIN_MARGIN;
-    uint128 public immutable MAX_MARGIN;
-    uint128 public immutable MIN_OPENING_LEVERAGE_X96;
-    uint128 public immutable MAX_OPENING_LEVERAGE_X96;
-    uint128 private immutable LIQUIDATION_MARGIN_RATIO_X96;
-    uint128 private immutable LIQUIDATION_FEE_X96;
-    uint128 private immutable LIQUIDATION_FEE_SPLIT_X96;
+    // ──────────────
+    // Events
+    // ──────────────
 
-    int128 public fundingRateX96;
-    int128 private twPremiumX96;
-    int128 private twPremiumDivBySqrtMarkX96;
-    int128 private lastFundingUpdate;
-    uint128 private nextTakerPosId;
-    mapping(uint256 takerPosId => TakerPosition takerPos) public takerPositions;
-    mapping(uint256 makerPosId => MakerPosition makerPos) public makerPositions;
-    mapping(int24 => Tick.GrowthInfo) private tickGrowthInfo;
-
-    int256 private constant FUNDING_PERIOD = 1 days;
-
+    /// @notice Emitted when a maker (LP) position is opened/closed.
+    /// @param makerPosId Unique ID of the maker position
+    /// @param holder Address of the position owner
+    /// @param margin Margin posted by the maker
+    /// @param liquidity Liquidity provided to the pool
+    /// @param tickLower Lower tick of the LP range
+    /// @param tickUpper Upper tick of the LP range
+    /// @param markPrice Mark price at the time of opening/closing (from V4 pool)
+    /// @param indexPrice Index price at the time of opening (from Beacon)
     event MakerPositionOpened(
         uint256 makerPosId,
         address holder,
@@ -132,6 +189,10 @@ contract Perp {
         uint256 markPrice,
         uint256 indexPrice
     );
+
+    /// @param isLiquidatable True if position was liquidated
+    /// @param perpsBorrowed Amount of Perp AT borrowed
+    /// @param usdBorrowed Amount of USD AT borrowed
     event MakerPositionClosed(
         uint256 makerPosId,
         address holder,
@@ -140,29 +201,62 @@ contract Perp {
         uint256 usdBorrowed,
         uint256 markPrice
     );
+
+    /// @notice Emitted when a taker (trader) position is opened/closed.
+    /// @param takerPosId Unique ID of the taker position
+    /// @param holder Address of the position owner
+    /// @param isLong True if long, false if short
+    /// @param size Position size (in Perp AT)
+    /// @param markPrice Mark price at the time of opening/closing (from V4 pool)
+    /// @param indexPrice Index price at the time of opening (from Beacon)
     event TakerPositionOpened(
         uint256 takerPosId, address holder, bool isLong, uint256 size, uint256 markPrice, uint256 indexPrice
     );
     event TakerPositionClosed(uint256 takerPosId, address holder, bool isLong, uint256 size, uint256 markPrice);
 
-    error MarginTooLow(uint256 desiredMargin, uint256 minMargin);
-    error MarginTooHigh(uint256 desiredMargin, uint256 maxMargin);
-    error LeverageTooLow(uint256 desiredLeverage, uint256 minOpeningLeverage);
-    error LeverageTooHigh(uint256 desiredLeverage, uint256 maxOpeningLeverage);
+    // ──────────────
+    // Errors
+    // ──────────────
+
+    /// @notice Thrown when the desired margin is outside allowed bounds.
+    /// @param desiredMargin The margin the user attempted to use
+    /// @param bound The minimum or maximum allowed margin
+    error MarginTooLow(uint256 desiredMargin, uint256 bound);
+    error MarginTooHigh(uint256 desiredMargin, uint256 bound);
+
+    /// @notice Thrown when the desired leverage is outside allowed bounds.
+    /// @param desiredLeverage The leverage the user attempted to use
+    /// @param bound The minimum or maximum allowed leverage
+    error LeverageTooLow(uint256 desiredLeverage, uint256 bound);
+    error LeverageTooHigh(uint256 desiredLeverage, uint256 bound);
+
+    /// @notice Thrown when an invalid close is attempted (e.g., by a non-owner or when not liquidatable).
+    /// @param caller The address attempting the close
+    /// @param positionHolder The owner of the position
+    /// @param isLiquidatable True if the position is liquidatable
     error InvalidClose(address caller, address positionHolder, bool isLiquidatable);
 
+    /**
+     * @notice Initializes the Perp contract, setting up Uniswap V4 pool, accounting tokens, and protocol parameters.
+     * @param uniswapV4Contracts Addresses of core Uniswap V4 contracts (PoolManager, Router, PositionManager, Permit2)
+     * @param perpConfig Protocol configuration parameters (USDC, beacon, fees, margin, leverage, liquidation)
+     * @param uniswapV4PoolConfig Uniswap V4 pool configuration (tick spacing, hook, initial price)
+     */
     constructor(
         UniswapV4Contracts memory uniswapV4Contracts,
         PerpConfig memory perpConfig,
         UniswapV4PoolConfig memory uniswapV4PoolConfig
     ) {
+        // Set up core Uniswap V4 contract references
         POOL_MANAGER = IPoolManager(uniswapV4Contracts.poolManager);
         ROUTER = IUniversalRouter(payable(uniswapV4Contracts.router));
         POSITION_MANAGER = IPositionManager(uniswapV4Contracts.positionManager);
 
+        // Set up USDC and index price oracle (Beacon)
         USDC = IERC20(perpConfig.usdc);
         BEACON = IBeacon(perpConfig.beacon);
 
+        // Set protocol parameters (fees, margin, leverage, liquidation)
         TRADING_FEE = perpConfig.tradingFee;
         MIN_MARGIN = perpConfig.minMargin;
         MAX_MARGIN = perpConfig.maxMargin;
@@ -172,9 +266,11 @@ contract Perp {
         LIQUIDATION_FEE_X96 = perpConfig.liquidationFeeX96;
         LIQUIDATION_FEE_SPLIT_X96 = perpConfig.liquidationFeeSplitX96;
 
+        // Deploy two accounting tokens (Perp AT and USD AT)
         AccountingToken accountingTokenA = new AccountingToken(type(uint128).max);
         AccountingToken accountingTokenB = new AccountingToken(type(uint128).max);
 
+        // Approve tokens for Uniswap V4 Router and PositionManager via Permit2
         UniswapV4Utility._approveTokenWithPermit2(
             uniswapV4Contracts.permit2, address(ROUTER), address(accountingTokenA), type(uint160).max, type(uint48).max
         );
@@ -197,10 +293,11 @@ contract Perp {
             type(uint48).max
         );
 
-        // assign smaller address to perpAccounting so that its always currency 0
+        // Assign accounting tokens: Perp AT is always currency0, USD AT is always currency1
         AccountingToken perpAccounting = accountingTokenA < accountingTokenB ? accountingTokenA : accountingTokenB;
         AccountingToken usdAccounting = accountingTokenA < accountingTokenB ? accountingTokenB : accountingTokenA;
 
+        // Set up Uniswap V4 pool key and pool ID
         poolKey = PoolKey({
             currency0: Currency.wrap(address(perpAccounting)),
             currency1: Currency.wrap(address(usdAccounting)),
@@ -210,9 +307,20 @@ contract Perp {
         });
         poolId = poolKey.toId();
 
+        // Initialize the Uniswap V4 pool with the starting sqrt price
         POOL_MANAGER.initialize(poolKey, uniswapV4PoolConfig.startingSqrtPriceX96);
     }
 
+    /**
+     * @notice Opens a new maker (LP) position by providing liquidity to the Uniswap V4 pool.
+     * @dev Validates margin and leverage, mints liquidity, initializes funding/tick state, and stores the position.
+     *      The user must approve USDC before calling this function.
+     * @param margin Amount of USDC margin to post
+     * @param liquidity Amount of liquidity to provide to the pool
+     * @param tickLower Lower tick of the LP range
+     * @param tickUpper Upper tick of the LP range
+     * @return makerPosId Unique ID of the newly created maker position
+     */
     function openMakerPosition(
         uint128 margin,
         uint128 liquidity,
@@ -222,27 +330,34 @@ contract Perp {
         external
         returns (uint256 makerPosId)
     {
+        // Validate margin is within allowed bounds
         _validateMargin(margin);
 
+        // Calculate sqrt prices for the tick range
         uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(tickUpper);
 
+        // Validate leverage for the given margin and liquidity
         _validateMakerLeverage(margin, liquidity, sqrtPriceLowerX96, sqrtPriceUpperX96);
 
+        // Check if ticks are already initialized in the pool
         (uint128 tickLowerLiquidityGrossBefore,,,) = POOL_MANAGER.getTickInfo(poolId, tickLower);
         (uint128 tickUpperLiquidityGrossBefore,,,) = POOL_MANAGER.getTickInfo(poolId, tickUpper);
 
+        // Update funding accumulators before minting liquidity
         _updateTwPremiums();
 
+        // Mint liquidity position in Uniswap V4 pool and get borrowed amounts
         uint256 perpsBorrowed;
         uint256 usdBorrowed;
         (makerPosId, perpsBorrowed, usdBorrowed) = UniswapV4Utility._mintLiquidityPosition(
             poolKey, POSITION_MANAGER, tickLower, tickUpper, liquidity, type(uint128).max, type(uint128).max
         );
 
+        // Update funding rate after minting
         _updateFundingRate();
 
-        // initialize ticks if there were not initialized before
+        // Initialize tick funding state if this is the first liquidity for these ticks
         if (tickLowerLiquidityGrossBefore == 0 || tickUpperLiquidityGrossBefore == 0) {
             (, int24 currentTick,,) = POOL_MANAGER.getSlot0(poolId);
             Tick.GrowthInfo memory growthInfo =
@@ -251,12 +366,12 @@ contract Perp {
             if (tickLowerLiquidityGrossBefore == 0) {
                 tickGrowthInfo.initialize(tickLower, currentTick, growthInfo);
             }
-
             if (tickUpperLiquidityGrossBefore == 0) {
                 tickGrowthInfo.initialize(tickUpper, currentTick, growthInfo);
             }
         }
 
+        // Store the new maker position with all relevant state
         makerPositions[makerPosId] = MakerPosition({
             holder: msg.sender,
             margin: margin,
@@ -271,36 +386,53 @@ contract Perp {
             entryTwPremiumDivBySqrtMarkX96: twPremiumDivBySqrtMarkX96
         });
 
+        // Transfer margin from the user to the contract
         USDC.transferFrom(msg.sender, address(this), margin);
     }
 
+    /**
+     * @notice Closes an existing maker (LP) position, burns liquidity, settles funding and PnL, and returns margin.
+     * @dev Calculates PnL and funding, handles liquidation if necessary, cleans up tick state, and transfers USDC.
+     * @param makerPosId Unique ID of the maker position to close
+     */
     function closeMakerPosition(uint256 makerPosId) external {
+        // ─────────────────────────────────────────────
+        // 1. Update Funding State and Burn Liquidity
+        // ─────────────────────────────────────────────
+
+        // Load the maker position from storage
         MakerPosition memory makerPos = makerPositions[makerPosId];
 
+        // Update funding accumulators before burning liquidity
         _updateTwPremiums();
 
+        // Burn liquidity position in Uniswap V4 pool and get received amounts
         (uint256 perpsReceived, uint256 usdReceived) =
             UniswapV4Utility._burnLiquidityPosition(poolKey, POSITION_MANAGER, makerPosId);
 
+        // Calculate PnL (aka Impermanent Loss/Gain): USD received minus USD borrowed, plus PnL from excess perps
         int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
         int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
         pnl += _settleExcessPerps(excessPerps);
 
+        // Update funding rate after burning
         _updateFundingRate();
 
+        // Check if ticks are now uninitialized and clean up tick state if needed
         (uint128 tickLowerLiquidityGrossAfter,,,) = POOL_MANAGER.getTickInfo(poolId, makerPos.tickLower);
         (uint128 tickUpperLiquidityGrossAfter,,,) = POOL_MANAGER.getTickInfo(poolId, makerPos.tickUpper);
 
         if (tickLowerLiquidityGrossAfter == 0) {
             tickGrowthInfo.clear(makerPos.tickLower);
         }
-
         if (tickUpperLiquidityGrossAfter == 0) {
             tickGrowthInfo.clear(makerPos.tickUpper);
         }
 
+        // Get current price and tick from the pool
         (uint160 sqrtPriceX96, int24 currentTick,,) = POOL_MANAGER.getSlot0(poolId);
 
+        // Calculate funding owed using the Funding library
         int256 funding = Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
             makerPos.perpsBorrowed.toInt256(),
             makerPos.entryTwPremiumX96,
@@ -315,8 +447,14 @@ contract Perp {
             )
         );
 
+        // Calculate effective margin after PnL and funding
         int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
 
+        // ─────────────────────────────────────────────
+        // 2. Handle Liquidation, Payout, and Cleanup
+        // ─────────────────────────────────────────────
+
+        // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
             delete makerPositions[makerPosId];
             emit MakerPositionClosed(
@@ -325,36 +463,50 @@ contract Perp {
             return;
         }
 
+        // Calculate liquidation fee
         uint256 liquidationFee = FullMath.mulDiv(uint256(effectiveMargin), LIQUIDATION_FEE_X96, FixedPoint96.UINT_Q96);
 
+        // Calculate notional value of the position
         (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
             sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
         );
-
         uint256 notionalValue = amount1 + amount0 * _sqrtPriceX96ToPriceX96(sqrtPriceX96);
 
+        // If margin after fee is below liquidation threshold, handle liquidation payout
         if (
             FullMath.mulDiv((uint256(effectiveMargin) - liquidationFee), FixedPoint96.UINT_Q96, notionalValue)
                 < LIQUIDATION_MARGIN_RATIO_X96
         ) {
+            // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
             USDC.transfer(msg.sender, (uint256(effectiveMargin) - liquidationFee).scale18To6());
             USDC.transfer(
                 msg.sender,
                 FullMath.mulDiv(liquidationFee.scale18To6(), LIQUIDATION_FEE_SPLIT_X96, FixedPoint96.UINT_Q96)
             );
         } else if (makerPos.holder == msg.sender) {
+            // If not liquidated and caller is the owner, return full margin
             USDC.transfer(msg.sender, uint256(effectiveMargin).scale18To6());
         } else {
+            // Otherwise, revert
             revert InvalidClose(msg.sender, makerPos.holder, false);
         }
 
+        // Emit event and delete the position
         emit MakerPositionClosed(
             makerPosId, makerPos.holder, false, makerPos.perpsBorrowed, makerPos.usdBorrowed, liveMark()
         );
-
         delete makerPositions[makerPosId];
     }
 
+    /**
+     * @notice Opens a new taker (trader) position by swapping between USD AT and Perp AT in the Uniswap V4 pool.
+     * @dev Validates margin and leverage, performs swap, updates funding, stores the position, and emits an event.
+     *      The user must approve USDC before calling this function.
+     * @param isLong True to open a long position, false for short
+     * @param margin Amount of USDC margin to post
+     * @param leverageX96 Leverage to use for the position (Q96)
+     * @return takerPosId Unique ID of the newly created taker position
+     */
     function openTakerPosition(
         bool isLong,
         uint128 margin,
@@ -363,15 +515,18 @@ contract Perp {
         external
         returns (uint256 takerPosId)
     {
+        // Validate Margin and Leverage
         _validateMargin(margin);
         _validateLeverage(leverageX96);
 
+        // Update funding accumulators
         _updateTwPremiums();
 
+        // Perform Swap in Uniswap V4 Pool
         uint128 perpsMoved;
         uint128 usdMoved = FullMath.mulDiv(margin.scale6To18(), leverageX96, FixedPoint96.UINT_Q96).toUint128();
         if (isLong) {
-            // usd moved in
+            // For long: swap USD in for Perp out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: int128(usdMoved),
@@ -381,11 +536,10 @@ contract Perp {
                     lpFeeOverride: TRADING_FEE
                 })
             );
-            // perps moved out
             perpsMoved =
                 UniswapV4Utility._swapExactInputSingle(ROUTER, poolKey, false, usdMoved, 0, TRADING_FEE).toUint128();
         } else {
-            // usd moved out
+            // For short: swap Perp in for USD out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: -int128(usdMoved),
@@ -395,11 +549,11 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
-            // perps moved in
             perpsMoved = UniswapV4Utility._swapExactOutputSingle(ROUTER, poolKey, true, usdMoved, type(uint128).max, 0)
                 .toUint128();
         }
 
+        // Update funding rate and store position
         _updateFundingRate();
 
         takerPosId = nextTakerPosId;
@@ -413,22 +567,39 @@ contract Perp {
         });
         nextTakerPosId++;
 
+        // Transfer margin from the user to the contract
         USDC.transferFrom(msg.sender, address(this), margin);
 
+        // Emit event with mark and index price
         (uint256 indexPrice,) = BEACON.getData();
-
         emit TakerPositionOpened(takerPosId, msg.sender, isLong, perpsMoved, liveMark(), indexPrice);
     }
 
+    /**
+     * @notice Closes an existing taker (trader) position, performs the reverse swap, settles funding and PnL, and
+     * returns margin.
+     * @dev Calculates PnL and funding, handles liquidation if necessary, transfers USDC, and emits an event.
+     * @param takerPosId Unique ID of the taker position to close
+     */
     function closeTakerPosition(uint256 takerPosId) external {
+        // ─────────────────────────────────────────────
+        // 1. Reverse Swap, Funding, and PnL Calculation
+        // ─────────────────────────────────────────────
+
+        // Update funding accumulators before closing
         _updateTwPremiums();
 
+        // Load the taker position from storage
         TakerPosition memory takerPos = takerPositions[takerPosId];
 
         uint256 notionalValue;
         int256 pnl;
+
+        // Perform the reverse swap in Uniswap V4 pool to close the position
+        // For a long: sell Perp AT for USD AT (swap in Perp, get out USD)
         if (takerPos.isLong) {
             uint128 amountIn = takerPos.size;
+            // Simulate swap: Perp in, USD out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: int128(amountIn),
@@ -438,10 +609,14 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // Execute swap: Perp in, USD out
             notionalValue = UniswapV4Utility._swapExactInputSingle(ROUTER, poolKey, true, amountIn, 0, 0);
+            // PnL: USD received minus entry value
             pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
         } else {
+            // For a short: buy back Perp AT with USD AT (swap in USD, get out Perp)
             uint128 amountOut = takerPos.size;
+            // Simulate swap: USD in, Perp out
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: -int128(amountOut),
@@ -451,55 +626,84 @@ contract Perp {
                     lpFeeOverride: TRADING_FEE
                 })
             );
+            // Execute swap: USD in, Perp out
             notionalValue = UniswapV4Utility._swapExactOutputSingle(
                 ROUTER, poolKey, false, amountOut, type(uint128).max, TRADING_FEE
             );
+            // PnL: entry value minus USD paid to close
             pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
         }
 
+        // Update funding rate after closing
         _updateFundingRate();
 
+        // Calculate funding owed for the taker position
+        // Funding is the difference in time-weighted premium, scaled by position size
         int256 funding = MoreSignedMath.mulDiv(
             twPremiumX96 - takerPos.entryTwPremiumX96, takerPos.size.toInt256(), FixedPoint96.UINT_Q96
         );
+        // Shorts pay/receive the opposite funding sign
         if (!takerPos.isLong) funding = -funding;
 
+        // Calculate effective margin after PnL and funding
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
 
+        // ─────────────────────────────────────────────
+        // 2. Liquidation, Payout, and Cleanup
+        // ─────────────────────────────────────────────
+
+        // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
             delete takerPositions[takerPosId];
             emit TakerPositionClosed(takerPosId, takerPos.holder, takerPos.isLong, takerPos.size, liveMark());
             return;
         }
 
+        // Calculate liquidation fee
         uint256 liquidationFee = FullMath.mulDiv(uint256(effectiveMargin), LIQUIDATION_FEE_X96, FixedPoint96.UINT_Q96);
 
-        // check if isliquidatable, then liquidate, else check caller, then close, else revert
+        // If margin after fee is below liquidation threshold, handle liquidation payout
         if (
             FullMath.mulDiv((uint256(effectiveMargin) - liquidationFee), FixedPoint96.UINT_Q96, notionalValue)
                 < LIQUIDATION_MARGIN_RATIO_X96
         ) {
+            // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
             USDC.transfer(takerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6());
             USDC.transfer(
                 msg.sender,
                 FullMath.mulDiv(liquidationFee.scale18To6(), LIQUIDATION_FEE_SPLIT_X96, FixedPoint96.UINT_Q96)
             );
         } else if (takerPos.holder == msg.sender) {
+            // If not liquidated and caller is the owner, return full margin
             USDC.transfer(takerPos.holder, uint256(effectiveMargin).scale18To6());
         } else {
+            // Otherwise, revert
             revert InvalidClose(msg.sender, takerPos.holder, false);
         }
 
+        // Emit event and delete the position
         emit TakerPositionClosed(takerPosId, takerPos.holder, takerPos.isLong, takerPos.size, liveMark());
-
         delete takerPositions[takerPosId];
     }
 
+    /**
+     * @notice Validates that the provided margin is within allowed bounds.
+     * @dev Reverts if margin is less than MIN_MARGIN or greater than MAX_MARGIN.
+     * @param margin The margin amount to validate
+     */
     function _validateMargin(uint256 margin) internal view {
         if (margin < MIN_MARGIN) revert MarginTooLow(margin, MIN_MARGIN);
         if (margin > MAX_MARGIN) revert MarginTooHigh(margin, MAX_MARGIN);
     }
 
+    /**
+     * @notice Validates that the leverage for a maker position is within allowed bounds.
+     * @dev Converts liquidity to notional value, computes leverage, and checks against min/max.
+     * @param margin Margin posted by the maker
+     * @param liquidity Liquidity provided
+     * @param sqrtPriceLowerX96 Sqrt price at lower tick (Q96)
+     * @param sqrtPriceUpperX96 Sqrt price at upper tick (Q96)
+     */
     function _validateMakerLeverage(
         uint256 margin,
         uint128 liquidity,
@@ -509,33 +713,54 @@ contract Perp {
         internal
         view
     {
+        // Get current pool price
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
 
+        // Convert liquidity to token amounts at current price
         (uint256 amount0, uint256 amount1) =
             LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
 
+        // Convert amount0 (Perp AT) to USD AT using current price
         uint256 amount0InAmount1 =
             FullMath.mulDiv(amount0, _sqrtPriceX96ToPriceX96(sqrtPriceX96), FixedPoint96.UINT_Q96);
 
+        // Notional value is sum of USD AT and Perp AT (converted to USD AT)
         uint256 notionalValue = amount1 + amount0InAmount1;
 
+        // Compute leverage as notional value divided by margin
         uint256 leverageX96 = FullMath.mulDiv(notionalValue, FixedPoint96.UINT_Q96, margin.scale6To18());
 
+        // Check leverage bounds
         _validateLeverage(leverageX96);
     }
 
+    /**
+     * @notice Validates that the leverage is within allowed bounds.
+     * @param leverageX96 The leverage value to validate (Q96)
+     */
     function _validateLeverage(uint256 leverageX96) internal view {
         if (leverageX96 < MIN_OPENING_LEVERAGE_X96) revert LeverageTooLow(leverageX96, MIN_OPENING_LEVERAGE_X96);
         if (leverageX96 > MAX_OPENING_LEVERAGE_X96) revert LeverageTooHigh(leverageX96, MAX_OPENING_LEVERAGE_X96);
     }
 
+    /**
+     * @notice Converts a sqrt price (Q96) to a price (Q96).
+     * @param sqrtPriceX96 The sqrt price (Q96)
+     * @return priceX96 The price (Q96)
+     */
     function _sqrtPriceX96ToPriceX96(uint256 sqrtPriceX96) internal pure returns (uint256) {
         return FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.UINT_Q96);
     }
 
+    /**
+     * @notice Settles excess Perp AT when closing a maker position.
+     * @dev If excessPerps < 0, buys Perp AT to pay back debt; if > 0, sells excess Perp AT. Returns PnL from the swap.
+     * @param excessPerps The net Perp AT to settle (positive = excess, negative = debt)
+     * @return pnl The profit or loss from settling excess Perp AT
+     */
     function _settleExcessPerps(int128 excessPerps) internal returns (int256 pnl) {
         if (excessPerps < 0) {
-            // buy more perps to pay back debt
+            // Negative: buy Perp AT to pay back debt
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: excessPerps,
@@ -545,13 +770,14 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // PnL is negative: cost to buy back Perp AT
             pnl = -(
                 UniswapV4Utility._swapExactOutputSingle(
                     ROUTER, poolKey, false, (-excessPerps).toUint128(), type(uint128).max, 0
                 ).toInt256()
             );
         } else {
-            // sell excess perps
+            // Positive: sell excess Perp AT
             _simulateSwap(
                 Pool.SwapParams({
                     amountSpecified: excessPerps,
@@ -561,40 +787,69 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
+            // PnL is positive: proceeds from selling Perp AT
             pnl =
                 UniswapV4Utility._swapExactInputSingle(ROUTER, poolKey, true, excessPerps.toUint128(), 0, 0).toInt256();
         }
     }
 
-    /// @notice Updates twPremiumX96 & twPremiumDivBySqrtMarkX96
-    /// @dev Should be called before interactions with the pool
+    /**
+     * @notice Updates the time-weighted premium accumulators for funding payments.
+     * @dev Should be called before pool interactions. Updates twPremiumX96 and twPremiumDivBySqrtMarkX96 based on time
+     * elapsed.
+     */
     function _updateTwPremiums() internal {
+        // Calculate time since last funding update
         int128 timeSinceLastUpdate = block.timestamp.toInt128() - lastFundingUpdate;
-        // funding owed per second * time since last update (in seconds)
+        // Update twPremiumX96: funding owed per second * time since last update
         twPremiumX96 += fundingRateX96 * timeSinceLastUpdate;
 
+        // Get current sqrt price from the pool
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
+        // Update twPremiumDivBySqrtMarkX96: funding per second, scaled by sqrt price
         twPremiumDivBySqrtMarkX96 += MoreSignedMath.mulDiv(
             fundingRateX96, int256(timeSinceLastUpdate) * FixedPoint96.INT_Q96, sqrtPriceX96
         ).toInt128();
 
+        // Update last funding update timestamp
         lastFundingUpdate = block.timestamp.toInt128();
     }
 
+    /**
+     * @notice Updates the funding rate based on the difference between mark price and index price.
+     * @dev Funding rate is set so a notional size 1 long position pays (markPrice - indexPrice) over the next funding
+     * period.
+     */
     function _updateFundingRate() internal {
+        // Get current sqrt price from the pool
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
+        // Calculate mark price from sqrt price
         uint256 markPriceX96 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), FixedPoint96.UINT_Q96);
 
+        // Get index price from the beacon
         (uint256 indexPriceX96,) = BEACON.getData();
 
-        // a notional size 1 long position would pay (markPrice - indexPrice) over the next FUNDING_PERIOD
+        // Funding rate: (markPrice - indexPrice) / FUNDING_PERIOD
         fundingRateX96 = ((int256(markPriceX96) - int256(indexPriceX96)) / FUNDING_PERIOD).toInt128();
     }
 
+    /**
+     * @notice Simulates a swap in the Uniswap V4 pool, updating protocol state as if a swap occurred.
+     * @dev Re-implements Uniswap V4 swap logic with additional funding and tick growth logic for the Perp protocol.
+     *      Used for margin, funding, and PnL calculations without actually moving tokens.
+     * @param params Swap parameters (amount, direction, price limits, fee override)
+     * @return swapDelta The net token delta for the swap
+     * @return amountToProtocol The protocol fee collected
+     * @return swapFee The swap fee used
+     * @return result The final pool state after the simulated swap
+     */
     function _simulateSwap(Pool.SwapParams memory params)
         internal
         returns (BalanceDelta swapDelta, uint256 amountToProtocol, uint24 swapFee, Pool.SwapResult memory result)
     {
+        // ─────────────────────────────────────────────
+        // 1. Initialize Swap State
+        // ─────────────────────────────────────────────
         (uint160 slot0sqrtPriceX96, int24 slot0tick, uint24 slot0protocolFee, uint24 slot0lpFee) =
             POOL_MANAGER.getSlot0(poolId);
         bool zeroForOne = params.zeroForOne;
@@ -612,6 +867,9 @@ contract Perp {
         // initialize to the current liquidity
         result.liquidity = POOL_MANAGER.getLiquidity(poolId);
 
+        // ─────────────────────────────────────────────
+        // 2. Determine Swap Fee
+        // ─────────────────────────────────────────────
         {
             // if the beforeSwap hook returned a valid fee override, use that as the LP fee, otherwise load from storage
             // lpFee, swapFee, and protocolFee are all in pips
@@ -621,6 +879,9 @@ contract Perp {
             swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
         }
 
+        // ─────────────────────────────────────────────
+        // 3. Check Swap Feasibility
+        // ─────────────────────────────────────────────
         // a swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely
         // consumed by the fee
         if (swapFee >= SwapMath.MAX_SWAP_FEE) {
@@ -654,17 +915,21 @@ contract Perp {
             }
         }
 
+        // ─────────────────────────────────────────────
+        // 4. Main Swap Loop
+        // ─────────────────────────────────────────────
+
         Pool.StepComputations memory step;
 
         (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128) = POOL_MANAGER.getFeeGrowthGlobals(poolId);
         step.feeGrowthGlobalX128 = zeroForOne ? feeGrowthGlobal0X128 : feeGrowthGlobal1X128;
 
-        // continue swapping as long as we haven't used the entire input/output and haven't reached the price limit
+        // Continue swapping as long as we haven't used the entire input/output and haven't reached the price limit
         while (!(amountSpecifiedRemaining == 0 || result.sqrtPriceX96 == params.sqrtPriceLimitX96)) {
+            // 4a. Find Next Tick and Target Price
             step.sqrtPriceStartX96 = result.sqrtPriceX96;
-
             (step.tickNext, step.initialized) =
-                _nextInitializedTickWithinOneWord(result.tick, params.tickSpacing, zeroForOne);
+                POOL_MANAGER.nextInitializedTickWithinOneWord(poolId, result.tick, params.tickSpacing, zeroForOne);
 
             // ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if (step.tickNext <= TickMath.MIN_TICK) {
@@ -677,6 +942,7 @@ contract Perp {
             // get the price for the next tick
             step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);
 
+            // 4b. Compute Swap Step
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
                 result.sqrtPriceX96,
@@ -686,6 +952,7 @@ contract Perp {
                 swapFee
             );
 
+            // 4c. Update Amounts and Fees
             // if exactOutput
             if (params.amountSpecified > 0) {
                 unchecked {
@@ -700,6 +967,7 @@ contract Perp {
                 amountCalculated += step.amountOut.toInt256();
             }
 
+            // 4d. Handle Protocol Fee
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
             if (protocolFee > 0) {
                 unchecked {
@@ -717,7 +985,7 @@ contract Perp {
                 }
             }
 
-            // update global fee tracker
+            // 4e. Update Global Fee Tracker
             if (result.liquidity > 0) {
                 unchecked {
                     // FullMath.mulDiv isn't needed as the numerator can't overflow uint256 since tokens have a max
@@ -727,6 +995,7 @@ contract Perp {
                 }
             }
 
+            // 4f. Handle Tick Crossing
             // Shift tick if we reached the next price, and preemptively decrement for zeroForOne swaps to tickNext - 1.
             // If the swap doesn't continue (if amountRemaining == 0 or sqrtPriceLimit is met), slot0.tick will be 1
             // less
@@ -736,6 +1005,7 @@ contract Perp {
             if (result.sqrtPriceX96 == step.sqrtPriceNextX96) {
                 // if the tick is initialized, run the tick transition
                 if (step.initialized) {
+                    // Update funding growth at the tick
                     tickGrowthInfo.cross(
                         step.tickNext,
                         Tick.GrowthInfo({
@@ -763,84 +1033,13 @@ contract Perp {
         }
     }
 
-    /// @notice Returns the next initialized tick contained in the same word (or adjacent word) as the tick that is
-    /// either
-    /// to the left (less than or equal to) or right (greater than) of the given tick
-    /// @param tick The starting tick
-    /// @param tickSpacing The spacing between usable ticks
-    /// @param lte Whether to search for the next initialized tick to the left (less than or equal to the starting tick)
-    /// @return next The next initialized or uninitialized tick up to 256 ticks away from the current tick
-    /// @return initialized Whether the next tick is initialized, as the function only searches within up to 256 ticks
-    function _nextInitializedTickWithinOneWord(
-        int24 tick,
-        int24 tickSpacing,
-        bool lte
-    )
-        internal
-        view
-        returns (int24 next, bool initialized)
-    {
-        unchecked {
-            int24 compressed = _compress(tick, tickSpacing);
-
-            if (lte) {
-                (int16 wordPos, uint8 bitPos) = _position(compressed);
-                // all the 1s at or to the right of the current bitPos
-                uint256 mask = type(uint256).max >> (uint256(type(uint8).max) - bitPos);
-                uint256 masked = POOL_MANAGER.getTickBitmap(poolId, wordPos) & mask;
-
-                // if there are no initialized ticks to the right of or at the current tick, return rightmost in the
-                // word
-                initialized = masked != 0;
-                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
-                next = initialized
-                    ? (compressed - int24(uint24(bitPos - BitMath.mostSignificantBit(masked)))) * tickSpacing
-                    : (compressed - int24(uint24(bitPos))) * tickSpacing;
-            } else {
-                // start from the word of the next tick, since the current tick state doesn't matter
-                (int16 wordPos, uint8 bitPos) = _position(++compressed);
-                // all the 1s at or to the left of the bitPos
-                uint256 mask = ~((1 << bitPos) - 1);
-                uint256 masked = POOL_MANAGER.getTickBitmap(poolId, wordPos) & mask;
-
-                // if there are no initialized ticks to the left of the current tick, return leftmost in the word
-                initialized = masked != 0;
-                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
-                next = initialized
-                    ? (compressed + int24(uint24(BitMath.leastSignificantBit(masked) - bitPos))) * tickSpacing
-                    : (compressed + int24(uint24(type(uint8).max - bitPos))) * tickSpacing;
-            }
-        }
-    }
-
-    function _compress(int24 tick, int24 tickSpacing) internal pure returns (int24 compressed) {
-        // compressed = tick / tickSpacing;
-        // if (tick < 0 && tick % tickSpacing != 0) compressed--;
-        assembly ("memory-safe") {
-            tick := signextend(2, tick)
-            tickSpacing := signextend(2, tickSpacing)
-            compressed :=
-                sub(
-                    sdiv(tick, tickSpacing),
-                    // if (tick < 0 && tick % tickSpacing != 0) then tick % tickSpacing < 0, vice versa
-                    slt(smod(tick, tickSpacing), 0)
-                )
-        }
-    }
-
-    /// @notice Computes the position in the mapping where the initialized bit for a tick lives
-    /// @param tick The tick for which to compute the position
-    /// @return wordPos The key in the mapping containing the word in which the bit is stored
-    /// @return bitPos The bit position in the word where the flag is stored
-    function _position(int24 tick) internal pure returns (int16 wordPos, uint8 bitPos) {
-        assembly ("memory-safe") {
-            // signed arithmetic shift right
-            wordPos := sar(8, signextend(2, tick))
-            bitPos := and(tick, 0xff)
-        }
-    }
-
-    function liveMark() public view returns (uint256) {
+    /**
+     * @notice Returns the current mark price from the Uniswap V4 pool.
+     * @dev Mark price is calculated as price = sqrtPrice^2 / 2^96.
+     * @return markPriceX96 The current mark price (Q96)
+     */
+    function liveMark() public view returns (uint256 markPriceX96) {
+        // Get current sqrt price from the pool and convert to price
         (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(poolId);
         return _sqrtPriceX96ToPriceX96(sqrtPriceX96);
     }
