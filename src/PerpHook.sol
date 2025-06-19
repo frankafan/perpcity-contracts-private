@@ -7,9 +7,15 @@ import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import { SwapParams, ModifyLiquidityParams } from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
 import { PoolId, PoolIdLibrary } from "@uniswap/v4-core/src/types/PoolId.sol";
-import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import { BalanceDelta } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {
+    BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta
+} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import { IMsgSender } from "@uniswap/v4-periphery/src/interfaces/IMsgSender.sol";
+import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
+import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
+import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 
 /// @title PerpHook
 /// @notice A Uniswap V4 hook contract that manages perpetual protocol interactions
@@ -46,7 +52,7 @@ contract PerpHook is BaseHook {
             afterSwap: false,
             beforeDonate: true,
             afterDonate: false,
-            beforeSwapReturnDelta: false,
+            beforeSwapReturnDelta: true,
             afterSwapReturnDelta: false,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
@@ -68,10 +74,7 @@ contract PerpHook is BaseHook {
         override
         returns (bytes4)
     {
-        if (key.fee != LPFeeLibrary.DYNAMIC_FEE_FLAG) revert PoolFeeNotDynamic();
-
         perps[key.toId()] = sender;
-
         return BaseHook.beforeInitialize.selector;
     }
 
@@ -120,7 +123,7 @@ contract PerpHook is BaseHook {
     }
 
     /// @notice Hook called before executing a swap
-    /// @dev Verifies that the caller is the authorized perpetual contract and sets the dynamic fee
+    /// @dev Verifies that the caller is the authorized perp and charges fee if specified
     /// @param sender The address executing the swap
     /// @param key The pool key containing pool parameters
     /// @param params The swap parameters
@@ -133,15 +136,30 @@ contract PerpHook is BaseHook {
         bytes calldata hookData
     )
         internal
-        view
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        if (IMsgSender(sender).msgSender() != perps[key.toId()]) revert CallerNotPerp(sender, perps[key.toId()]);
+        address msgSender = IMsgSender(sender).msgSender();
+        if (msgSender != perps[key.toId()]) revert CallerNotPerp(msgSender, perps[key.toId()]);
 
-        uint24 feeWithFlag = abi.decode(hookData, (uint24)) | LPFeeLibrary.OVERRIDE_FEE_FLAG;
+        uint24 fee = abi.decode(hookData, (uint24));
+        bool exactIn = params.amountSpecified < 0;
+        bool zeroForOne = params.zeroForOne;
 
-        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, feeWithFlag);
+        uint256 absAmountSpecified = exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
+
+        // ensure fee is non-zero and currency1 is the token specified (opening a position)
+        if (fee > 0 && (exactIn && !zeroForOne) || (!exactIn && zeroForOne)) {
+            uint256 feeAmount = FullMath.mulDiv(absAmountSpecified, fee, LPFeeLibrary.MAX_LP_FEE);
+
+            // distribute fee to LPs
+            poolManager.donate(key, 0, feeAmount, bytes(""));
+
+            return (this.beforeSwap.selector, toBeforeSwapDelta(SafeCast.toInt128(feeAmount), 0), 0);
+        }
+
+        // if no fee charged, return zero delta
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     /// @notice Hook called before donating to the pool

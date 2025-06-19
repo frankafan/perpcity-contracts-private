@@ -301,7 +301,7 @@ contract Perp {
         poolKey = PoolKey({
             currency0: Currency.wrap(address(perpAccounting)),
             currency1: Currency.wrap(address(usdAccounting)),
-            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
+            fee: 0,
             tickSpacing: uniswapV4PoolConfig.tickSpacing,
             hooks: IHooks(uniswapV4PoolConfig.hook)
         });
@@ -549,8 +549,9 @@ contract Perp {
                     lpFeeOverride: 0
                 })
             );
-            perpsMoved = UniswapV4Utility._swapExactOutputSingle(ROUTER, poolKey, true, usdMoved, type(uint128).max, 0)
-                .toUint128();
+            perpsMoved = UniswapV4Utility._swapExactOutputSingle(
+                ROUTER, poolKey, true, usdMoved, type(uint128).max, TRADING_FEE
+            ).toUint128();
         }
 
         // Update funding rate and store position
@@ -627,9 +628,8 @@ contract Perp {
                 })
             );
             // Execute swap: USD in, Perp out
-            notionalValue = UniswapV4Utility._swapExactOutputSingle(
-                ROUTER, poolKey, false, amountOut, type(uint128).max, TRADING_FEE
-            );
+            notionalValue =
+                UniswapV4Utility._swapExactOutputSingle(ROUTER, poolKey, false, amountOut, type(uint128).max, 0);
             // PnL: entry value minus USD paid to close
             pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
         }
