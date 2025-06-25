@@ -3,8 +3,12 @@ pragma solidity ^0.8.26;
 
 import { TestnetBeacon } from "./TestnetBeacon.sol";
 
+event BeaconCreated(address beacon);
+
 contract TestnetBeaconFactory {
     function createBeacon(address owner) external returns (address) {
-        return address(new TestnetBeacon(owner));
+        TestnetBeacon beacon = new TestnetBeacon(owner);
+        emit BeaconCreated(address(beacon));
+        return address(beacon);
     }
 }
