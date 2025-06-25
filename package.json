@@ -27,7 +27,9 @@
     "deploy:perp:base-sepolia": "source .env && forge script --chain 84532 script/DeployPerp.s.sol:DeployPerp --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify -vv --interactives 1",
     "open-maker-position:base-sepolia": "source .env && forge script --chain 84532 script/OpenMakerPosition.s.sol:OpenMakerPosition --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vv --interactives 1",
     "register-perp:base-sepolia": "source .env && forge script --chain 84532 script/RegisterPerp.s.sol:RegisterPerp --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vv --interactives 1",
-    "update-beacon:base-sepolia": "source .env && forge script --chain 84532 script/UpdateBeacon.s.sol:UpdateBeacon --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vv --interactives 1"
+    "update-beacon:base-sepolia": "source .env && forge script --chain 84532 script/UpdateBeacon.s.sol:UpdateBeacon --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vv --interactives 1",
+    "deploy:testnet-beacon-factory:base-sepolia": "source .env && forge script --chain 84532 script/DeployTestnetBeaconFactory.s.sol:DeployTestnetBeaconFactory --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify -vv --interactives 1",
+    "deploy:beacon-registry:base-sepolia": "source .env && forge script --chain 84532 script/DeployBeaconRegistry.s.sol:DeployBeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify -vv --interactives 1"
   },
   "packageManager": "pnpm@9.5.0+sha512.140036830124618d624a2187b50d04289d5a087f326c9edfc0ccd733d76c4f52c3a313d4fc148794a2a9d81553016004e6742e8cf850670268a7387fc220c903"
 }

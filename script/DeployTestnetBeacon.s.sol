@@ -9,11 +9,12 @@ contract DeployTestnetBeacon is Script {
     TestnetBeacon public beacon;
 
     uint256 public constant STARTING_PRICE = 50 * FixedPoint96.Q96;
+    address public constant OWNER = 0x0000000000000000000000000000000000000000;
 
     function run() public {
         vm.startBroadcast();
 
-        beacon = new TestnetBeacon();
+        beacon = new TestnetBeacon(OWNER);
 
         beacon.updateData(bytes(""), bytes(abi.encode(STARTING_PRICE)));
 

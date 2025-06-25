@@ -70,7 +70,7 @@ contract PerpTest is Test, Fixtures {
 
         usdc = new TestnetUSDC();
 
-        beacon = new TestnetBeacon();
+        beacon = new TestnetBeacon(address(this));
         beacon.updateData(bytes(""), bytes(abi.encode(44 * FixedPoint96.Q96)));
 
         // Deploy the hook to an address with the correct flag

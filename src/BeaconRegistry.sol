@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity ^0.8.26;
+
+import { IBeacon } from "./interfaces/IBeacon.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+contract BeaconRegistry is Ownable {
+    mapping(address => bool) public beacons;
+
+    event BeaconRegistered(address beacon);
+    event BeaconUnregistered(address beacon);
+
+    error InvalidBeacon(address beacon);
+
+    constructor(address owner) Ownable(owner) { }
+
+    function registerBeacon(address beacon) external {
+        if (beacon == address(0)) revert InvalidBeacon(beacon);
+
+        beacons[beacon] = true;
+        emit BeaconRegistered(beacon);
+    }
+
+    function unregisterBeacon(address beacon) external onlyOwner {
+        beacons[beacon] = false;
+        emit BeaconUnregistered(beacon);
+    }
+}
