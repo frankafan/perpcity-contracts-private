@@ -7,8 +7,8 @@ event BeaconCreated(address beacon);
 
 contract TestnetBeaconFactory {
     function createBeacon(address owner) external returns (address) {
-        TestnetBeacon beacon = new TestnetBeacon(owner);
-        emit BeaconCreated(address(beacon));
-        return address(beacon);
+        address beacon = address(new TestnetBeacon(owner));
+        emit BeaconCreated(beacon);
+        return beacon;
     }
 }
