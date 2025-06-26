@@ -10,22 +10,46 @@ import { IV4Router } from "@uniswap/v4-periphery/src/interfaces/IV4Router.sol";
 import { Actions } from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
+import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import { ExternalContracts } from "./ExternalContracts.sol";
 
 library UniswapV4Utility {
-    function _approveTokenWithPermit2(
-        address permit2,
+    using StateLibrary for IPoolManager;
+
+    function approveTokenWithPermit2(
+        IPermit2 permit2,
         address approvedAddress,
-        address token,
+        IERC20 token,
         uint160 amount,
         uint48 expiration
     )
         internal
     {
-        IERC20(token).approve(permit2, type(uint256).max);
-        IPermit2(permit2).approve(token, approvedAddress, amount, expiration);
+        token.approve(address(permit2), type(uint256).max);
+        permit2.approve(address(token), approvedAddress, amount, expiration);
     }
 
-    function _swapExactInputSingle(
+    function approveRouterAndPositionManager(
+        ExternalContracts.Contracts memory externalContracts,
+        IERC20 currency0,
+        IERC20 currency1
+    )
+        internal
+    {
+        IPermit2 permit2 = externalContracts.permit2;
+        address router = address(externalContracts.router);
+        address positionManager = address(externalContracts.positionManager);
+
+        approveTokenWithPermit2(permit2, router, currency0, type(uint160).max, type(uint48).max);
+        approveTokenWithPermit2(permit2, router, currency1, type(uint160).max, type(uint48).max);
+        approveTokenWithPermit2(permit2, positionManager, currency0, type(uint160).max, type(uint48).max);
+        approveTokenWithPermit2(permit2, positionManager, currency1, type(uint160).max, type(uint48).max);
+    }
+
+    function swapExactInSingle(
         IUniversalRouter router,
         PoolKey memory poolKey,
         bool zeroForOne,
@@ -79,7 +103,7 @@ library UniswapV4Utility {
         amountOut = outputCurrencyBalanceAfter - outputCurrencyBalanceBefore;
     }
 
-    function _swapExactOutputSingle(
+    function swapExactOutSingle(
         IUniversalRouter router,
         PoolKey memory poolKey,
         bool zeroForOne,
@@ -133,9 +157,9 @@ library UniswapV4Utility {
         amountIn = inputCurrencyBalanceBefore - inputCurrencyBalanceAfter;
     }
 
-    function _mintLiquidityPosition(
-        PoolKey memory poolKey,
+    function mintLiquidityPosition(
         IPositionManager positionManager,
+        PoolKey memory poolKey,
         int24 tickLower,
         int24 tickUpper,
         uint256 liquidity,
@@ -168,9 +192,9 @@ library UniswapV4Utility {
         amount1In = amount1BalanceBefore - amount1BalanceAfter;
     }
 
-    function _burnLiquidityPosition(
-        PoolKey memory poolKey,
+    function burnLiquidityPosition(
         IPositionManager positionManager,
+        PoolKey memory poolKey,
         uint256 tokenId
     )
         internal
@@ -193,5 +217,16 @@ library UniswapV4Utility {
 
         amount0Out = amount0BalanceAfter - amount0BalanceBefore;
         amount1Out = amount1BalanceAfter - amount1BalanceBefore;
+    }
+
+    function getSqrtPriceX96AndTick(IPoolManager poolManager, PoolId poolId) internal view returns (uint160, int24) {
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolId);
+        int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+        return (sqrtPriceX96, currentTick);
+    }
+
+    function isTickInitialized(IPoolManager poolManager, PoolId poolId, int24 tick) internal view returns (bool) {
+        (uint128 tickLowerLiquidityGrossBefore,,,) = poolManager.getTickInfo(poolId, tick);
+        return tickLowerLiquidityGrossBefore > 0;
     }
 }

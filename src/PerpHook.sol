@@ -1,55 +1,111 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { BaseHook } from "v4-periphery/src/utils/BaseHook.sol";
 import { Hooks } from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import { SwapParams, ModifyLiquidityParams } from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
-import { PoolId, PoolIdLibrary } from "@uniswap/v4-core/src/types/PoolId.sol";
-import { BalanceDelta } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
+import { BalanceDelta, BalanceDeltaLibrary } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {
     BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta
 } from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import { LPFeeLibrary } from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
-import { IMsgSender } from "@uniswap/v4-periphery/src/interfaces/IMsgSender.sol";
-import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
 import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
+import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import { BaseHook } from "@uniswap/v4-periphery/src/utils/BaseHook.sol";
+import { IMsgSender } from "@uniswap/v4-periphery/src/interfaces/IMsgSender.sol";
+import { Tick } from "./libraries/Tick.sol";
+import { Perp } from "./libraries/Perp.sol";
+import { Positions } from "./libraries/Positions.sol";
+import { ExternalContracts } from "./libraries/ExternalContracts.sol";
+import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
 
-/// @title PerpHook
-/// @notice A Uniswap V4 hook contract that manages perpetual protocol interactions
-/// @dev This hook ensures that only authorized perpetual contracts can interact with specific pools
 contract PerpHook is BaseHook {
-    using PoolIdLibrary for PoolKey;
+    using Perp for *;
+    using Tick for mapping(int24 => Tick.GrowthInfo);
+    using UniswapV4Utility for IPoolManager;
+    using StateLibrary for IPoolManager;
 
-    /// @notice Maps pool IDs to their associated perpetual contract addresses
-    mapping(PoolId => address) public perps;
+    ExternalContracts.Contracts public externalContracts;
 
-    /// @notice Error thrown when a non-perpetual contract attempts to interact with a pool
-    /// @param caller The address that attempted the interaction
-    /// @param perp The authorized perpetual contract address for the pool
-    error CallerNotPerp(address caller, address perp);
+    mapping(PoolId => Perp.Info) public perps;
 
-    /// @notice Error thrown when a pool is initialized without dynamic fees
-    error PoolFeeNotDynamic();
+    error InvalidCaller(address caller, address expectedCaller);
 
-    /// @notice Creates a new PerpHook instance
-    /// @param _poolManager The Uniswap V4 pool manager contract
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) { }
+    modifier validateCaller(address hookSender) {
+        address msgSender = IMsgSender(hookSender).msgSender();
+        if (msgSender != address(this)) revert InvalidCaller(msgSender, address(this));
+        _;
+    }
 
-    /// @notice Returns the hook permissions configuration
-    /// @return permissions The set of hook permissions for this contract
+    constructor(ExternalContracts.Contracts memory _externalContracts) BaseHook(_externalContracts.poolManager) {
+        externalContracts = _externalContracts;
+    }
+
+    // ------------
+    // PERP ACTIONS
+    // ------------
+
+    function createPerp(Perp.CreatePerpParams memory params) external returns (PoolId perpId) {
+        return perps.createPerp(externalContracts, params);
+    }
+
+    function openMakerPosition(
+        PoolId perpId,
+        Perp.OpenMakerPositionParams memory params
+    )
+        external
+        returns (uint256 makerPosId)
+    {
+        return perps[perpId].openMakerPosition(externalContracts, perpId, params);
+    }
+
+    function closeMakerPosition(PoolId perpId, uint256 makerPosId) external {
+        perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId);
+    }
+
+    function openTakerPosition(
+        PoolId perpId,
+        Perp.OpenTakerPositionParams memory params
+    )
+        external
+        returns (uint256 takerPosId)
+    {
+        return perps[perpId].openTakerPosition(externalContracts, perpId, params);
+    }
+
+    function closeTakerPosition(PoolId perpId, uint256 takerPosId) external {
+        perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId);
+    }
+
+    // ----
+    // VIEW
+    // ----
+
+    function getMakerPosition(PoolId perpId, uint256 makerPosId) external view returns (Positions.MakerInfo memory) {
+        return perps[perpId].makerPositions[makerPosId];
+    }
+
+    function getTakerPosition(PoolId perpId, uint256 takerPosId) external view returns (Positions.TakerInfo memory) {
+        return perps[perpId].takerPositions[takerPosId];
+    }
+
+    // -----
+    // HOOKS
+    // -----
+
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: true,
+            beforeInitialize: false,
             afterInitialize: false,
             beforeAddLiquidity: true,
-            afterAddLiquidity: false,
+            afterAddLiquidity: true,
             beforeRemoveLiquidity: true,
-            afterRemoveLiquidity: false,
+            afterRemoveLiquidity: true,
             beforeSwap: true,
-            afterSwap: false,
+            afterSwap: true,
             beforeDonate: true,
             afterDonate: false,
             beforeSwapReturnDelta: true,
@@ -59,76 +115,109 @@ contract PerpHook is BaseHook {
         });
     }
 
-    /// @notice Hook called before pool initialization
-    /// @dev Ensures the pool uses dynamic fees and records the perpetual contract address
-    /// @param sender The address initializing the pool
-    /// @param key The pool key containing pool parameters
-    /// @param sqrtPriceX96 The initial sqrt price of the pool
-    /// @return The selector of the beforeInitialize function
-    function _beforeInitialize(
-        address sender,
-        PoolKey calldata key,
-        uint160 sqrtPriceX96
-    )
-        internal
-        override
-        returns (bytes4)
-    {
-        perps[key.toId()] = sender;
-        return BaseHook.beforeInitialize.selector;
-    }
-
-    /// @notice Hook called before adding liquidity
-    /// @dev Verifies that the caller is the authorized perpetual contract for the pool
-    /// @param sender The address adding liquidity
-    /// @param key The pool key containing pool parameters
-    /// @param params The liquidity modification parameters
-    /// @param hookData Additional data passed to the hook
-    /// @return The selector of the beforeAddLiquidity function
     function _beforeAddLiquidity(
         address sender,
         PoolKey calldata key,
         ModifyLiquidityParams calldata params,
-        bytes calldata hookData
+        bytes calldata // hookData
     )
         internal
-        view
         override
+        validateCaller(sender)
         returns (bytes4)
     {
-        if (IMsgSender(sender).msgSender() != perps[key.toId()]) revert CallerNotPerp(sender, perps[key.toId()]);
+        PoolId poolId = key.toId();
+
+        bool isTickLowerInitializedBefore = poolManager.isTickInitialized(poolId, params.tickLower);
+        bool isTickUpperInitializedBefore = poolManager.isTickInitialized(poolId, params.tickUpper);
+
+        (uint160 sqrtPriceX96, int24 currentTick) = poolManager.getSqrtPriceX96AndTick(poolId);
+
+        perps[poolId].updateTwPremiums(sqrtPriceX96);
+
+        if (!isTickLowerInitializedBefore) {
+            perps[poolId].tickGrowthInfo.initialize(
+                params.tickLower, currentTick, perps[poolId].twPremiumX96, perps[poolId].twPremiumDivBySqrtPriceX96
+            );
+        }
+        if (!isTickUpperInitializedBefore) {
+            perps[poolId].tickGrowthInfo.initialize(
+                params.tickUpper, currentTick, perps[poolId].twPremiumX96, perps[poolId].twPremiumDivBySqrtPriceX96
+            );
+        }
+
         return BaseHook.beforeAddLiquidity.selector;
     }
 
-    /// @notice Hook called before removing liquidity
-    /// @dev Verifies that the caller is the authorized perpetual contract for the pool
-    /// @param sender The address removing liquidity
-    /// @param key The pool key containing pool parameters
-    /// @param params The liquidity modification parameters
-    /// @param hookData Additional data passed to the hook
-    /// @return The selector of the beforeRemoveLiquidity function
+    function _afterAddLiquidity(
+        address, // sender
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata, // params
+        BalanceDelta, // delta
+        BalanceDelta, // feesAccrued
+        bytes calldata // hookData
+    )
+        internal
+        override
+        returns (bytes4, BalanceDelta)
+    {
+        PoolId poolId = key.toId();
+
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolId);
+
+        perps[poolId].updatePremiumPerSecond(sqrtPriceX96);
+
+        return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
     function _beforeRemoveLiquidity(
         address sender,
         PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        bytes calldata hookData
+        ModifyLiquidityParams calldata, // params
+        bytes calldata // hookData
     )
         internal
-        view
         override
+        validateCaller(sender)
         returns (bytes4)
     {
-        if (IMsgSender(sender).msgSender() != perps[key.toId()]) revert CallerNotPerp(sender, perps[key.toId()]);
+        PoolId poolId = key.toId();
+
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolId);
+
+        perps[poolId].updateTwPremiums(sqrtPriceX96);
+
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
-    /// @notice Hook called before executing a swap
-    /// @dev Verifies that the caller is the authorized perp and charges fee if specified
-    /// @param sender The address executing the swap
-    /// @param key The pool key containing pool parameters
-    /// @param params The swap parameters
-    /// @param hookData Additional data containing the fee to be used
-    /// @return The selector of the beforeSwap function, zero delta, and the fee with override flag
+    function _afterRemoveLiquidity(
+        address, // sender
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        BalanceDelta, // delta
+        BalanceDelta, // feesAccrued
+        bytes calldata // hookData
+    )
+        internal
+        override
+        returns (bytes4, BalanceDelta)
+    {
+        PoolId poolId = key.toId();
+
+        bool isTickLowerInitializedAfter = poolManager.isTickInitialized(poolId, params.tickLower);
+        bool isTickUpperInitializedAfter = poolManager.isTickInitialized(poolId, params.tickUpper);
+
+        if (!isTickLowerInitializedAfter) {
+            perps[poolId].tickGrowthInfo.clear(params.tickLower);
+        }
+        if (!isTickUpperInitializedAfter) {
+            perps[poolId].tickGrowthInfo.clear(params.tickUpper);
+        }
+
+        return (BaseHook.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    // only set non-zero fee if the swap is for opening a position
     function _beforeSwap(
         address sender,
         PoolKey calldata key,
@@ -137,52 +226,80 @@ contract PerpHook is BaseHook {
     )
         internal
         override
+        validateCaller(sender)
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        address msgSender = IMsgSender(sender).msgSender();
-        if (msgSender != perps[key.toId()]) revert CallerNotPerp(msgSender, perps[key.toId()]);
+        PoolId poolId = key.toId();
+        (uint160 sqrtPriceX96, int24 startingTick) = poolManager.getSqrtPriceX96AndTick(poolId);
 
-        uint24 fee = abi.decode(hookData, (uint24));
-        bool exactIn = params.amountSpecified < 0;
-        bool zeroForOne = params.zeroForOne;
+        perps[poolId].updateTwPremiums(sqrtPriceX96);
 
-        uint256 absAmountSpecified = exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
-
-        // ensure fee is non-zero and currency1 is the token specified (opening a position)
-        if (fee > 0 && (exactIn && !zeroForOne) || (!exactIn && zeroForOne)) {
-            uint256 feeAmount = FullMath.mulDiv(absAmountSpecified, fee, LPFeeLibrary.MAX_LP_FEE);
-
-            // distribute fee to LPs
-            poolManager.donate(key, 0, feeAmount, bytes(""));
-
-            return (this.beforeSwap.selector, toBeforeSwapDelta(SafeCast.toInt128(feeAmount), 0), 0);
+        assembly {
+            tstore(poolId, startingTick)
         }
 
-        // if no fee charged, return zero delta
-        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        uint24 fee = abi.decode(hookData, (uint24));
+        if (fee == 0) {
+            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        }
+
+        uint256 absAmountSpecified =
+            params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
+        uint256 feeAmount = FullMath.mulDiv(absAmountSpecified, fee, LPFeeLibrary.MAX_LP_FEE);
+
+        poolManager.donate(key, 0, feeAmount, bytes(""));
+
+        return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(SafeCast.toInt128(feeAmount), 0), 0);
     }
 
-    /// @notice Hook called before donating to the pool
-    /// @dev Verifies that the caller is the authorized perpetual contract for the pool
-    /// @param sender The address donating to the pool
-    /// @param key The pool key containing pool parameters
-    /// @param amount0 The amount of token0 being donated
-    /// @param amount1 The amount of token1 being donated
-    /// @param hookData Additional data passed to the hook
-    /// @return The selector of the beforeDonate function
+    function _afterSwap(
+        address, // sender
+        PoolKey calldata key,
+        SwapParams calldata, // params
+        BalanceDelta, // delta
+        bytes calldata // hookData
+    )
+        internal
+        override
+        returns (bytes4, int128)
+    {
+        PoolId poolId = key.toId();
+
+        int24 startingTick;
+        assembly {
+            startingTick := tload(poolId)
+        }
+
+        (uint160 sqrtPriceX96, int24 endingTick) = poolManager.getSqrtPriceX96AndTick(poolId);
+
+        perps[poolId].updatePremiumPerSecond(sqrtPriceX96);
+
+        perps[poolId].tickGrowthInfo.crossTicksInRange(
+            poolManager,
+            poolId,
+            startingTick,
+            endingTick,
+            key.tickSpacing,
+            perps[poolId].twPremiumX96,
+            perps[poolId].twPremiumDivBySqrtPriceX96
+        );
+
+        return (BaseHook.afterSwap.selector, 0);
+    }
+
     function _beforeDonate(
         address sender,
-        PoolKey calldata key,
-        uint256 amount0,
-        uint256 amount1,
-        bytes calldata hookData
+        PoolKey calldata, // key
+        uint256, // amount0
+        uint256, // amount1
+        bytes calldata // hookData
     )
         internal
         view
         override
+        validateCaller(sender)
         returns (bytes4)
     {
-        if (IMsgSender(sender).msgSender() != perps[key.toId()]) revert CallerNotPerp(sender, perps[key.toId()]);
         return BaseHook.beforeDonate.selector;
     }
 }

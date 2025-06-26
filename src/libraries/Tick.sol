@@ -8,6 +8,7 @@ import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 
 library Tick {
     using StateLibrary for IPoolManager;
+    using Tick for mapping(int24 => Tick.GrowthInfo);
 
     /// @dev Funding helpers per tick
     struct GrowthInfo {
@@ -27,28 +28,29 @@ library Tick {
         mapping(int24 => GrowthInfo) storage self,
         int24 tick,
         int24 currentTick,
-        GrowthInfo memory globalGrowthInfo
+        int256 twPremiumX96,
+        int256 twPremiumDivBySqrtPriceX96
     )
         internal
     {
         if (tick <= currentTick) {
             GrowthInfo storage growthInfo = self[tick];
-            growthInfo.twPremiumX96 = globalGrowthInfo.twPremiumX96;
-            growthInfo.twPremiumDivBySqrtPriceX96 = globalGrowthInfo.twPremiumDivBySqrtPriceX96;
+            growthInfo.twPremiumX96 = twPremiumX96;
+            growthInfo.twPremiumDivBySqrtPriceX96 = twPremiumDivBySqrtPriceX96;
         }
     }
 
     function cross(
         mapping(int24 => GrowthInfo) storage self,
         int24 tick,
-        GrowthInfo memory globalGrowthInfo
+        int256 twPremiumX96,
+        int256 twPremiumDivBySqrtPriceX96
     )
         internal
     {
         GrowthInfo storage growthInfo = self[tick];
-        growthInfo.twPremiumX96 = globalGrowthInfo.twPremiumX96 - growthInfo.twPremiumX96;
-        growthInfo.twPremiumDivBySqrtPriceX96 =
-            globalGrowthInfo.twPremiumDivBySqrtPriceX96 - growthInfo.twPremiumDivBySqrtPriceX96;
+        growthInfo.twPremiumX96 = twPremiumX96 - growthInfo.twPremiumX96;
+        growthInfo.twPremiumDivBySqrtPriceX96 = twPremiumDivBySqrtPriceX96 - growthInfo.twPremiumDivBySqrtPriceX96;
     }
 
     function clear(mapping(int24 => GrowthInfo) storage self, int24 tick) internal {
@@ -178,5 +180,28 @@ library Tick {
             wordPos := sar(8, signextend(2, tick))
             bitPos := and(tick, 0xff)
         }
+    }
+
+    function crossTicksInRange(
+        mapping(int24 => Tick.GrowthInfo) storage self,
+        IPoolManager poolManager,
+        PoolId poolId,
+        int24 startTick,
+        int24 endTick,
+        int24 tickSpacing,
+        int256 twPremiumX96,
+        int256 twPremiumDivBySqrtPriceX96
+    )
+        internal
+    {
+        int24 currentTick = startTick;
+        bool isInitialized;
+
+        do {
+            (currentTick, isInitialized) =
+                nextInitializedTickWithinOneWord(poolManager, poolId, currentTick, tickSpacing, false);
+
+            if (isInitialized) self.cross(currentTick, twPremiumX96, twPremiumDivBySqrtPriceX96);
+        } while (!isInitialized || currentTick < endTick);
     }
 }

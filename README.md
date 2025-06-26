@@ -36,6 +36,12 @@ or
 pnpm test
 ```
 
+## Scripts
+
+1. set SENDER & related envs
+2. run `cast wallet import devKey --interactive` to set private key for given `SENDER_ADDRESS`
+3. run scripts in package.json
+
 ## License
 
 This project is licensed under GPL-3.0.
