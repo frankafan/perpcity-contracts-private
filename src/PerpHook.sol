@@ -21,12 +21,14 @@ import { Perp } from "./libraries/Perp.sol";
 import { Positions } from "./libraries/Positions.sol";
 import { ExternalContracts } from "./libraries/ExternalContracts.sol";
 import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
+import { LivePositionDetailsReverter } from "./libraries/LivePositionDetailsReverter.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
     using Tick for mapping(int24 => Tick.GrowthInfo);
     using UniswapV4Utility for IPoolManager;
     using StateLibrary for IPoolManager;
+    using LivePositionDetailsReverter for *;
 
     ExternalContracts.Contracts public externalContracts;
 
@@ -81,7 +83,7 @@ contract PerpHook is BaseHook {
     }
 
     // ----
-    // VIEW
+    // VIEW / READ
     // ----
 
     function getMakerPosition(PoolId perpId, uint256 makerPosId) external view returns (Positions.MakerInfo memory) {
@@ -90,6 +92,21 @@ contract PerpHook is BaseHook {
 
     function getTakerPosition(PoolId perpId, uint256 takerPosId) external view returns (Positions.TakerInfo memory) {
         return perps[perpId].takerPositions[takerPosId];
+    }
+
+    // can't be view since it calls a non-view function that reverts with live position details
+    // this is inefficient to call on-chain
+    function liveTakerDetails(
+        PoolId perpId,
+        uint256 takerPosId
+    )
+        external
+        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
+    {
+        try perps[perpId].closeTakerPositionRevert(externalContracts, perpId, takerPosId) { }
+        catch (bytes memory reason) {
+            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
+        }
     }
 
     // -----

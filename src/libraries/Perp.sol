@@ -25,6 +25,7 @@ import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import { TokenMath } from "./TokenMath.sol";
 import { Funding } from "./Funding.sol";
 import { ExternalContracts } from "./ExternalContracts.sol";
+import { LivePositionDetailsReverter } from "./LivePositionDetailsReverter.sol";
 
 library Perp {
     using SafeCast for *;
@@ -408,6 +409,49 @@ library Perp {
         emit TakerPositionClosed(takerPosId, isLiquidatable, sqrtPriceX96ToPriceX96(sqrtPriceX96));
 
         delete self.takerPositions[takerPosId];
+    }
+
+    // calculates state changes as if the position was closed normally, then reverts
+    // used for view functions
+    function closeTakerPositionRevert(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        PoolId perpId,
+        uint256 takerPosId
+    )
+        public
+    {
+        Positions.TakerInfo memory takerPos = self.takerPositions[takerPosId];
+
+        uint256 notionalValue;
+        int256 pnl;
+
+        if (takerPos.isLong) {
+            uint128 amountIn = takerPos.size;
+            notionalValue = contracts.router.swapExactInSingle(self.poolKey, true, amountIn, 0, 0);
+            pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
+        } else {
+            uint128 amountOut = takerPos.size;
+            notionalValue = contracts.router.swapExactOutSingle(self.poolKey, false, amountOut, UINT128_MAX, 0);
+            pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
+        }
+
+        int256 funding = MoreSignedMath.mulDiv(
+            self.twPremiumX96 - takerPos.entryTwPremiumX96, takerPos.size.toInt256(), FixedPoint96.UINT_Q96
+        );
+        if (!takerPos.isLong) funding = -funding;
+
+        int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
+        if (effectiveMargin < 0) {
+            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
+        }
+
+        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+
+        bool isLiquidatable =
+            isPositionLiquidatable(self.leverageBounds, notionalValue, uint256(effectiveMargin), liquidationFee);
+
+        LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
     }
 
     function validateOpeningMargin(MarginBounds memory bounds, uint128 margin) public pure {

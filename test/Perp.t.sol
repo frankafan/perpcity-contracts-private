@@ -261,6 +261,15 @@ contract PerpTest is Test, Fixtures {
 
         vm.startPrank(taker1);
 
+        (int256 taker1Pnl, int256 taker1Funding, int256 taker1EffectiveMargin, bool taker1IsLiquidatable) =
+            perpHook.liveTakerDetails(poolId, taker1PosId);
+        console2.log("liveTakerDetails before state change");
+        console2.log("taker1 pnl", taker1Pnl);
+        console2.log("taker1 funding", taker1Funding);
+        console2.log("taker1 effectiveMargin", taker1EffectiveMargin);
+        console2.log("taker1 isLiquidatable", taker1IsLiquidatable);
+        console2.log();
+
         perpHook.closeTakerPosition(poolId, taker1PosId);
 
         console2.log("taker1 closes position with id", taker1PosId);
@@ -269,6 +278,15 @@ contract PerpTest is Test, Fixtures {
 
         vm.stopPrank();
         vm.startPrank(taker2);
+
+        (int256 taker2Pnl, int256 taker2Funding, int256 taker2EffectiveMargin, bool taker2IsLiquidatable) =
+            perpHook.liveTakerDetails(poolId, taker2PosId);
+        console2.log("liveTakerDetails before state change");
+        console2.log("taker2 pnl", taker2Pnl);
+        console2.log("taker2 funding", taker2Funding);
+        console2.log("taker2 effectiveMargin", taker2EffectiveMargin);
+        console2.log("taker2 isLiquidatable", taker2IsLiquidatable);
+        console2.log();
 
         perpHook.closeTakerPosition(poolId, taker2PosId);
 
