@@ -96,11 +96,15 @@ library Perp {
         uint256 leverageX96;
     }
 
-    event PerpCreated(PoolId perpId, uint256 markPriceX96);
-    event MakerPositionOpened(uint256 makerPosId, Positions.MakerInfo makerPos, uint256 markPriceX96);
-    event TakerPositionOpened(uint256 takerPosId, Positions.TakerInfo takerPos, uint256 markPriceX96);
-    event MakerPositionClosed(uint256 makerPosId, bool wasLiquidation, uint256 markPriceX96);
-    event TakerPositionClosed(uint256 takerPosId, bool wasLiquidation, uint256 markPriceX96);
+    event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
+    event MakerPositionOpened(PoolId perpId, uint256 makerPosId, Positions.MakerInfo makerPos, uint256 markPriceX96);
+    event TakerPositionOpened(PoolId perpId, uint256 takerPosId, Positions.TakerInfo takerPos, uint256 markPriceX96);
+    event MakerPositionClosed(
+        PoolId perpId, uint256 makerPosId, bool wasLiquidated, Positions.MakerInfo makerPos, uint256 markPriceX96
+    );
+    event TakerPositionClosed(
+        PoolId perpId, uint256 takerPosId, bool wasLiquidated, Positions.TakerInfo takerPos, uint256 markPriceX96
+    );
 
     error OpeningMarginOutOfBounds(uint128 margin, uint128 minMargin, uint128 maxMargin);
     error OpeningLeverageOutOfBounds(uint256 leverageX96, uint128 minLeverageX96, uint128 maxLeverageX96);
@@ -153,7 +157,7 @@ library Perp {
         perp.liquidationFeeSplitX96 = params.liquidationFeeSplitX96;
         perp.fundingInterval = params.fundingInterval;
 
-        emit PerpCreated(perpId, sqrtPriceX96ToPriceX96(params.startingSqrtPriceX96));
+        emit PerpCreated(perpId, params.beacon, sqrtPriceX96ToPriceX96(params.startingSqrtPriceX96));
     }
 
     function openMakerPosition(
@@ -201,7 +205,9 @@ library Perp {
 
         contracts.usdc.transferFrom(msg.sender, address(this), params.margin);
 
-        emit MakerPositionOpened(makerPosId, self.makerPositions[makerPosId], sqrtPriceX96ToPriceX96(sqrtPriceX96));
+        emit MakerPositionOpened(
+            perpId, makerPosId, self.makerPositions[makerPosId], sqrtPriceX96ToPriceX96(sqrtPriceX96)
+        );
     }
 
     function closeMakerPosition(
@@ -260,7 +266,7 @@ library Perp {
 
         int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
         if (effectiveMargin < 0) {
-            emit MakerPositionClosed(makerPosId, true, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+            emit MakerPositionClosed(perpId, makerPosId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
             delete self.makerPositions[makerPosId];
             return;
         }
@@ -289,7 +295,7 @@ library Perp {
             revert InvalidClose(msg.sender, makerPos.holder, false);
         }
 
-        emit MakerPositionClosed(makerPosId, isLiquidatable, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+        emit MakerPositionClosed(perpId, makerPosId, isLiquidatable, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
 
         delete self.makerPositions[makerPosId];
     }
@@ -334,7 +340,9 @@ library Perp {
         contracts.usdc.transferFrom(msg.sender, address(this), params.margin);
 
         (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-        emit TakerPositionOpened(takerPosId, self.takerPositions[takerPosId], sqrtPriceX96ToPriceX96(sqrtPriceX96));
+        emit TakerPositionOpened(
+            perpId, takerPosId, self.takerPositions[takerPosId], sqrtPriceX96ToPriceX96(sqrtPriceX96)
+        );
     }
 
     function closeTakerPosition(
@@ -380,7 +388,7 @@ library Perp {
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
             (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-            emit TakerPositionClosed(takerPosId, true, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+            emit TakerPositionClosed(perpId, takerPosId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
             delete self.takerPositions[takerPosId];
             return;
         }
@@ -406,7 +414,7 @@ library Perp {
         }
 
         (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-        emit TakerPositionClosed(takerPosId, isLiquidatable, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+        emit TakerPositionClosed(perpId, takerPosId, isLiquidatable, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
 
         delete self.takerPositions[takerPosId];
     }

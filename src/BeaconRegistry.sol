@@ -7,8 +7,8 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 contract BeaconRegistry is Ownable {
     mapping(address => bool) public beacons;
 
-    event BeaconRegistered(address beacon);
-    event BeaconUnregistered(address beacon);
+    event BeaconRegistered(address beacon, uint256 data);
+    event BeaconUnregistered(address beacon, uint256 data);
 
     error InvalidBeacon(address beacon);
 
@@ -18,11 +18,15 @@ contract BeaconRegistry is Ownable {
         if (beacon == address(0)) revert InvalidBeacon(beacon);
 
         beacons[beacon] = true;
-        emit BeaconRegistered(beacon);
+        (uint256 data,) = IBeacon(beacon).getData();
+
+        emit BeaconRegistered(beacon, data);
     }
 
     function unregisterBeacon(address beacon) external onlyOwner {
         beacons[beacon] = false;
-        emit BeaconUnregistered(beacon);
+        (uint256 data,) = IBeacon(beacon).getData();
+
+        emit BeaconUnregistered(beacon, data);
     }
 }
