@@ -297,6 +297,15 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
         vm.startPrank(maker1);
 
+        (int256 maker1Pnl, int256 maker1Funding, int256 maker1EffectiveMargin, bool maker1IsLiquidatable) =
+            perpHook.liveMakerDetails(poolId, makerPosId);
+        console2.log("liveMakerDetails before state change");
+        console2.log("maker1 pnl", maker1Pnl);
+        console2.log("maker1 funding", maker1Funding);
+        console2.log("maker1 effectiveMargin", maker1EffectiveMargin);
+        console2.log("maker1 isLiquidatable", maker1IsLiquidatable);
+        console2.log();
+
         perpHook.closeMakerPosition(poolId, makerPosId);
 
         console2.log("maker closes position with id", makerPosId);

@@ -96,6 +96,19 @@ contract PerpHook is BaseHook {
 
     // can't be view since it calls a non-view function that reverts with live position details
     // this is inefficient to call on-chain
+    function liveMakerDetails(
+        PoolId perpId,
+        uint256 makerPosId
+    )
+        external
+        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
+    {
+        try perps[perpId].closeMakerPositionRevert(externalContracts, perpId, makerPosId) { }
+        catch (bytes memory reason) {
+            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
+        }
+    }
+
     function liveTakerDetails(
         PoolId perpId,
         uint256 takerPosId

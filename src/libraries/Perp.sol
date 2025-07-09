@@ -421,6 +421,77 @@ library Perp {
 
     // calculates state changes as if the position was closed normally, then reverts
     // used for view functions
+    function closeMakerPositionRevert(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        PoolId perpId,
+        uint256 makerPosId
+    )
+        public
+    {
+        PoolKey memory poolKey = self.poolKey;
+        Positions.MakerInfo memory makerPos = self.makerPositions[makerPosId];
+
+        (uint256 perpsReceived, uint256 usdReceived) =
+            contracts.positionManager.burnLiquidityPosition(poolKey, makerPosId);
+
+        int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
+        int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
+        uint128 excessPerpsAbs = excessPerps < 0 ? (-excessPerps).toUint128() : excessPerps.toUint128();
+
+        // if maker is last to remove liquidity, there is no liquidity left to swap against, so skip excess resolution
+        uint128 liquidity = contracts.poolManager.getLiquidity(perpId);
+        if (liquidity > 0) {
+            if (excessPerps < 0) {
+                // must buy perps to pay back debt
+                pnl -= contracts.router.swapExactOutSingle(poolKey, false, excessPerpsAbs, UINT128_MAX, 0).toInt256();
+            } else if (excessPerps > 0) {
+                // must sell excess perp contracts
+                pnl += contracts.router.swapExactInSingle(poolKey, true, excessPerpsAbs, 0, 0).toInt256();
+            }
+        }
+
+        (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
+        int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+
+        int256 funding = Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
+            makerPos.perpsBorrowed.toInt256(),
+            makerPos.entryTwPremiumX96,
+            Funding.Growth({
+                twPremiumX96: self.twPremiumX96,
+                twPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96
+            }),
+            Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
+                makerPos.liquidity,
+                makerPos.tickLower,
+                makerPos.tickUpper,
+                self.tickGrowthInfo.getAllFundingGrowth(
+                    makerPos.tickLower,
+                    makerPos.tickUpper,
+                    currentTick,
+                    self.twPremiumX96,
+                    self.twPremiumDivBySqrtPriceX96
+                )
+            )
+        );
+
+        int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
+        if (effectiveMargin < 0) {
+            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
+        }
+
+        uint256 notional = calculateMakerNotional(
+            sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
+        );
+
+        uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+
+        bool isLiquidatable =
+            isPositionLiquidatable(self.leverageBounds, notional, uint256(effectiveMargin), liquidationFee);
+
+        LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
+    }
+
     function closeTakerPositionRevert(
         Info storage self,
         ExternalContracts.Contracts memory contracts,
