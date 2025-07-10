@@ -26,7 +26,6 @@ contract TradingVaultRegistry {
         }
     }
 
-    // note: reentrancy vulnerable if longPerps or shortPerps are malicious
     function createVault(
         PoolId[3] memory longPerps,
         PoolId[3] memory shortPerps,

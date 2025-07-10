@@ -17,7 +17,7 @@ contract DeployPerpHook is Script {
     address public constant ROUTER = 0x492E6456D9528771018DeB9E87ef7750EF184104;
     address public constant POSITION_MANAGER = 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80;
     address public constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
-    address public constant USDC = 0x4F4e46307114d7c02C5dee116dd51Bd34faCf39a;
+    address public constant USDC = 0xC1a5D4E99BB224713dd179eA9CA2Fa6600706210;
     address public constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     function run() public {

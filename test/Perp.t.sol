@@ -26,6 +26,7 @@ import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import { TokenMath } from "../src/libraries/TokenMath.sol";
 import { ExternalContracts } from "../src/libraries/ExternalContracts.sol";
 import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
+import { Params } from "../src/libraries/Params.sol";
 
 contract PerpTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
@@ -112,7 +113,7 @@ contract PerpTest is Test, Fixtures {
         deployCodeTo("PerpHook.sol:PerpHook", constructorArgs, flags);
         perpHook = PerpHook(flags);
 
-        Perp.CreatePerpParams memory createPerpParams = Perp.CreatePerpParams({
+        Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: address(beacon),
             tradingFee: TRADING_FEE,
             minMargin: MIN_MARGIN,
@@ -153,7 +154,7 @@ contract PerpTest is Test, Fixtures {
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(SQRT_5_X96, SQRT_95_X96, 1000e18);
 
-        Perp.OpenMakerPositionParams memory openMakerPositionParams = Perp.OpenMakerPositionParams({
+        Params.OpenMakerPositionParams memory openMakerPositionParams = Params.OpenMakerPositionParams({
             margin: 100e6,
             liquidity: liquidity,
             tickLower: tickLower,
@@ -196,8 +197,8 @@ contract PerpTest is Test, Fixtures {
 
         uint256 taker1LeverageX96 = 5 * FixedPoint96.Q96;
 
-        Perp.OpenTakerPositionParams memory openTaker1PositionParams =
-            Perp.OpenTakerPositionParams({ isLong: true, margin: 20e6, leverageX96: taker1LeverageX96 });
+        Params.OpenTakerPositionParams memory openTaker1PositionParams =
+            Params.OpenTakerPositionParams({ isLong: true, margin: 20e6, leverageX96: taker1LeverageX96 });
 
         uint256 taker1PosId = perpHook.openTakerPosition(poolId, openTaker1PositionParams);
 
@@ -231,8 +232,8 @@ contract PerpTest is Test, Fixtures {
 
         uint256 taker2LeverageX96 = FixedPoint96.Q96;
 
-        Perp.OpenTakerPositionParams memory openTaker2PositionParams =
-            Perp.OpenTakerPositionParams({ isLong: false, margin: 20e6, leverageX96: taker2LeverageX96 });
+        Params.OpenTakerPositionParams memory openTaker2PositionParams =
+            Params.OpenTakerPositionParams({ isLong: false, margin: 20e6, leverageX96: taker2LeverageX96 });
 
         uint256 taker2PosId = perpHook.openTakerPosition(poolId, openTaker2PositionParams);
 

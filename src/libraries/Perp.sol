@@ -26,6 +26,8 @@ import { TokenMath } from "./TokenMath.sol";
 import { Funding } from "./Funding.sol";
 import { ExternalContracts } from "./ExternalContracts.sol";
 import { LivePositionDetailsReverter } from "./LivePositionDetailsReverter.sol";
+import { Params } from "./Params.sol";
+import { Bounds } from "./Bounds.sol";
 
 library Perp {
     using SafeCast for *;
@@ -42,8 +44,8 @@ library Perp {
         PoolKey poolKey;
         address beacon;
         uint24 tradingFee;
-        MarginBounds marginBounds;
-        LeverageBounds leverageBounds;
+        Bounds.MarginBounds marginBounds;
+        Bounds.LeverageBounds leverageBounds;
         uint128 liquidationFeeX96;
         uint128 liquidationFeeSplitX96;
         int128 premiumPerSecondX96;
@@ -55,45 +57,6 @@ library Perp {
         mapping(uint256 => Positions.TakerInfo) takerPositions;
         mapping(uint256 => Positions.MakerInfo) makerPositions;
         mapping(int24 => Tick.GrowthInfo) tickGrowthInfo;
-    }
-
-    struct MarginBounds {
-        uint128 minOpeningMargin;
-        uint128 maxOpeningMargin;
-    }
-
-    struct LeverageBounds {
-        uint128 minOpeningLeverageX96;
-        uint128 maxOpeningLeverageX96;
-        uint256 liquidationLeverageX96;
-    }
-
-    struct CreatePerpParams {
-        address beacon;
-        uint24 tradingFee;
-        uint128 minMargin;
-        uint128 maxMargin;
-        uint128 minOpeningLeverageX96;
-        uint128 maxOpeningLeverageX96;
-        uint128 liquidationLeverageX96;
-        uint128 liquidationFeeX96;
-        uint128 liquidationFeeSplitX96;
-        int128 fundingInterval;
-        int24 tickSpacing;
-        uint160 startingSqrtPriceX96;
-    }
-
-    struct OpenMakerPositionParams {
-        uint128 margin;
-        uint128 liquidity;
-        int24 tickLower;
-        int24 tickUpper;
-    }
-
-    struct OpenTakerPositionParams {
-        bool isLong;
-        uint128 margin;
-        uint256 leverageX96;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -114,7 +77,7 @@ library Perp {
     function createPerp(
         mapping(PoolId => Info) storage self,
         ExternalContracts.Contracts memory contracts,
-        CreatePerpParams memory params
+        Params.CreatePerpParams memory params
     )
         public
         returns (PoolId perpId)
@@ -137,10 +100,10 @@ library Perp {
 
         contracts.poolManager.initialize(poolKey, params.startingSqrtPriceX96);
 
-        MarginBounds memory marginBounds =
-            MarginBounds({ minOpeningMargin: params.minMargin, maxOpeningMargin: params.maxMargin });
+        Bounds.MarginBounds memory marginBounds =
+            Bounds.MarginBounds({ minOpeningMargin: params.minMargin, maxOpeningMargin: params.maxMargin });
 
-        LeverageBounds memory leverageBounds = LeverageBounds({
+        Bounds.LeverageBounds memory leverageBounds = Bounds.LeverageBounds({
             minOpeningLeverageX96: params.minOpeningLeverageX96,
             maxOpeningLeverageX96: params.maxOpeningLeverageX96,
             liquidationLeverageX96: params.liquidationLeverageX96
@@ -164,7 +127,7 @@ library Perp {
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        OpenMakerPositionParams memory params
+        Params.OpenMakerPositionParams memory params
     )
         public
         returns (uint256 makerPosId)
@@ -214,7 +177,8 @@ library Perp {
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        uint256 makerPosId
+        uint256 makerPosId,
+        bool revertChanges
     )
         public
     {
@@ -266,9 +230,13 @@ library Perp {
 
         int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
         if (effectiveMargin < 0) {
-            emit MakerPositionClosed(perpId, makerPosId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-            delete self.makerPositions[makerPosId];
-            return;
+            if (revertChanges) {
+                LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
+            } else {
+                emit MakerPositionClosed(perpId, makerPosId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+                delete self.makerPositions[makerPosId];
+                return;
+            }
         }
 
         uint256 notional = calculateMakerNotional(
@@ -295,16 +263,20 @@ library Perp {
             revert InvalidClose(msg.sender, makerPos.holder, false);
         }
 
-        emit MakerPositionClosed(perpId, makerPosId, isLiquidatable, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-
-        delete self.makerPositions[makerPosId];
+        if (revertChanges) {
+            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
+        } else {
+            uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
+            emit MakerPositionClosed(perpId, makerPosId, isLiquidatable, makerPos, markPriceX96);
+            delete self.makerPositions[makerPosId];
+        }
     }
 
     function openTakerPosition(
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        OpenTakerPositionParams memory params
+        Params.OpenTakerPositionParams memory params
     )
         public
         returns (uint256 takerPosId)
@@ -349,7 +321,8 @@ library Perp {
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        uint256 takerPosId
+        uint256 takerPosId,
+        bool revertChanges
     )
         public
     {
@@ -387,10 +360,14 @@ library Perp {
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
-            (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-            emit TakerPositionClosed(perpId, takerPosId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-            delete self.takerPositions[takerPosId];
-            return;
+            if (revertChanges) {
+                LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
+            } else {
+                (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
+                emit TakerPositionClosed(perpId, takerPosId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+                delete self.takerPositions[takerPosId];
+                return;
+            }
         }
 
         uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
@@ -413,140 +390,30 @@ library Perp {
             revert InvalidClose(msg.sender, takerPos.holder, false);
         }
 
-        (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-        emit TakerPositionClosed(perpId, takerPosId, isLiquidatable, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-
-        delete self.takerPositions[takerPosId];
-    }
-
-    // calculates state changes as if the position was closed normally, then reverts
-    // used for view functions
-    function closeMakerPositionRevert(
-        Info storage self,
-        ExternalContracts.Contracts memory contracts,
-        PoolId perpId,
-        uint256 makerPosId
-    )
-        public
-    {
-        PoolKey memory poolKey = self.poolKey;
-        Positions.MakerInfo memory makerPos = self.makerPositions[makerPosId];
-
-        (uint256 perpsReceived, uint256 usdReceived) =
-            contracts.positionManager.burnLiquidityPosition(poolKey, makerPosId);
-
-        int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
-        int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
-        uint128 excessPerpsAbs = excessPerps < 0 ? (-excessPerps).toUint128() : excessPerps.toUint128();
-
-        // if maker is last to remove liquidity, there is no liquidity left to swap against, so skip excess resolution
-        uint128 liquidity = contracts.poolManager.getLiquidity(perpId);
-        if (liquidity > 0) {
-            if (excessPerps < 0) {
-                // must buy perps to pay back debt
-                pnl -= contracts.router.swapExactOutSingle(poolKey, false, excessPerpsAbs, UINT128_MAX, 0).toInt256();
-            } else if (excessPerps > 0) {
-                // must sell excess perp contracts
-                pnl += contracts.router.swapExactInSingle(poolKey, true, excessPerpsAbs, 0, 0).toInt256();
-            }
-        }
-
-        (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-        int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
-
-        int256 funding = Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
-            makerPos.perpsBorrowed.toInt256(),
-            makerPos.entryTwPremiumX96,
-            Funding.Growth({
-                twPremiumX96: self.twPremiumX96,
-                twPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96
-            }),
-            Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
-                makerPos.liquidity,
-                makerPos.tickLower,
-                makerPos.tickUpper,
-                self.tickGrowthInfo.getAllFundingGrowth(
-                    makerPos.tickLower,
-                    makerPos.tickUpper,
-                    currentTick,
-                    self.twPremiumX96,
-                    self.twPremiumDivBySqrtPriceX96
-                )
-            )
-        );
-
-        int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
-        if (effectiveMargin < 0) {
-            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
-        }
-
-        uint256 notional = calculateMakerNotional(
-            sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
-        );
-
-        uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
-
-        bool isLiquidatable =
-            isPositionLiquidatable(self.leverageBounds, notional, uint256(effectiveMargin), liquidationFee);
-
-        LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
-    }
-
-    function closeTakerPositionRevert(
-        Info storage self,
-        ExternalContracts.Contracts memory contracts,
-        PoolId perpId,
-        uint256 takerPosId
-    )
-        public
-    {
-        Positions.TakerInfo memory takerPos = self.takerPositions[takerPosId];
-
-        uint256 notionalValue;
-        int256 pnl;
-
-        if (takerPos.isLong) {
-            uint128 amountIn = takerPos.size;
-            notionalValue = contracts.router.swapExactInSingle(self.poolKey, true, amountIn, 0, 0);
-            pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
+        if (revertChanges) {
+            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
         } else {
-            uint128 amountOut = takerPos.size;
-            notionalValue = contracts.router.swapExactOutSingle(self.poolKey, false, amountOut, UINT128_MAX, 0);
-            pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
+            (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
+            uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
+            emit TakerPositionClosed(perpId, takerPosId, isLiquidatable, takerPos, markPriceX96);
+            delete self.takerPositions[takerPosId];
         }
-
-        int256 funding = MoreSignedMath.mulDiv(
-            self.twPremiumX96 - takerPos.entryTwPremiumX96, takerPos.size.toInt256(), FixedPoint96.UINT_Q96
-        );
-        if (!takerPos.isLong) funding = -funding;
-
-        int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
-        if (effectiveMargin < 0) {
-            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
-        }
-
-        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
-
-        bool isLiquidatable =
-            isPositionLiquidatable(self.leverageBounds, notionalValue, uint256(effectiveMargin), liquidationFee);
-
-        LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
     }
 
-    function validateOpeningMargin(MarginBounds memory bounds, uint128 margin) public pure {
+    function validateOpeningMargin(Bounds.MarginBounds memory bounds, uint128 margin) public pure {
         if (margin < bounds.minOpeningMargin || margin > bounds.maxOpeningMargin) {
             revert OpeningMarginOutOfBounds(margin, bounds.minOpeningMargin, bounds.maxOpeningMargin);
         }
     }
 
-    function validateOpeningLeverage(LeverageBounds memory bounds, uint256 leverageX96) public pure {
+    function validateOpeningLeverage(Bounds.LeverageBounds memory bounds, uint256 leverageX96) public pure {
         if (leverageX96 < bounds.minOpeningLeverageX96 || leverageX96 > bounds.maxOpeningLeverageX96) {
             revert OpeningLeverageOutOfBounds(leverageX96, bounds.minOpeningLeverageX96, bounds.maxOpeningLeverageX96);
         }
     }
 
     function isPositionLiquidatable(
-        LeverageBounds memory bounds,
+        Bounds.LeverageBounds memory bounds,
         uint256 notional,
         uint256 effectiveMargin,
         uint256 liquidationFee

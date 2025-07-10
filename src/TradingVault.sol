@@ -11,6 +11,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
 import { Perp } from "./libraries/Perp.sol";
 import { Positions } from "./libraries/Positions.sol";
+import { Params } from "./libraries/Params.sol";
 
 contract TradingVault is ERC4626 {
     error InvalidUSDC(address perpUSDC, address vaultUSDC);
@@ -19,7 +20,6 @@ contract TradingVault is ERC4626 {
     mapping(PoolId perpId => uint256 positionId) public perpToPosition;
     PoolId[6] public perps;
 
-    // note: reentrancy vulnerable if longPerps or shortPerps are malicious
     constructor(
         PerpHook _perpHook,
         IERC20 _usdc,
@@ -95,13 +95,13 @@ contract TradingVault is ERC4626 {
         uint256 totalAssets = totalAssets();
         uint256 assetsPerPerp = totalAssets / 6;
 
-        Perp.OpenTakerPositionParams memory longParams = Perp.OpenTakerPositionParams({
+        Params.OpenTakerPositionParams memory longParams = Params.OpenTakerPositionParams({
             isLong: true,
             margin: SafeCast.toUint128(assetsPerPerp),
             leverageX96: FixedPoint96.UINT_Q96
         });
 
-        Perp.OpenTakerPositionParams memory shortParams = Perp.OpenTakerPositionParams({
+        Params.OpenTakerPositionParams memory shortParams = Params.OpenTakerPositionParams({
             isLong: false,
             margin: SafeCast.toUint128(assetsPerPerp),
             leverageX96: FixedPoint96.UINT_Q96

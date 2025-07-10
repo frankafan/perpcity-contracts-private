@@ -8,6 +8,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { FixedPoint96 } from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
 import { Perp } from "../src/libraries/Perp.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
+import { Params } from "../src/libraries/Params.sol";
 
 contract DeployPerp is Script {
     using SafeCast for *;
@@ -32,7 +33,7 @@ contract DeployPerp is Script {
     function run() public {
         vm.startBroadcast();
 
-        Perp.CreatePerpParams memory createPerpParams = Perp.CreatePerpParams({
+        Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: BEACON,
             tradingFee: TRADING_FEE,
             minMargin: MIN_MARGIN,

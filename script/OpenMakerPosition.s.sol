@@ -11,6 +11,7 @@ import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import { TestnetUSDC } from "../src/testnet/TestnetUSDC.sol";
 import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 import { Perp } from "../src/libraries/Perp.sol";
+import { Params } from "../src/libraries/Params.sol";
 
 contract OpenMakerPosition is Script {
     using StateLibrary for IPoolManager;
@@ -40,7 +41,7 @@ contract OpenMakerPosition is Script {
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(SQRT_PRICE_LOWER_X96, SQRT_PRICE_UPPER_X96, 200e18);
 
-        Perp.OpenMakerPositionParams memory openMakerPositionParams = Perp.OpenMakerPositionParams({
+        Params.OpenMakerPositionParams memory openMakerPositionParams = Params.OpenMakerPositionParams({
             margin: uint128(MARGIN),
             liquidity: liquidity,
             tickLower: tickLower,

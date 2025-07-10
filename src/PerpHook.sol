@@ -22,6 +22,7 @@ import { Positions } from "./libraries/Positions.sol";
 import { ExternalContracts } from "./libraries/ExternalContracts.sol";
 import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
 import { LivePositionDetailsReverter } from "./libraries/LivePositionDetailsReverter.sol";
+import { Params } from "./libraries/Params.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
@@ -50,13 +51,13 @@ contract PerpHook is BaseHook {
     // PERP ACTIONS
     // ------------
 
-    function createPerp(Perp.CreatePerpParams memory params) external returns (PoolId perpId) {
+    function createPerp(Params.CreatePerpParams memory params) external returns (PoolId perpId) {
         return perps.createPerp(externalContracts, params);
     }
 
     function openMakerPosition(
         PoolId perpId,
-        Perp.OpenMakerPositionParams memory params
+        Params.OpenMakerPositionParams memory params
     )
         external
         returns (uint256 makerPosId)
@@ -65,12 +66,12 @@ contract PerpHook is BaseHook {
     }
 
     function closeMakerPosition(PoolId perpId, uint256 makerPosId) external {
-        perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId);
+        perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId, false);
     }
 
     function openTakerPosition(
         PoolId perpId,
-        Perp.OpenTakerPositionParams memory params
+        Params.OpenTakerPositionParams memory params
     )
         external
         returns (uint256 takerPosId)
@@ -79,7 +80,7 @@ contract PerpHook is BaseHook {
     }
 
     function closeTakerPosition(PoolId perpId, uint256 takerPosId) external {
-        perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId);
+        perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId, false);
     }
 
     // ----
@@ -103,7 +104,7 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        try perps[perpId].closeMakerPositionRevert(externalContracts, perpId, makerPosId) { }
+        try perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
         }
@@ -116,7 +117,7 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        try perps[perpId].closeTakerPositionRevert(externalContracts, perpId, takerPosId) { }
+        try perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
         }
