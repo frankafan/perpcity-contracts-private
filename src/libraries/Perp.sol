@@ -41,9 +41,11 @@ library Perp {
     uint128 constant UINT128_MAX = type(uint128).max;
 
     struct Info {
+        address creator;
         PoolKey poolKey;
         address beacon;
         uint24 tradingFee;
+        uint128 tradingFeeCreatorSplitX96;
         Bounds.MarginBounds marginBounds;
         Bounds.LeverageBounds leverageBounds;
         uint128 liquidationFeeX96;
@@ -111,9 +113,11 @@ library Perp {
 
         Info storage perp = self[perpId];
 
+        perp.creator = msg.sender;
         perp.poolKey = poolKey;
         perp.beacon = params.beacon;
         perp.tradingFee = params.tradingFee;
+        perp.tradingFeeCreatorSplitX96 = params.tradingFeeCreatorSplitX96;
         perp.marginBounds = marginBounds;
         perp.leverageBounds = leverageBounds;
         perp.liquidationFeeX96 = params.liquidationFeeX96;

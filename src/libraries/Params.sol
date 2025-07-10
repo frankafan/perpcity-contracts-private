@@ -5,6 +5,7 @@ library Params {
     struct CreatePerpParams {
         address beacon;
         uint24 tradingFee;
+        uint128 tradingFeeCreatorSplitX96;
         uint128 minMargin;
         uint128 maxMargin;
         uint128 minOpeningLeverageX96;

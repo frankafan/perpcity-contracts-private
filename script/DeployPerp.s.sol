@@ -19,6 +19,7 @@ contract DeployPerp is Script {
     uint160 constant SQRT_50_X96 = 560_227_709_747_861_419_891_227_623_424; // 2 ** 96 * sqrt(50)
 
     uint24 constant TRADING_FEE = 5000; // 0.5%
+    uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (5 * FixedPoint96.Q96 / 100).toUint128(); // 5%
     uint128 constant MIN_MARGIN = 0;
     uint128 constant MAX_MARGIN = 1000e6; // 1000 USDC
     uint128 constant MIN_OPENING_LEVERAGE_X96 = 0;
@@ -36,6 +37,7 @@ contract DeployPerp is Script {
         Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: BEACON,
             tradingFee: TRADING_FEE,
+            tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
             minMargin: MIN_MARGIN,
             maxMargin: MAX_MARGIN,
             minOpeningLeverageX96: MIN_OPENING_LEVERAGE_X96,

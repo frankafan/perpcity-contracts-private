@@ -49,6 +49,7 @@ contract PerpTest is Test, Fixtures {
     uint256 constant NUMBER_55_X96 = 55 * FixedPoint96.Q96;
 
     uint24 constant TRADING_FEE = 5000; // 0.5%
+    uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 constant MIN_MARGIN = 0;
     uint128 constant MAX_MARGIN = 1000e6; // 1000 USDC
     uint128 constant MIN_OPENING_LEVERAGE_X96 = 0;
@@ -60,10 +61,11 @@ contract PerpTest is Test, Fixtures {
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
 
-    address maker1 = vm.addr(1);
-    address taker1 = vm.addr(2);
-    address taker2 = vm.addr(3);
-    address beaconOwner = vm.addr(4);
+    address perpCreator = vm.addr(1);
+    address maker1 = vm.addr(2);
+    address taker1 = vm.addr(3);
+    address taker2 = vm.addr(4);
+    address beaconOwner = vm.addr(5);
 
     function setUp() public {
         // creates the pool manager, utility routers
@@ -116,6 +118,7 @@ contract PerpTest is Test, Fixtures {
         Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: address(beacon),
             tradingFee: TRADING_FEE,
+            tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
             minMargin: MIN_MARGIN,
             maxMargin: MAX_MARGIN,
             minOpeningLeverageX96: MIN_OPENING_LEVERAGE_X96,
@@ -128,7 +131,9 @@ contract PerpTest is Test, Fixtures {
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96
         });
 
+        vm.startPrank(perpCreator);
         poolId = perpHook.createPerp(createPerpParams);
+        vm.stopPrank();
 
         (uint160 sqrtPriceX96,,,) = manager.getSlot0(poolId);
         int24 tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
@@ -313,6 +318,9 @@ contract PerpTest is Test, Fixtures {
         console2.log("maker balance", usdc.balanceOf(maker1));
         console2.log();
 
+        vm.stopPrank();
+        vm.startPrank(perpCreator);
+        console2.log("perp creator balance", usdc.balanceOf(perpCreator));
         vm.stopPrank();
     }
 }
