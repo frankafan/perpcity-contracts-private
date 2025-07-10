@@ -23,6 +23,8 @@ import { ExternalContracts } from "./libraries/ExternalContracts.sol";
 import { UniswapV4Utility } from "./libraries/UniswapV4Utility.sol";
 import { LivePositionDetailsReverter } from "./libraries/LivePositionDetailsReverter.sol";
 import { Params } from "./libraries/Params.sol";
+import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
+import { TokenMath } from "./libraries/TokenMath.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
@@ -30,6 +32,7 @@ contract PerpHook is BaseHook {
     using UniswapV4Utility for IPoolManager;
     using StateLibrary for IPoolManager;
     using LivePositionDetailsReverter for *;
+    using TokenMath for uint256;
 
     ExternalContracts.Contracts public externalContracts;
 
@@ -278,7 +281,13 @@ contract PerpHook is BaseHook {
             params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
         uint256 feeAmount = FullMath.mulDiv(absAmountSpecified, fee, LPFeeLibrary.MAX_LP_FEE);
 
-        poolManager.donate(key, 0, feeAmount, bytes(""));
+        uint256 creatorFeeAmount =
+            FullMath.mulDiv(feeAmount, perps[poolId].tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
+        poolManager.mint(address(this), key.currency1.toId(), creatorFeeAmount);
+        externalContracts.usdc.transfer(perps[poolId].creator, creatorFeeAmount.scale18To6());
+
+        uint256 lpFeeAmount = feeAmount - creatorFeeAmount;
+        poolManager.donate(key, 0, lpFeeAmount, bytes(""));
 
         return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(SafeCast.toInt128(feeAmount), 0), 0);
     }
