@@ -28,6 +28,8 @@ import { ExternalContracts } from "./ExternalContracts.sol";
 import { LivePositionDetailsReverter } from "./LivePositionDetailsReverter.sol";
 import { Params } from "./Params.sol";
 import { Bounds } from "./Bounds.sol";
+import { PerpVault } from "../PerpVault.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 library Perp {
     using SafeCast for *;
@@ -37,12 +39,14 @@ library Perp {
     using Tick for mapping(int24 => Tick.GrowthInfo);
     using UniswapV4Utility for IUniversalRouter;
     using UniswapV4Utility for IPositionManager;
+    using SafeERC20 for IERC20;
 
     uint128 constant UINT128_MAX = type(uint128).max;
 
     struct Info {
         address creator;
         PoolKey poolKey;
+        address vault;
         address beacon;
         uint24 tradingFee;
         uint128 tradingFeeCreatorSplitX96;
@@ -111,10 +115,13 @@ library Perp {
             liquidationLeverageX96: params.liquidationLeverageX96
         });
 
+        PerpVault perpVault = new PerpVault(address(this), contracts.usdc);
+
         Info storage perp = self[perpId];
 
         perp.creator = msg.sender;
         perp.poolKey = poolKey;
+        perp.vault = address(perpVault);
         perp.beacon = params.beacon;
         perp.tradingFee = params.tradingFee;
         perp.tradingFeeCreatorSplitX96 = params.tradingFeeCreatorSplitX96;
@@ -170,7 +177,7 @@ library Perp {
             entryTwPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96
         });
 
-        contracts.usdc.transferFrom(msg.sender, address(this), params.margin);
+        contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.margin);
 
         emit MakerPositionOpened(
             perpId, makerPosId, self.makerPositions[makerPosId], sqrtPriceX96ToPriceX96(sqrtPriceX96)
@@ -254,14 +261,17 @@ library Perp {
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
-            contracts.usdc.transfer(makerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6());
-            contracts.usdc.transfer(
+            contracts.usdc.safeTransferFrom(
+                self.vault, makerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6()
+            );
+            contracts.usdc.safeTransferFrom(
+                self.vault,
                 msg.sender,
                 FullMath.mulDiv(liquidationFee.scale18To6(), self.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
             );
         } else if (makerPos.holder == msg.sender) {
             // If not liquidated and caller is the owner, return full margin
-            contracts.usdc.transfer(msg.sender, uint256(effectiveMargin).scale18To6());
+            contracts.usdc.safeTransferFrom(self.vault, msg.sender, uint256(effectiveMargin).scale18To6());
         } else {
             // Otherwise, revert
             revert InvalidClose(msg.sender, makerPos.holder, false);
@@ -313,7 +323,7 @@ library Perp {
         self.nextTakerPosId++;
 
         // Transfer margin from the user to the contract
-        contracts.usdc.transferFrom(msg.sender, address(this), params.margin);
+        contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.margin);
 
         (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
         emit TakerPositionOpened(
@@ -381,14 +391,17 @@ library Perp {
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
-            contracts.usdc.transfer(takerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6());
-            contracts.usdc.transfer(
+            contracts.usdc.safeTransferFrom(
+                self.vault, takerPos.holder, (uint256(effectiveMargin) - liquidationFee).scale18To6()
+            );
+            contracts.usdc.safeTransferFrom(
+                self.vault,
                 msg.sender,
                 FullMath.mulDiv(liquidationFee.scale18To6(), self.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
             );
         } else if (takerPos.holder == msg.sender) {
             // If not liquidated and caller is the owner, return full margin
-            contracts.usdc.transfer(takerPos.holder, uint256(effectiveMargin).scale18To6());
+            contracts.usdc.safeTransferFrom(self.vault, takerPos.holder, uint256(effectiveMargin).scale18To6());
         } else {
             // Otherwise, revert
             revert InvalidClose(msg.sender, takerPos.holder, false);

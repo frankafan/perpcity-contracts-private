@@ -322,5 +322,9 @@ contract PerpTest is Test, Fixtures {
         vm.startPrank(perpCreator);
         console2.log("perp creator balance", usdc.balanceOf(perpCreator));
         vm.stopPrank();
+
+        console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
+        (,, address vault,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        console2.log("perp vault balance", usdc.balanceOf(vault));
     }
 }

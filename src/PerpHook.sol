@@ -25,6 +25,8 @@ import { LivePositionDetailsReverter } from "./libraries/LivePositionDetailsReve
 import { Params } from "./libraries/Params.sol";
 import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
 import { TokenMath } from "./libraries/TokenMath.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
@@ -33,6 +35,7 @@ contract PerpHook is BaseHook {
     using StateLibrary for IPoolManager;
     using LivePositionDetailsReverter for *;
     using TokenMath for uint256;
+    using SafeERC20 for IERC20;
 
     ExternalContracts.Contracts public externalContracts;
 
@@ -284,7 +287,9 @@ contract PerpHook is BaseHook {
         uint256 creatorFeeAmount =
             FullMath.mulDiv(feeAmount, perps[poolId].tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
         poolManager.mint(address(this), key.currency1.toId(), creatorFeeAmount);
-        externalContracts.usdc.transfer(perps[poolId].creator, creatorFeeAmount.scale18To6());
+        externalContracts.usdc.safeTransferFrom(
+            perps[poolId].vault, perps[poolId].creator, creatorFeeAmount.scale18To6()
+        );
 
         uint256 lpFeeAmount = feeAmount - creatorFeeAmount;
         poolManager.donate(key, 0, lpFeeAmount, bytes(""));
