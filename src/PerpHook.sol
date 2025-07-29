@@ -79,8 +79,8 @@ contract PerpHook is BaseHook {
         return perps[perpId].openMakerPosition(externalContracts, perpId, params);
     }
 
-    function closeMakerPosition(PoolId perpId, uint256 makerPosId) external {
-        perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId, false);
+    function closeMakerPosition(PoolId perpId, Params.ClosePositionParams memory params) external {
+        perps[perpId].closeMakerPosition(externalContracts, perpId, params, false);
     }
 
     function openTakerPosition(
@@ -93,8 +93,8 @@ contract PerpHook is BaseHook {
         return perps[perpId].openTakerPosition(externalContracts, perpId, params);
     }
 
-    function closeTakerPosition(PoolId perpId, uint256 takerPosId) external {
-        perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId, false);
+    function closeTakerPosition(PoolId perpId, Params.ClosePositionParams memory params) external {
+        perps[perpId].closeTakerPosition(externalContracts, perpId, params, false);
     }
 
     // ----
@@ -118,7 +118,9 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        try perps[perpId].closeMakerPosition(externalContracts, perpId, makerPosId, true) { }
+        Params.ClosePositionParams memory params =
+            Params.ClosePositionParams({ posId: makerPosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        try perps[perpId].closeMakerPosition(externalContracts, perpId, params, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
         }
@@ -131,7 +133,9 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        try perps[perpId].closeTakerPosition(externalContracts, perpId, takerPosId, true) { }
+        Params.ClosePositionParams memory params =
+            Params.ClosePositionParams({ posId: takerPosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        try perps[perpId].closeTakerPosition(externalContracts, perpId, params, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
         }
