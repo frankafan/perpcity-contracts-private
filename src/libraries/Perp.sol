@@ -240,6 +240,13 @@ library Perp {
         );
 
         int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        uint256 notional = calculateMakerNotional(
+            sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
+        );
+
+        uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+
         if (effectiveMargin < 0) {
             if (revertChanges) {
                 LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
@@ -248,16 +255,13 @@ library Perp {
                 delete self.makerPositions[makerPosId];
                 return;
             }
+        } else if (uint256(effectiveMargin) < liquidationFee) {
+            liquidationFee = uint256(effectiveMargin);
         }
-
-        uint256 notional = calculateMakerNotional(
-            sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
-        );
-
-        uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
         bool isLiquidatable =
             isPositionLiquidatable(self.leverageBounds, notional, uint256(effectiveMargin), liquidationFee);
+
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
@@ -372,6 +376,9 @@ library Perp {
 
         // Calculate effective margin after PnL and funding
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
             if (revertChanges) {
@@ -382,12 +389,13 @@ library Perp {
                 delete self.takerPositions[takerPosId];
                 return;
             }
+        } else if (uint256(effectiveMargin) < liquidationFee) {
+            liquidationFee = uint256(effectiveMargin);
         }
-
-        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
         bool isLiquidatable =
             isPositionLiquidatable(self.leverageBounds, notionalValue, uint256(effectiveMargin), liquidationFee);
+
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
