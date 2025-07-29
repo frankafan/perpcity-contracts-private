@@ -41,9 +41,17 @@ contract PerpHook is BaseHook {
 
     mapping(PoolId => Perp.Info) public perps;
 
+    error InvalidPeriphery(address periphery, address expectedRouter, address expectedPositionManager);
     error InvalidCaller(address caller, address expectedCaller);
 
     modifier validateCaller(address hookSender) {
+        if (hookSender != address(externalContracts.router) && hookSender != address(externalContracts.positionManager))
+        {
+            revert InvalidPeriphery(
+                hookSender, address(externalContracts.router), address(externalContracts.positionManager)
+            );
+        }
+
         address msgSender = IMsgSender(hookSender).msgSender();
         if (msgSender != address(this)) revert InvalidCaller(msgSender, address(this));
         _;
