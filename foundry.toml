@@ -42,3 +42,13 @@
   base = "https://mainnet.base.org"
   base_sepolia = "https://sepolia.base.org"
   localhost = "http://localhost:8545"
+
+# Anvil resource optimization settings
+[anvil]
+  block_time = 1            # 1 second block time instead of instant
+  gas_limit = 30_000_000    # Reasonable gas limit
+  gas_price = 20_000_000_000 # 20 gwei
+  accounts = 10             # Reduce from default 10 accounts
+  balance = 10_000          # 10k ETH per account instead of 100k
+  state_interval = 0        # Disable periodic state dumps
+  no_storage_caching = true # Disable storage caching
