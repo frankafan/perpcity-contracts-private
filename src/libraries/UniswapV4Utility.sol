@@ -19,6 +19,9 @@ import { ExternalContracts } from "./ExternalContracts.sol";
 library UniswapV4Utility {
     using StateLibrary for IPoolManager;
 
+    error InsufficientOutputAmount(uint256 amountOut, uint256 minAmountOut);
+    error ExcessiveInputAmount(uint256 amountIn, uint256 maxAmountIn);
+
     function approveTokenWithPermit2(
         IPermit2 permit2,
         address approvedAddress,
@@ -101,6 +104,7 @@ library UniswapV4Utility {
         // Verify and return the output amount
         uint256 outputCurrencyBalanceAfter = outputCurrency.balanceOfSelf();
         amountOut = outputCurrencyBalanceAfter - outputCurrencyBalanceBefore;
+        if (amountOut < minAmountOut) revert InsufficientOutputAmount(amountOut, minAmountOut);
     }
 
     function swapExactOutSingle(
@@ -155,6 +159,7 @@ library UniswapV4Utility {
         // Verify and return the output amount
         uint256 inputCurrencyBalanceAfter = inputCurrency.balanceOfSelf();
         amountIn = inputCurrencyBalanceBefore - inputCurrencyBalanceAfter;
+        if (amountIn > maxAmountIn) revert ExcessiveInputAmount(amountIn, maxAmountIn);
     }
 
     function mintLiquidityPosition(
@@ -190,6 +195,8 @@ library UniswapV4Utility {
 
         amount0In = amount0BalanceBefore - amount0BalanceAfter;
         amount1In = amount1BalanceBefore - amount1BalanceAfter;
+        if (amount0In > amount0Max) revert ExcessiveInputAmount(amount0In, amount0Max);
+        if (amount1In > amount1Max) revert ExcessiveInputAmount(amount1In, amount1Max);
     }
 
     function burnLiquidityPosition(

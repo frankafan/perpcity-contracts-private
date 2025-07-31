@@ -23,11 +23,21 @@ library Params {
         uint128 liquidity;
         int24 tickLower;
         int24 tickUpper;
+        uint128 maxAmount0In;
+        uint128 maxAmount1In;
     }
 
     struct OpenTakerPositionParams {
         bool isLong;
         uint128 margin;
         uint256 leverageX96;
+        uint128 minAmount0Out; // will be used if long, otherwise ignored
+        uint128 maxAmount0In; // will be used if short, otherwise ignored
+    }
+
+    struct ClosePositionParams {
+        uint256 posId; // maker or taker position id
+        uint128 minAmount1Out; // will be used if long, otherwise ignored; used on excess position for makers
+        uint128 maxAmount1In; // will be used if short, otherwise ignored; used on excess position for makers
     }
 }

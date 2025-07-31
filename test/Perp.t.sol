@@ -163,7 +163,9 @@ contract PerpTest is Test, Fixtures {
             margin: 100e6,
             liquidity: liquidity,
             tickLower: tickLower,
-            tickUpper: tickUpper
+            tickUpper: tickUpper,
+            maxAmount0In: Perp.UINT128_MAX,
+            maxAmount1In: Perp.UINT128_MAX
         });
 
         uint256 makerPosId = perpHook.openMakerPosition(poolId, openMakerPositionParams);
@@ -202,8 +204,13 @@ contract PerpTest is Test, Fixtures {
 
         uint256 taker1LeverageX96 = 5 * FixedPoint96.Q96;
 
-        Params.OpenTakerPositionParams memory openTaker1PositionParams =
-            Params.OpenTakerPositionParams({ isLong: true, margin: 20e6, leverageX96: taker1LeverageX96 });
+        Params.OpenTakerPositionParams memory openTaker1PositionParams = Params.OpenTakerPositionParams({
+            isLong: true,
+            margin: 20e6,
+            leverageX96: taker1LeverageX96,
+            minAmount0Out: 0,
+            maxAmount0In: Perp.UINT128_MAX
+        });
 
         uint256 taker1PosId = perpHook.openTakerPosition(poolId, openTaker1PositionParams);
 
@@ -237,8 +244,13 @@ contract PerpTest is Test, Fixtures {
 
         uint256 taker2LeverageX96 = FixedPoint96.Q96;
 
-        Params.OpenTakerPositionParams memory openTaker2PositionParams =
-            Params.OpenTakerPositionParams({ isLong: false, margin: 20e6, leverageX96: taker2LeverageX96 });
+        Params.OpenTakerPositionParams memory openTaker2PositionParams = Params.OpenTakerPositionParams({
+            isLong: false,
+            margin: 20e6,
+            leverageX96: taker2LeverageX96,
+            minAmount0Out: 0,
+            maxAmount0In: Perp.UINT128_MAX
+        });
 
         uint256 taker2PosId = perpHook.openTakerPosition(poolId, openTaker2PositionParams);
 
@@ -276,7 +288,9 @@ contract PerpTest is Test, Fixtures {
         console2.log("taker1 isLiquidatable", taker1IsLiquidatable);
         console2.log();
 
-        perpHook.closeTakerPosition(poolId, taker1PosId);
+        Params.ClosePositionParams memory closeTaker1PositionParams =
+            Params.ClosePositionParams({ posId: taker1PosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        perpHook.closeTakerPosition(poolId, closeTaker1PositionParams);
 
         console2.log("taker1 closes position with id", taker1PosId);
         console2.log("taker1 balance", usdc.balanceOf(taker1));
@@ -294,7 +308,9 @@ contract PerpTest is Test, Fixtures {
         console2.log("taker2 isLiquidatable", taker2IsLiquidatable);
         console2.log();
 
-        perpHook.closeTakerPosition(poolId, taker2PosId);
+        Params.ClosePositionParams memory closeTaker2PositionParams =
+            Params.ClosePositionParams({ posId: taker2PosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        perpHook.closeTakerPosition(poolId, closeTaker2PositionParams);
 
         console2.log("taker2 closes position with id", taker2PosId);
         console2.log("taker2 balance", usdc.balanceOf(taker2));
@@ -312,7 +328,9 @@ contract PerpTest is Test, Fixtures {
         console2.log("maker1 isLiquidatable", maker1IsLiquidatable);
         console2.log();
 
-        perpHook.closeMakerPosition(poolId, makerPosId);
+        Params.ClosePositionParams memory closeMaker1PositionParams =
+            Params.ClosePositionParams({ posId: makerPosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        perpHook.closeMakerPosition(poolId, closeMaker1PositionParams);
 
         console2.log("maker closes position with id", makerPosId);
         console2.log("maker balance", usdc.balanceOf(maker1));

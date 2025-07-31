@@ -160,7 +160,7 @@ library Perp {
         uint256 perpsBorrowed;
         uint256 usdBorrowed;
         (makerPosId, perpsBorrowed, usdBorrowed) = contracts.positionManager.mintLiquidityPosition(
-            self.poolKey, params.tickLower, params.tickUpper, params.liquidity, UINT128_MAX, UINT128_MAX
+            self.poolKey, params.tickLower, params.tickUpper, params.liquidity, params.maxAmount0In, params.maxAmount1In
         );
 
         self.makerPositions[makerPosId] = Positions.MakerInfo({
@@ -188,16 +188,16 @@ library Perp {
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        uint256 makerPosId,
+        Params.ClosePositionParams memory params,
         bool revertChanges
     )
         public
     {
         PoolKey memory poolKey = self.poolKey;
-        Positions.MakerInfo memory makerPos = self.makerPositions[makerPosId];
+        Positions.MakerInfo memory makerPos = self.makerPositions[params.posId];
 
         (uint256 perpsReceived, uint256 usdReceived) =
-            contracts.positionManager.burnLiquidityPosition(poolKey, makerPosId);
+            contracts.positionManager.burnLiquidityPosition(poolKey, params.posId);
 
         int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
         int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
@@ -208,10 +208,12 @@ library Perp {
         if (liquidity > 0) {
             if (excessPerps < 0) {
                 // must buy perps to pay back debt
-                pnl -= contracts.router.swapExactOutSingle(poolKey, false, excessPerpsAbs, UINT128_MAX, 0).toInt256();
+                pnl -= contracts.router.swapExactOutSingle(poolKey, false, excessPerpsAbs, params.maxAmount1In, 0)
+                    .toInt256();
             } else if (excessPerps > 0) {
                 // must sell excess perp contracts
-                pnl += contracts.router.swapExactInSingle(poolKey, true, excessPerpsAbs, 0, 0).toInt256();
+                pnl += contracts.router.swapExactInSingle(poolKey, true, excessPerpsAbs, params.minAmount1Out, 0)
+                    .toInt256();
             }
         }
 
@@ -240,15 +242,6 @@ library Perp {
         );
 
         int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
-        if (effectiveMargin < 0) {
-            if (revertChanges) {
-                LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
-            } else {
-                emit MakerPositionClosed(perpId, makerPosId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-                delete self.makerPositions[makerPosId];
-                return;
-            }
-        }
 
         uint256 notional = calculateMakerNotional(
             sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
@@ -256,8 +249,21 @@ library Perp {
 
         uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
+        if (effectiveMargin < 0) {
+            if (revertChanges) {
+                LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
+            } else {
+                emit MakerPositionClosed(perpId, params.posId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+                delete self.makerPositions[params.posId];
+                return;
+            }
+        } else if (uint256(effectiveMargin) < liquidationFee) {
+            liquidationFee = uint256(effectiveMargin);
+        }
+
         bool isLiquidatable =
             isPositionLiquidatable(self.leverageBounds, notional, uint256(effectiveMargin), liquidationFee);
+
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
@@ -281,8 +287,8 @@ library Perp {
             LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
         } else {
             uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
-            emit MakerPositionClosed(perpId, makerPosId, isLiquidatable, makerPos, markPriceX96);
-            delete self.makerPositions[makerPosId];
+            emit MakerPositionClosed(perpId, params.posId, isLiquidatable, makerPos, markPriceX96);
+            delete self.makerPositions[params.posId];
         }
     }
 
@@ -303,12 +309,14 @@ library Perp {
             FullMath.mulDiv(params.margin.scale6To18(), params.leverageX96, FixedPoint96.UINT_Q96).toUint128();
         if (params.isLong) {
             // For long: swap USD in for Perp out
-            perpsMoved =
-                contracts.router.swapExactInSingle(self.poolKey, false, usdMoved, 0, self.tradingFee).toUint128();
+            perpsMoved = contracts.router.swapExactInSingle(
+                self.poolKey, false, usdMoved, params.minAmount0Out, self.tradingFee
+            ).toUint128();
         } else {
             // For short: swap Perp in for USD out
-            perpsMoved = contracts.router.swapExactOutSingle(self.poolKey, true, usdMoved, UINT128_MAX, self.tradingFee)
-                .toUint128();
+            perpsMoved = contracts.router.swapExactOutSingle(
+                self.poolKey, true, usdMoved, params.maxAmount0In, self.tradingFee
+            ).toUint128();
         }
 
         takerPosId = self.nextTakerPosId;
@@ -335,12 +343,12 @@ library Perp {
         Info storage self,
         ExternalContracts.Contracts memory contracts,
         PoolId perpId,
-        uint256 takerPosId,
+        Params.ClosePositionParams memory params,
         bool revertChanges
     )
         public
     {
-        Positions.TakerInfo memory takerPos = self.takerPositions[takerPosId];
+        Positions.TakerInfo memory takerPos = self.takerPositions[params.posId];
 
         uint256 notionalValue;
         int256 pnl;
@@ -351,7 +359,7 @@ library Perp {
             uint128 amountIn = takerPos.size;
             // Simulate swap: Perp in, USD out
             // Execute swap: Perp in, USD out
-            notionalValue = contracts.router.swapExactInSingle(self.poolKey, true, amountIn, 0, 0);
+            notionalValue = contracts.router.swapExactInSingle(self.poolKey, true, amountIn, params.minAmount1Out, 0);
             // PnL: USD received minus entry value
             pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
         } else {
@@ -359,7 +367,7 @@ library Perp {
             uint128 amountOut = takerPos.size;
             // Simulate swap: USD in, Perp out
             // Execute swap: USD in, Perp out
-            notionalValue = contracts.router.swapExactOutSingle(self.poolKey, false, amountOut, UINT128_MAX, 0);
+            notionalValue = contracts.router.swapExactOutSingle(self.poolKey, false, amountOut, params.maxAmount1In, 0);
             // PnL: entry value minus USD paid to close
             pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
         }
@@ -372,22 +380,26 @@ library Perp {
 
         // Calculate effective margin after PnL and funding
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
             if (revertChanges) {
                 LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
             } else {
                 (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
-                emit TakerPositionClosed(perpId, takerPosId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
-                delete self.takerPositions[takerPosId];
+                emit TakerPositionClosed(perpId, params.posId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
+                delete self.takerPositions[params.posId];
                 return;
             }
+        } else if (uint256(effectiveMargin) < liquidationFee) {
+            liquidationFee = uint256(effectiveMargin);
         }
-
-        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
         bool isLiquidatable =
             isPositionLiquidatable(self.leverageBounds, notionalValue, uint256(effectiveMargin), liquidationFee);
+
         // If margin after fee is below liquidation threshold, handle liquidation payout
         if (isLiquidatable) {
             // Liquidation payout: send remaining margin to position holder, liquidation fee to liquidator
@@ -412,8 +424,8 @@ library Perp {
         } else {
             (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
             uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
-            emit TakerPositionClosed(perpId, takerPosId, isLiquidatable, takerPos, markPriceX96);
-            delete self.takerPositions[takerPosId];
+            emit TakerPositionClosed(perpId, params.posId, isLiquidatable, takerPos, markPriceX96);
+            delete self.takerPositions[params.posId];
         }
     }
 

@@ -45,7 +45,9 @@ contract OpenMakerPosition is Script {
             margin: uint128(MARGIN),
             liquidity: liquidity,
             tickLower: tickLower,
-            tickUpper: tickUpper
+            tickUpper: tickUpper,
+            maxAmount0In: Perp.UINT128_MAX,
+            maxAmount1In: Perp.UINT128_MAX
         });
 
         PerpHook(PERP).openMakerPosition(POOL_ID, openMakerPositionParams);
