@@ -26,6 +26,7 @@ library Params {
         int24 tickUpper;
         uint128 maxAmount0In;
         uint128 maxAmount1In;
+        uint256 expiryWindow;
     }
 
     struct OpenTakerPositionParams {
@@ -34,11 +35,13 @@ library Params {
         uint256 leverageX96;
         uint128 minAmount0Out; // will be used if long, otherwise ignored
         uint128 maxAmount0In; // will be used if short, otherwise ignored
+        uint256 expiryWindow;
     }
 
     struct ClosePositionParams {
         uint256 posId; // maker or taker position id
         uint128 minAmount1Out; // will be used if long, otherwise ignored; used on excess position for makers
         uint128 maxAmount1In; // will be used if short, otherwise ignored; used on excess position for makers
+        uint256 expiryWindow;
     }
 }

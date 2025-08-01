@@ -167,7 +167,13 @@ library Perp {
         uint256 perpsBorrowed;
         uint256 usdBorrowed;
         (makerPosId, perpsBorrowed, usdBorrowed) = contracts.positionManager.mintLiquidityPosition(
-            self.poolKey, params.tickLower, params.tickUpper, params.liquidity, params.maxAmount0In, params.maxAmount1In
+            self.poolKey,
+            params.tickLower,
+            params.tickUpper,
+            params.liquidity,
+            params.maxAmount0In,
+            params.maxAmount1In,
+            params.expiryWindow
         );
 
         self.makerPositions[makerPosId] = Positions.MakerInfo({
@@ -204,7 +210,7 @@ library Perp {
         Positions.MakerInfo memory makerPos = self.makerPositions[params.posId];
 
         (uint256 perpsReceived, uint256 usdReceived) =
-            contracts.positionManager.burnLiquidityPosition(poolKey, params.posId);
+            contracts.positionManager.burnLiquidityPosition(poolKey, params.posId, params.expiryWindow);
 
         int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
         int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
@@ -215,12 +221,14 @@ library Perp {
         if (liquidity > 0) {
             if (excessPerps < 0) {
                 // must buy perps to pay back debt
-                pnl -= contracts.router.swapExactOutSingle(poolKey, false, excessPerpsAbs, params.maxAmount1In, 0)
-                    .toInt256();
+                pnl -= contracts.router.swapExactOutSingle(
+                    poolKey, false, excessPerpsAbs, params.maxAmount1In, 0, params.expiryWindow
+                ).toInt256();
             } else if (excessPerps > 0) {
                 // must sell excess perp contracts
-                pnl += contracts.router.swapExactInSingle(poolKey, true, excessPerpsAbs, params.minAmount1Out, 0)
-                    .toInt256();
+                pnl += contracts.router.swapExactInSingle(
+                    poolKey, true, excessPerpsAbs, params.minAmount1Out, 0, params.expiryWindow
+                ).toInt256();
             }
         }
 
@@ -317,12 +325,12 @@ library Perp {
         if (params.isLong) {
             // For long: swap USD in for Perp out
             perpsMoved = contracts.router.swapExactInSingle(
-                self.poolKey, false, usdMoved, params.minAmount0Out, self.tradingFee
+                self.poolKey, false, usdMoved, params.minAmount0Out, self.tradingFee, params.expiryWindow
             ).toUint128();
         } else {
             // For short: swap Perp in for USD out
             perpsMoved = contracts.router.swapExactOutSingle(
-                self.poolKey, true, usdMoved, params.maxAmount0In, self.tradingFee
+                self.poolKey, true, usdMoved, params.maxAmount0In, self.tradingFee, params.expiryWindow
             ).toUint128();
         }
 
@@ -366,7 +374,9 @@ library Perp {
             uint128 amountIn = takerPos.size;
             // Simulate swap: Perp in, USD out
             // Execute swap: Perp in, USD out
-            notionalValue = contracts.router.swapExactInSingle(self.poolKey, true, amountIn, params.minAmount1Out, 0);
+            notionalValue = contracts.router.swapExactInSingle(
+                self.poolKey, true, amountIn, params.minAmount1Out, 0, params.expiryWindow
+            );
             // PnL: USD received minus entry value
             pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
         } else {
@@ -374,7 +384,9 @@ library Perp {
             uint128 amountOut = takerPos.size;
             // Simulate swap: USD in, Perp out
             // Execute swap: USD in, Perp out
-            notionalValue = contracts.router.swapExactOutSingle(self.poolKey, false, amountOut, params.maxAmount1In, 0);
+            notionalValue = contracts.router.swapExactOutSingle(
+                self.poolKey, false, amountOut, params.maxAmount1In, 0, params.expiryWindow
+            );
             // PnL: entry value minus USD paid to close
             pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
         }

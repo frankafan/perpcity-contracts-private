@@ -118,8 +118,12 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        Params.ClosePositionParams memory params =
-            Params.ClosePositionParams({ posId: makerPosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        Params.ClosePositionParams memory params = Params.ClosePositionParams({
+            posId: makerPosId,
+            minAmount1Out: 0,
+            maxAmount1In: Perp.UINT128_MAX,
+            expiryWindow: 60
+        });
         try perps[perpId].closeMakerPosition(externalContracts, perpId, params, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
@@ -133,8 +137,12 @@ contract PerpHook is BaseHook {
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
     {
-        Params.ClosePositionParams memory params =
-            Params.ClosePositionParams({ posId: takerPosId, minAmount1Out: 0, maxAmount1In: Perp.UINT128_MAX });
+        Params.ClosePositionParams memory params = Params.ClosePositionParams({
+            posId: takerPosId,
+            minAmount1Out: 0,
+            maxAmount1In: Perp.UINT128_MAX,
+            expiryWindow: 60
+        });
         try perps[perpId].closeTakerPosition(externalContracts, perpId, params, true) { }
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();

@@ -58,7 +58,8 @@ library UniswapV4Utility {
         bool zeroForOne,
         uint128 amountIn,
         uint128 minAmountOut,
-        uint24 fee
+        uint24 fee,
+        uint256 executionWindow
     )
         internal
         returns (uint256 amountOut)
@@ -98,7 +99,7 @@ library UniswapV4Utility {
         uint256 outputCurrencyBalanceBefore = outputCurrency.balanceOfSelf();
 
         // Execute the swap
-        uint256 deadline = block.timestamp + 20;
+        uint256 deadline = block.timestamp + executionWindow;
         router.execute(commands, inputs, deadline);
 
         // Verify and return the output amount
@@ -113,7 +114,8 @@ library UniswapV4Utility {
         bool zeroForOne,
         uint128 amountOut,
         uint128 maxAmountIn,
-        uint24 fee
+        uint24 fee,
+        uint256 executionWindow
     )
         internal
         returns (uint256 amountIn)
@@ -153,7 +155,7 @@ library UniswapV4Utility {
         uint256 inputCurrencyBalanceBefore = inputCurrency.balanceOfSelf();
 
         // Execute the swap
-        uint256 deadline = block.timestamp + 20;
+        uint256 deadline = block.timestamp + executionWindow;
         router.execute(commands, inputs, deadline);
 
         // Verify and return the output amount
@@ -169,7 +171,8 @@ library UniswapV4Utility {
         int24 tickUpper,
         uint256 liquidity,
         uint128 amount0Max,
-        uint128 amount1Max
+        uint128 amount1Max,
+        uint256 executionWindow
     )
         internal
         returns (uint256 tokenId, uint256 amount0In, uint256 amount1In)
@@ -187,7 +190,7 @@ library UniswapV4Utility {
         uint256 amount0BalanceBefore = poolKey.currency0.balanceOfSelf();
         uint256 amount1BalanceBefore = poolKey.currency1.balanceOfSelf();
 
-        uint256 deadline = block.timestamp + 20;
+        uint256 deadline = block.timestamp + executionWindow;
         positionManager.modifyLiquidities{ value: 0 }(abi.encode(actions, params), deadline);
 
         uint256 amount0BalanceAfter = poolKey.currency0.balanceOfSelf();
@@ -202,7 +205,8 @@ library UniswapV4Utility {
     function burnLiquidityPosition(
         IPositionManager positionManager,
         PoolKey memory poolKey,
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 executionWindow
     )
         internal
         returns (uint256 amount0Out, uint256 amount1Out)
@@ -216,7 +220,7 @@ library UniswapV4Utility {
         uint256 amount0BalanceBefore = poolKey.currency0.balanceOfSelf();
         uint256 amount1BalanceBefore = poolKey.currency1.balanceOfSelf();
 
-        uint256 deadline = block.timestamp + 20;
+        uint256 deadline = block.timestamp + executionWindow;
         positionManager.modifyLiquidities(abi.encode(actions, params), deadline);
 
         uint256 amount0BalanceAfter = poolKey.currency0.balanceOfSelf();

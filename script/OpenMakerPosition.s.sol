@@ -47,7 +47,8 @@ contract OpenMakerPosition is Script {
             tickLower: tickLower,
             tickUpper: tickUpper,
             maxAmount0In: Perp.UINT128_MAX,
-            maxAmount1In: Perp.UINT128_MAX
+            maxAmount1In: Perp.UINT128_MAX,
+            expiryWindow: 20
         });
 
         PerpHook(PERP).openMakerPosition(POOL_ID, openMakerPositionParams);
