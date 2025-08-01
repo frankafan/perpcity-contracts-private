@@ -50,6 +50,7 @@ contract PerpTest is Test, Fixtures {
 
     uint24 constant TRADING_FEE = 5000; // 0.5%
     uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
+    uint128 immutable TRADING_FEE_INSURANCE_SPLIT_X96 = (10 * FixedPoint96.Q96 / 100).toUint128(); // 10%
     uint128 constant MIN_MARGIN = 0;
     uint128 constant MAX_MARGIN = 1000e6; // 1000 USDC
     uint128 constant MIN_OPENING_LEVERAGE_X96 = 0;
@@ -119,6 +120,7 @@ contract PerpTest is Test, Fixtures {
             beacon: address(beacon),
             tradingFee: TRADING_FEE,
             tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
+            tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
             minMargin: MIN_MARGIN,
             maxMargin: MAX_MARGIN,
             minOpeningLeverageX96: MIN_OPENING_LEVERAGE_X96,
@@ -342,7 +344,7 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
     }
 }

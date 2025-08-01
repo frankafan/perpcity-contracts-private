@@ -50,6 +50,7 @@ library Perp {
         address beacon;
         uint24 tradingFee;
         uint128 tradingFeeCreatorSplitX96;
+        uint256 tradingFeeInsuranceSplitX96;
         Bounds.MarginBounds marginBounds;
         Bounds.LeverageBounds leverageBounds;
         uint128 liquidationFeeX96;
@@ -79,6 +80,7 @@ library Perp {
     error OpeningLeverageOutOfBounds(uint256 leverageX96, uint128 minLeverageX96, uint128 maxLeverageX96);
     error InvalidClose(address caller, address holder, bool isLiquidated);
     error InvalidLiquidity(uint128 liquidity);
+    error InvalidFeeSplits(uint256 tradingFeeInsuranceSplitX96, uint256 tradingFeeCreatorSplitX96);
 
     function createPerp(
         mapping(PoolId => Info) storage self,
@@ -88,6 +90,10 @@ library Perp {
         public
         returns (PoolId perpId)
     {
+        if (params.tradingFeeInsuranceSplitX96 + params.tradingFeeCreatorSplitX96 > FixedPoint96.UINT_Q96) {
+            revert InvalidFeeSplits(params.tradingFeeInsuranceSplitX96, params.tradingFeeCreatorSplitX96);
+        }
+
         IERC20 currency0 = new AccountingToken(UINT128_MAX);
         IERC20 currency1 = new AccountingToken(UINT128_MAX);
 
@@ -125,6 +131,7 @@ library Perp {
         perp.beacon = params.beacon;
         perp.tradingFee = params.tradingFee;
         perp.tradingFeeCreatorSplitX96 = params.tradingFeeCreatorSplitX96;
+        perp.tradingFeeInsuranceSplitX96 = params.tradingFeeInsuranceSplitX96;
         perp.marginBounds = marginBounds;
         perp.leverageBounds = leverageBounds;
         perp.liquidationFeeX96 = params.liquidationFeeX96;

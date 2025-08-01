@@ -303,7 +303,11 @@ contract PerpHook is BaseHook {
             perps[poolId].vault, perps[poolId].creator, creatorFeeAmount.scale18To6()
         );
 
-        uint256 lpFeeAmount = feeAmount - creatorFeeAmount;
+        uint256 insuranceFeeAmount =
+            FullMath.mulDiv(feeAmount, perps[poolId].tradingFeeInsuranceSplitX96, FixedPoint96.UINT_Q96);
+        poolManager.mint(address(this), key.currency1.toId(), insuranceFeeAmount);
+
+        uint256 lpFeeAmount = feeAmount - creatorFeeAmount - insuranceFeeAmount;
         poolManager.donate(key, 0, lpFeeAmount, bytes(""));
 
         return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(SafeCast.toInt128(feeAmount), 0), 0);
