@@ -62,6 +62,8 @@ contract PerpTest is Test, Fixtures {
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
 
+    uint32 constant INITIAL_CARDINALITY_NEXT = 100;
+
     address perpCreator = vm.addr(1);
     address maker1 = vm.addr(2);
     address taker1 = vm.addr(3);
@@ -97,7 +99,7 @@ contract PerpTest is Test, Fixtures {
             usdc: usdc
         });
 
-        beacon = new TestnetBeacon(beaconOwner);
+        beacon = new TestnetBeacon(beaconOwner, INITIAL_CARDINALITY_NEXT);
 
         vm.prank(beaconOwner);
         beacon.updateData(bytes(""), bytes(abi.encode(NUMBER_50_X96)));
