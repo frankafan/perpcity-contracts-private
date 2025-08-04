@@ -132,7 +132,8 @@ contract PerpTest is Test, Fixtures {
             liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96,
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
-            startingSqrtPriceX96: STARTING_SQRT_PRICE_X96
+            startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
+            initialCardinalityNext: INITIAL_CARDINALITY_NEXT
         });
 
         vm.startPrank(perpCreator);
@@ -361,7 +362,7 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
     }
 }

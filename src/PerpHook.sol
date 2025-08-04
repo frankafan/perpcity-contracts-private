@@ -27,6 +27,8 @@ import { FixedPoint96 } from "./libraries/FixedPoint96.sol";
 import { TokenMath } from "./libraries/TokenMath.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { TickTWAP } from "./libraries/TickTWAP.sol";
+import { MAX_CARDINALITY } from "./utils/Constants.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
@@ -36,6 +38,7 @@ contract PerpHook is BaseHook {
     using LivePositionDetailsReverter for *;
     using TokenMath for uint256;
     using SafeERC20 for IERC20;
+    using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
     ExternalContracts.Contracts public externalContracts;
 
@@ -103,6 +106,14 @@ contract PerpHook is BaseHook {
 
     function closeTakerPosition(PoolId perpId, Params.ClosePositionParams memory params) external {
         perps[perpId].closeTakerPosition(externalContracts, perpId, params, false);
+    }
+
+    // -------------
+    /// TWAP ACTIONS
+    // -------------
+
+    function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
+        perps[perpId].increaseCardinalityNext(cardinalityNext);
     }
 
     // ----
@@ -359,6 +370,17 @@ contract PerpHook is BaseHook {
             key.tickSpacing,
             perps[poolId].twPremiumX96,
             perps[poolId].twPremiumDivBySqrtPriceX96
+        );
+
+        (perps[poolId].twapState.index, perps[poolId].twapState.cardinality) = perps[poolId]
+            .twapState
+            .observations
+            .write(
+            perps[poolId].twapState.index,
+            uint32(block.timestamp),
+            endingTick,
+            perps[poolId].twapState.cardinality,
+            perps[poolId].twapState.cardinalityNext
         );
 
         return (BaseHook.afterSwap.selector, 0);

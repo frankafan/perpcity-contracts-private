@@ -30,6 +30,8 @@ import { Params } from "./Params.sol";
 import { Bounds } from "./Bounds.sol";
 import { PerpVault } from "../PerpVault.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { TickTWAP } from "./TickTWAP.sol";
+import { MAX_CARDINALITY } from "../utils/Constants.sol";
 
 library Perp {
     using SafeCast for *;
@@ -40,6 +42,7 @@ library Perp {
     using UniswapV4Utility for IUniversalRouter;
     using UniswapV4Utility for IPositionManager;
     using SafeERC20 for IERC20;
+    using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
     uint128 constant UINT128_MAX = type(uint128).max;
 
@@ -64,6 +67,7 @@ library Perp {
         mapping(uint256 => Positions.TakerInfo) takerPositions;
         mapping(uint256 => Positions.MakerInfo) makerPositions;
         mapping(int24 => Tick.GrowthInfo) tickGrowthInfo;
+        TickTWAP.State twapState;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -140,6 +144,10 @@ library Perp {
         perp.liquidationFeeX96 = params.liquidationFeeX96;
         perp.liquidationFeeSplitX96 = params.liquidationFeeSplitX96;
         perp.fundingInterval = params.fundingInterval;
+        (perp.twapState.cardinality, perp.twapState.cardinalityNext) =
+            perp.twapState.observations.initialize(uint32(block.timestamp));
+        perp.twapState.cardinalityNext =
+            perp.twapState.observations.grow(perp.twapState.cardinalityNext, params.initialCardinalityNext);
 
         emit PerpCreated(perpId, params.beacon, sqrtPriceX96ToPriceX96(params.startingSqrtPriceX96));
     }
@@ -556,5 +564,42 @@ library Perp {
         (uint256 indexPriceX96,) = IBeacon(self.beacon).getData();
 
         self.premiumPerSecondX96 = ((int256(markPriceX96) - int256(indexPriceX96)) / self.fundingInterval).toInt128();
+    }
+
+    function increaseCardinalityNext(
+        Info storage self,
+        uint32 cardinalityNext
+    )
+        internal
+        returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew)
+    {
+        cardinalityNextOld = self.twapState.cardinalityNext;
+        cardinalityNextNew = self.twapState.observations.grow(cardinalityNextOld, cardinalityNext);
+        self.twapState.cardinalityNext = cardinalityNextNew;
+    }
+
+    function getTWAP(
+        Info storage self,
+        uint32 twapSecondsAgo,
+        int24 currentTick
+    )
+        internal
+        view
+        returns (uint256 twapPrice)
+    {
+        if (twapSecondsAgo == 0) {
+            return sqrtPriceX96ToPriceX96(TickMath.getSqrtPriceAtTick(currentTick));
+        }
+
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = twapSecondsAgo;
+        secondsAgos[1] = 0;
+        int56[] memory tickCumulatives = self.twapState.observations.observe(
+            uint32(block.timestamp), secondsAgos, currentTick, self.twapState.index, self.twapState.cardinality
+        );
+        int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
+        return sqrtPriceX96ToPriceX96(
+            TickMath.getSqrtPriceAtTick(int24(tickCumulativesDelta / int56(uint56(twapSecondsAgo))))
+        );
     }
 }

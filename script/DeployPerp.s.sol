@@ -31,6 +31,7 @@ contract DeployPerp is Script {
     int128 constant FUNDING_INTERVAL = 1 days;
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
+    uint32 constant INITIAL_CARDINALITY_NEXT = 100;
 
     function run() public {
         vm.startBroadcast();
@@ -49,7 +50,8 @@ contract DeployPerp is Script {
             liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96,
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
-            startingSqrtPriceX96: STARTING_SQRT_PRICE_X96
+            startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
+            initialCardinalityNext: INITIAL_CARDINALITY_NEXT
         });
 
         PerpHook perpHook = PerpHook(PERP_HOOK);

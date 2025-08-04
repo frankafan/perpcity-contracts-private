@@ -17,6 +17,7 @@ library Params {
         int128 fundingInterval;
         int24 tickSpacing;
         uint160 startingSqrtPriceX96;
+        uint32 initialCardinalityNext;
     }
 
     struct OpenMakerPositionParams {
