@@ -14,5 +14,6 @@ library ExternalContracts {
         IPositionManager positionManager;
         IPermit2 permit2;
         IERC20 usdc;
+        address creationFeeRecipient;
     }
 }

@@ -64,11 +64,12 @@ contract PerpTest is Test, Fixtures {
 
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
 
-    address perpCreator = vm.addr(1);
-    address maker1 = vm.addr(2);
-    address taker1 = vm.addr(3);
-    address taker2 = vm.addr(4);
-    address beaconOwner = vm.addr(5);
+    address creationFeeRecipient = vm.addr(1);
+    address perpCreator = vm.addr(2);
+    address maker1 = vm.addr(3);
+    address taker1 = vm.addr(4);
+    address taker2 = vm.addr(5);
+    address beaconOwner = vm.addr(6);
 
     function setUp() public {
         // creates the pool manager, utility routers
@@ -96,7 +97,8 @@ contract PerpTest is Test, Fixtures {
             router: router,
             positionManager: posm,
             permit2: IPermit2(address(permit2)),
-            usdc: usdc
+            usdc: usdc,
+            creationFeeRecipient: creationFeeRecipient
         });
 
         beacon = new TestnetBeacon(beaconOwner, INITIAL_CARDINALITY_NEXT);
@@ -114,7 +116,7 @@ contract PerpTest is Test, Fixtures {
             ) ^ (0x4444 << 144) // Namespace the hook to avoid collisions
         );
         // Add all the necessary constructor arguments from the hook
-        bytes memory constructorArgs = abi.encode(externalContracts);
+        bytes memory constructorArgs = abi.encode(externalContracts, 1_000_000); // 1 USDC creation fee
         deployCodeTo("PerpHook.sol:PerpHook", constructorArgs, flags);
         perpHook = PerpHook(flags);
 
@@ -137,6 +139,8 @@ contract PerpTest is Test, Fixtures {
         });
 
         vm.startPrank(perpCreator);
+        usdc.mint(perpCreator, 1_000_000);
+        usdc.approve(address(perpHook), 1_000_000);
         poolId = perpHook.createPerp(createPerpParams);
         vm.stopPrank();
 
@@ -364,5 +368,6 @@ contract PerpTest is Test, Fixtures {
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
         (,, address vault,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
+        console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
     }
 }

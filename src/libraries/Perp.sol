@@ -92,7 +92,8 @@ library Perp {
     function createPerp(
         mapping(PoolId => Info) storage self,
         ExternalContracts.Contracts memory contracts,
-        Params.CreatePerpParams memory params
+        Params.CreatePerpParams memory params,
+        uint256 creationFee
     )
         external
         returns (PoolId perpId)
@@ -148,6 +149,8 @@ library Perp {
             perp.twapState.observations.initialize(uint32(block.timestamp));
         perp.twapState.cardinalityNext =
             perp.twapState.observations.grow(perp.twapState.cardinalityNext, params.initialCardinalityNext);
+
+        contracts.usdc.safeTransferFrom(msg.sender, contracts.creationFeeRecipient, creationFee);
 
         emit PerpCreated(perpId, params.beacon, sqrtPriceX96ToPriceX96(params.startingSqrtPriceX96));
     }

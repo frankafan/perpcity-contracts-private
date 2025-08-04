@@ -19,6 +19,9 @@ contract DeployPerpHook is Script {
     address public constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address public constant USDC = 0xC1a5D4E99BB224713dd179eA9CA2Fa6600706210;
     address public constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    address public constant CREATION_FEE_RECIPIENT = 0x0000000000000000000000000000000000000000;
+
+    uint256 public constant CREATION_FEE = 1_000_000; // 1 USDC
 
     function run() public {
         vm.startBroadcast();
@@ -35,15 +38,16 @@ contract DeployPerpHook is Script {
             router: IUniversalRouter(ROUTER),
             positionManager: IPositionManager(POSITION_MANAGER),
             permit2: IPermit2(PERMIT2),
-            usdc: IERC20(USDC)
+            usdc: IERC20(USDC),
+            creationFeeRecipient: CREATION_FEE_RECIPIENT
         });
 
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(contracts);
+        bytes memory constructorArgs = abi.encode(contracts, CREATION_FEE);
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(PerpHook).creationCode, constructorArgs);
 
-        PerpHook perpHook = new PerpHook{ salt: salt }(contracts);
+        PerpHook perpHook = new PerpHook{ salt: salt }(contracts, CREATION_FEE);
         require(address(perpHook) == hookAddress, "PerpHookScript: hook address mismatch");
 
         console2.log("PerpHook: ", address(perpHook));

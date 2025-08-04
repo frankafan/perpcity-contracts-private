@@ -41,6 +41,7 @@ contract PerpHook is BaseHook {
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
     ExternalContracts.Contracts public externalContracts;
+    uint256 public creationFee; // flat fee in usdc
 
     mapping(PoolId => Perp.Info) public perps;
 
@@ -60,8 +61,14 @@ contract PerpHook is BaseHook {
         _;
     }
 
-    constructor(ExternalContracts.Contracts memory _externalContracts) BaseHook(_externalContracts.poolManager) {
+    constructor(
+        ExternalContracts.Contracts memory _externalContracts,
+        uint256 _creationFee
+    )
+        BaseHook(_externalContracts.poolManager)
+    {
         externalContracts = _externalContracts;
+        creationFee = _creationFee;
     }
 
     // ------------
@@ -69,7 +76,7 @@ contract PerpHook is BaseHook {
     // ------------
 
     function createPerp(Params.CreatePerpParams memory params) external returns (PoolId perpId) {
-        return perps.createPerp(externalContracts, params);
+        return perps.createPerp(externalContracts, params, creationFee);
     }
 
     function openMakerPosition(
