@@ -79,6 +79,10 @@ contract PerpHook is BaseHook {
         return perps[perpId].openMakerPosition(externalContracts, perpId, params);
     }
 
+    function addMakerMargin(PoolId perpId, Params.AddMarginParams memory params) external {
+        perps[perpId].addMakerMargin(externalContracts, perpId, params);
+    }
+
     function closeMakerPosition(PoolId perpId, Params.ClosePositionParams memory params) external {
         perps[perpId].closeMakerPosition(externalContracts, perpId, params, false);
     }
@@ -91,6 +95,10 @@ contract PerpHook is BaseHook {
         returns (uint256 takerPosId)
     {
         return perps[perpId].openTakerPosition(externalContracts, perpId, params);
+    }
+
+    function addTakerMargin(PoolId perpId, Params.AddMarginParams memory params) external {
+        perps[perpId].addTakerMargin(externalContracts, perpId, params);
     }
 
     function closeTakerPosition(PoolId perpId, Params.ClosePositionParams memory params) external {

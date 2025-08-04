@@ -38,6 +38,11 @@ library Params {
         uint256 expiryWindow;
     }
 
+    struct AddMarginParams {
+        uint256 posId; // maker or taker position id
+        uint128 amount;
+    }
+
     struct ClosePositionParams {
         uint256 posId; // maker or taker position id
         uint128 minAmount1Out; // will be used if long, otherwise ignored; used on excess position for makers

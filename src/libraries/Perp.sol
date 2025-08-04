@@ -68,6 +68,7 @@ library Perp {
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
     event MakerPositionOpened(PoolId perpId, uint256 makerPosId, Positions.MakerInfo makerPos, uint256 markPriceX96);
+    event MakerMarginAdded(PoolId perpId, uint256 makerPosId, uint128 amount);
     event TakerPositionOpened(PoolId perpId, uint256 takerPosId, Positions.TakerInfo takerPos, uint256 markPriceX96);
     event MakerPositionClosed(
         PoolId perpId, uint256 makerPosId, bool wasLiquidated, Positions.MakerInfo makerPos, uint256 markPriceX96
@@ -75,11 +76,13 @@ library Perp {
     event TakerPositionClosed(
         PoolId perpId, uint256 takerPosId, bool wasLiquidated, Positions.TakerInfo takerPos, uint256 markPriceX96
     );
+    event TakerMarginAdded(PoolId perpId, uint256 takerPosId, uint128 amount);
 
     error OpeningMarginOutOfBounds(uint128 margin, uint128 minMargin, uint128 maxMargin);
     error OpeningLeverageOutOfBounds(uint256 leverageX96, uint128 minLeverageX96, uint128 maxLeverageX96);
     error InvalidClose(address caller, address holder, bool isLiquidated);
     error InvalidLiquidity(uint128 liquidity);
+    error CallerNotOwner(address caller, address owner);
     error InvalidFeeSplits(uint256 tradingFeeInsuranceSplitX96, uint256 tradingFeeCreatorSplitX96);
 
     function createPerp(
@@ -87,7 +90,7 @@ library Perp {
         ExternalContracts.Contracts memory contracts,
         Params.CreatePerpParams memory params
     )
-        public
+        external
         returns (PoolId perpId)
     {
         if (params.tradingFeeInsuranceSplitX96 + params.tradingFeeCreatorSplitX96 > FixedPoint96.UINT_Q96) {
@@ -147,7 +150,7 @@ library Perp {
         PoolId perpId,
         Params.OpenMakerPositionParams memory params
     )
-        public
+        external
         returns (uint256 makerPosId)
     {
         validateOpeningMargin(self.marginBounds, params.margin);
@@ -197,6 +200,23 @@ library Perp {
         );
     }
 
+    function addMakerMargin(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        PoolId perpId,
+        Params.AddMarginParams memory params
+    )
+        external
+    {
+        address owner = self.makerPositions[params.posId].holder;
+        if (msg.sender != owner) revert CallerNotOwner(msg.sender, owner);
+
+        self.makerPositions[params.posId].margin += params.amount;
+        contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.amount);
+
+        emit MakerMarginAdded(perpId, params.posId, params.amount);
+    }
+
     function closeMakerPosition(
         Info storage self,
         ExternalContracts.Contracts memory contracts,
@@ -204,7 +224,7 @@ library Perp {
         Params.ClosePositionParams memory params,
         bool revertChanges
     )
-        public
+        external
     {
         PoolKey memory poolKey = self.poolKey;
         Positions.MakerInfo memory makerPos = self.makerPositions[params.posId];
@@ -313,7 +333,7 @@ library Perp {
         PoolId perpId,
         Params.OpenTakerPositionParams memory params
     )
-        public
+        external
         returns (uint256 takerPosId)
     {
         validateOpeningMargin(self.marginBounds, params.margin);
@@ -354,6 +374,23 @@ library Perp {
         );
     }
 
+    function addTakerMargin(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        PoolId perpId,
+        Params.AddMarginParams memory params
+    )
+        external
+    {
+        address owner = self.takerPositions[params.posId].holder;
+        if (msg.sender != owner) revert CallerNotOwner(msg.sender, owner);
+
+        self.takerPositions[params.posId].margin += params.amount;
+        contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.amount);
+
+        emit TakerMarginAdded(perpId, params.posId, params.amount);
+    }
+
     function closeTakerPosition(
         Info storage self,
         ExternalContracts.Contracts memory contracts,
@@ -361,7 +398,7 @@ library Perp {
         Params.ClosePositionParams memory params,
         bool revertChanges
     )
-        public
+        external
     {
         Positions.TakerInfo memory takerPos = self.takerPositions[params.posId];
 
@@ -448,13 +485,13 @@ library Perp {
         }
     }
 
-    function validateOpeningMargin(Bounds.MarginBounds memory bounds, uint128 margin) public pure {
+    function validateOpeningMargin(Bounds.MarginBounds memory bounds, uint128 margin) internal pure {
         if (margin < bounds.minOpeningMargin || margin > bounds.maxOpeningMargin) {
             revert OpeningMarginOutOfBounds(margin, bounds.minOpeningMargin, bounds.maxOpeningMargin);
         }
     }
 
-    function validateOpeningLeverage(Bounds.LeverageBounds memory bounds, uint256 leverageX96) public pure {
+    function validateOpeningLeverage(Bounds.LeverageBounds memory bounds, uint256 leverageX96) internal pure {
         if (leverageX96 < bounds.minOpeningLeverageX96 || leverageX96 > bounds.maxOpeningLeverageX96) {
             revert OpeningLeverageOutOfBounds(leverageX96, bounds.minOpeningLeverageX96, bounds.maxOpeningLeverageX96);
         }
@@ -466,7 +503,7 @@ library Perp {
         uint256 effectiveMargin,
         uint256 liquidationFee
     )
-        public
+        internal
         pure
         returns (bool)
     {
@@ -481,7 +518,7 @@ library Perp {
         uint160 sqrtPriceUpperX96,
         uint128 liquidity
     )
-        public
+        internal
         pure
         returns (uint256 notional)
     {
@@ -497,11 +534,11 @@ library Perp {
         notional = currency0Notional + currency1Amount;
     }
 
-    function sqrtPriceX96ToPriceX96(uint256 sqrtPriceX96) public pure returns (uint256) {
+    function sqrtPriceX96ToPriceX96(uint256 sqrtPriceX96) internal pure returns (uint256) {
         return FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.UINT_Q96);
     }
 
-    function updateTwPremiums(Info storage self, uint160 sqrtPriceX96) public {
+    function updateTwPremiums(Info storage self, uint160 sqrtPriceX96) internal {
         int128 timeSinceLastUpdate = block.timestamp.toInt128() - self.lastGrowthUpdate;
 
         self.twPremiumX96 += self.premiumPerSecondX96 * timeSinceLastUpdate;
@@ -513,7 +550,7 @@ library Perp {
         self.lastGrowthUpdate = block.timestamp.toInt128();
     }
 
-    function updatePremiumPerSecond(Info storage self, uint160 sqrtPriceX96) public {
+    function updatePremiumPerSecond(Info storage self, uint160 sqrtPriceX96) internal {
         uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
 
         (uint256 indexPriceX96,) = IBeacon(self.beacon).getData();
