@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { IBeacon } from "../interfaces/IBeacon.sol";
+import { ITWAPBeacon } from "../interfaces/ITWAPBeacon.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { UintTWAP } from "../libraries/UintTWAP.sol";
 import { MAX_CARDINALITY } from "../utils/Constants.sol";
 
-contract TestnetBeacon is IBeacon, Ownable {
+contract TestnetBeacon is ITWAPBeacon, Ownable {
     using UintTWAP for UintTWAP.Observation[MAX_CARDINALITY];
 
     uint256 private data;
@@ -16,10 +16,14 @@ contract TestnetBeacon is IBeacon, Ownable {
 
     event DataUpdated(uint256 data);
 
-    constructor(address owner, uint32 initialCardinalityNext) Ownable(owner) {
+    constructor(address owner, uint256 initialData, uint32 initialCardinalityNext) Ownable(owner) {
         (twapState.cardinality, twapState.cardinalityNext) = twapState.observations.initialize(uint32(block.timestamp));
 
         twapState.cardinalityNext = twapState.observations.grow(twapState.cardinalityNext, initialCardinalityNext);
+
+        (twapState.index, twapState.cardinality) = twapState.observations.write(
+            twapState.index, uint32(block.timestamp), initialData, twapState.cardinality, twapState.cardinalityNext
+        );
     }
 
     function getData() external view returns (uint256, uint256) {

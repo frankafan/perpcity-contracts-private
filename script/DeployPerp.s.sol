@@ -32,6 +32,7 @@ contract DeployPerp is Script {
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
+    uint32 constant TWAP_WINDOW = 5 minutes;
 
     function run() public {
         vm.startBroadcast();
@@ -51,7 +52,8 @@ contract DeployPerp is Script {
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
-            initialCardinalityNext: INITIAL_CARDINALITY_NEXT
+            initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
+            twapWindow: TWAP_WINDOW
         });
 
         PerpHook perpHook = PerpHook(PERP_HOOK);

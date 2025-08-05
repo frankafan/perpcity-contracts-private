@@ -6,8 +6,15 @@ import { TestnetBeacon } from "./TestnetBeacon.sol";
 contract TestnetBeaconFactory {
     event BeaconCreated(address beacon);
 
-    function createBeacon(address owner, uint32 initialCardinalityNext) external returns (address) {
-        address beacon = address(new TestnetBeacon(owner, initialCardinalityNext));
+    function createBeacon(
+        address owner,
+        uint256 initialData,
+        uint32 initialCardinalityNext
+    )
+        external
+        returns (address)
+    {
+        address beacon = address(new TestnetBeacon(owner, initialData, initialCardinalityNext));
         emit BeaconCreated(beacon);
         return beacon;
     }

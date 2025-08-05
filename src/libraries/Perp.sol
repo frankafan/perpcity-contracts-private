@@ -9,7 +9,7 @@ import { Positions } from "./Positions.sol";
 import { Tick } from "./Tick.sol";
 import { MoreSignedMath } from "./MoreSignedMath.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
-import { IBeacon } from "../interfaces/IBeacon.sol";
+import { ITWAPBeacon } from "../interfaces/ITWAPBeacon.sol";
 import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
 import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -32,6 +32,7 @@ import { PerpVault } from "../PerpVault.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { TickTWAP } from "./TickTWAP.sol";
 import { MAX_CARDINALITY } from "../utils/Constants.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 library Perp {
     using SafeCast for *;
@@ -68,6 +69,8 @@ library Perp {
         mapping(uint256 => Positions.MakerInfo) makerPositions;
         mapping(int24 => Tick.GrowthInfo) tickGrowthInfo;
         TickTWAP.State twapState;
+        uint32 twapWindow;
+        uint256 creationTimestamp;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -149,6 +152,16 @@ library Perp {
             perp.twapState.observations.initialize(uint32(block.timestamp));
         perp.twapState.cardinalityNext =
             perp.twapState.observations.grow(perp.twapState.cardinalityNext, params.initialCardinalityNext);
+        perp.twapWindow = params.twapWindow;
+        perp.creationTimestamp = block.timestamp;
+
+        (perp.twapState.index, perp.twapState.cardinality) = perp.twapState.observations.write(
+            perp.twapState.index,
+            uint32(block.timestamp),
+            TickMath.getTickAtSqrtPrice(params.startingSqrtPriceX96),
+            perp.twapState.cardinality,
+            perp.twapState.cardinalityNext
+        );
 
         contracts.usdc.safeTransferFrom(msg.sender, contracts.creationFeeRecipient, creationFee);
 
@@ -562,23 +575,13 @@ library Perp {
     }
 
     function updatePremiumPerSecond(Info storage self, uint160 sqrtPriceX96) internal {
-        uint256 markPriceX96 = sqrtPriceX96ToPriceX96(sqrtPriceX96);
+        uint32 twapSecondsAgo = uint32(block.timestamp - self.creationTimestamp);
+        twapSecondsAgo = twapSecondsAgo > self.twapWindow ? self.twapWindow : twapSecondsAgo;
 
-        (uint256 indexPriceX96,) = IBeacon(self.beacon).getData();
+        uint256 markTWAPX96 = getTWAP(self, twapSecondsAgo, TickMath.getTickAtSqrtPrice(sqrtPriceX96));
+        uint256 indexTWAPX96 = ITWAPBeacon(self.beacon).getTWAP(twapSecondsAgo);
 
-        self.premiumPerSecondX96 = ((int256(markPriceX96) - int256(indexPriceX96)) / self.fundingInterval).toInt128();
-    }
-
-    function increaseCardinalityNext(
-        Info storage self,
-        uint32 cardinalityNext
-    )
-        internal
-        returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew)
-    {
-        cardinalityNextOld = self.twapState.cardinalityNext;
-        cardinalityNextNew = self.twapState.observations.grow(cardinalityNextOld, cardinalityNext);
-        self.twapState.cardinalityNext = cardinalityNextNew;
+        self.premiumPerSecondX96 = ((int256(markTWAPX96) - int256(indexTWAPX96)) / self.fundingInterval).toInt128();
     }
 
     function getTWAP(
@@ -604,5 +607,17 @@ library Perp {
         return sqrtPriceX96ToPriceX96(
             TickMath.getSqrtPriceAtTick(int24(tickCumulativesDelta / int56(uint56(twapSecondsAgo))))
         );
+    }
+
+    function increaseCardinalityNext(
+        Info storage self,
+        uint32 cardinalityNext
+    )
+        internal
+        returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew)
+    {
+        cardinalityNextOld = self.twapState.cardinalityNext;
+        cardinalityNextNew = self.twapState.observations.grow(cardinalityNextOld, cardinalityNext);
+        self.twapState.cardinalityNext = cardinalityNextNew;
     }
 }

@@ -27,6 +27,7 @@ import { TokenMath } from "../src/libraries/TokenMath.sol";
 import { ExternalContracts } from "../src/libraries/ExternalContracts.sol";
 import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 import { Params } from "../src/libraries/Params.sol";
+import { ITWAPBeacon } from "../src/interfaces/ITWAPBeacon.sol";
 
 contract PerpTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
@@ -61,15 +62,15 @@ contract PerpTest is Test, Fixtures {
     int128 constant FUNDING_INTERVAL = 1 days;
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
-
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
+    uint32 constant TWAP_WINDOW = 1 hours;
 
     address creationFeeRecipient = vm.addr(1);
     address perpCreator = vm.addr(2);
-    address maker1 = vm.addr(3);
-    address taker1 = vm.addr(4);
-    address taker2 = vm.addr(5);
-    address beaconOwner = vm.addr(6);
+    address beaconOwner = vm.addr(3);
+    address maker1 = vm.addr(4);
+    address taker1 = vm.addr(5);
+    address taker2 = vm.addr(6);
 
     function setUp() public {
         // creates the pool manager, utility routers
@@ -101,7 +102,7 @@ contract PerpTest is Test, Fixtures {
             creationFeeRecipient: creationFeeRecipient
         });
 
-        beacon = new TestnetBeacon(beaconOwner, INITIAL_CARDINALITY_NEXT);
+        beacon = new TestnetBeacon(beaconOwner, NUMBER_50_X96, INITIAL_CARDINALITY_NEXT);
 
         vm.prank(beaconOwner);
         beacon.updateData(bytes(""), bytes(abi.encode(NUMBER_50_X96)));
@@ -135,7 +136,8 @@ contract PerpTest is Test, Fixtures {
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
-            initialCardinalityNext: INITIAL_CARDINALITY_NEXT
+            initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
+            twapWindow: TWAP_WINDOW
         });
 
         vm.startPrank(perpCreator);
@@ -147,10 +149,14 @@ contract PerpTest is Test, Fixtures {
         (uint160 sqrtPriceX96,,,) = manager.getSlot0(poolId);
         int24 tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
 
+        skip(TWAP_WINDOW);
+
         console2.log("perp created");
         console2.log("sqrtPriceX96", sqrtPriceX96);
         console2.log("priceX96", Perp.sqrtPriceX96ToPriceX96(sqrtPriceX96));
         console2.log("current tick", tick);
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
     }
 
@@ -204,6 +210,8 @@ contract PerpTest is Test, Fixtures {
         console2.log("leverageX96", makerLeverageX96);
         console2.log("entryTwPremiumX96", makerPos.entryTwPremiumX96);
         console2.log("entryTwPremiumDivBySqrtPriceX96", makerPos.entryTwPremiumDivBySqrtPriceX96);
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
@@ -239,13 +247,26 @@ contract PerpTest is Test, Fixtures {
         console2.log("leverageX96", taker1LeverageX96);
         console2.log("new sqrtPriceX96", postTaker1LongSqrtPriceX96);
         console2.log("new priceX96", Perp.sqrtPriceX96ToPriceX96(postTaker1LongSqrtPriceX96));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
 
-        skip(8640);
+        vm.prank(beaconOwner);
+        beacon.updateData(bytes(""), bytes(abi.encode(NUMBER_45_X96)));
+        vm.stopPrank();
 
-        console2.log("2.4 hours passes");
+        console2.log("index price decreases to 45");
+        console2.log();
+
+        vm.stopPrank();
+
+        skip(30 minutes);
+
+        console2.log("30 minutes passes");
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.startPrank(taker2);
@@ -280,13 +301,26 @@ contract PerpTest is Test, Fixtures {
         console2.log("leverageX96", taker2LeverageX96);
         console2.log("new sqrtPriceX96", postTaker2ShortSqrtPriceX96);
         console2.log("new priceX96", Perp.sqrtPriceX96ToPriceX96(postTaker2ShortSqrtPriceX96));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
 
-        skip(8640);
+        vm.prank(beaconOwner);
+        beacon.updateData(bytes(""), bytes(abi.encode(NUMBER_55_X96)));
+        vm.stopPrank();
 
-        console2.log("2.4 hours passes");
+        console2.log("index price increases to 55");
+        console2.log();
+
+        vm.stopPrank();
+
+        skip(15 minutes);
+
+        console2.log("15 minutes passes");
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.startPrank(taker1);
@@ -310,9 +344,28 @@ contract PerpTest is Test, Fixtures {
 
         console2.log("taker1 closes position with id", taker1PosId);
         console2.log("taker1 balance", usdc.balanceOf(taker1));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
+
+        vm.prank(beaconOwner);
+        beacon.updateData(bytes(""), bytes(abi.encode(NUMBER_45_X96)));
+        vm.stopPrank();
+
+        console2.log("index price decreases to 45");
+        console2.log();
+
+        vm.stopPrank();
+
+        skip(30 minutes);
+
+        console2.log("30 minutes passes");
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
+        console2.log();
+
         vm.startPrank(taker2);
 
         (int256 taker2Pnl, int256 taker2Funding, int256 taker2EffectiveMargin, bool taker2IsLiquidatable) =
@@ -334,6 +387,8 @@ contract PerpTest is Test, Fixtures {
 
         console2.log("taker2 closes position with id", taker2PosId);
         console2.log("taker2 balance", usdc.balanceOf(taker2));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
@@ -358,6 +413,8 @@ contract PerpTest is Test, Fixtures {
 
         console2.log("maker closes position with id", makerPosId);
         console2.log("maker balance", usdc.balanceOf(maker1));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.stopPrank();
@@ -366,8 +423,11 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
+        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
+        console2.log();
     }
 }

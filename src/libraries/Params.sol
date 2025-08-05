@@ -18,6 +18,7 @@ library Params {
         int24 tickSpacing;
         uint160 startingSqrtPriceX96;
         uint32 initialCardinalityNext;
+        uint32 twapWindow;
     }
 
     struct OpenMakerPositionParams {

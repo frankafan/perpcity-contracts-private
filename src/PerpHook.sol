@@ -127,6 +127,11 @@ contract PerpHook is BaseHook {
     // VIEW / READ
     // ----
 
+    function getTWAP(PoolId perpId, uint32 twapSecondsAgo) external view returns (uint256) {
+        (, int24 currentTick,,) = externalContracts.poolManager.getSlot0(perpId);
+        return perps[perpId].getTWAP(twapSecondsAgo, currentTick);
+    }
+
     function getMakerPosition(PoolId perpId, uint256 makerPosId) external view returns (Positions.MakerInfo memory) {
         return perps[perpId].makerPositions[makerPosId];
     }
