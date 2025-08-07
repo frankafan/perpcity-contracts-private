@@ -118,6 +118,10 @@ contract PerpHook is BaseHook {
         perps[perpId].closeTakerPosition(externalContracts, perpId, params, false);
     }
 
+    function marketDeath(PoolId perpId) external {
+        perps[perpId].marketDeath(externalContracts);
+    }
+
     // -------------
     /// TWAP ACTIONS
     // -------------
@@ -181,6 +185,10 @@ contract PerpHook is BaseHook {
         catch (bytes memory reason) {
             (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
         }
+    }
+
+    function marketHealthX96(PoolId perpId) external view returns (uint256) {
+        return perps[perpId].marketHealthX96(externalContracts);
     }
 
     // -----
@@ -376,7 +384,7 @@ contract PerpHook is BaseHook {
         (uint160 sqrtPriceX96, int24 endingTick) = poolManager.getSqrtPriceX96AndTick(poolId);
         uint256 priceX96 = Perp.sqrtPriceX96ToPriceX96(sqrtPriceX96);
 
-        uint256 markTwapX96 = perps[poolId].getTWAP(perps[poolId].twapWindow, startingTick);
+        uint256 markTwapX96 = perps[poolId].getTWAP(perps[poolId].twapWindow, endingTick);
         uint256 minPriceX96 =
             markTwapX96.mulDiv(FixedPoint96.UINT_Q96 - perps[poolId].priceImpactBandX96, FixedPoint96.UINT_Q96);
         uint256 maxPriceX96 =

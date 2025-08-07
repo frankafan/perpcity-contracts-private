@@ -72,6 +72,7 @@ contract PerpTest is Test, Fixtures {
     uint32 constant TWAP_WINDOW = 1 hours;
     uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
     uint256 constant MAKER_LOCKUP_PERIOD = 1 hours;
+    uint256 constant MARKET_DEATH_THRESHOLD_X96 = 95 * FixedPoint96.Q96 / 100; // 95%
 
     address creationFeeRecipient = vm.addr(1);
     address perpCreator = vm.addr(2);
@@ -146,7 +147,8 @@ contract PerpTest is Test, Fixtures {
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
             twapWindow: TWAP_WINDOW,
             priceImpactBandX96: PRICE_IMPACT_BAND_X96,
-            makerLockupPeriod: MAKER_LOCKUP_PERIOD
+            makerLockupPeriod: MAKER_LOCKUP_PERIOD,
+            marketDeathThresholdX96: MARKET_DEATH_THRESHOLD_X96
         });
 
         vm.startPrank(perpCreator);
@@ -432,11 +434,35 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
         console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
+
+        vm.startPrank(maker1);
+
+        usdc.mint(maker1, 100e6);
+        usdc.approve(address(perpHook), 100e6);
+
+        liquidity = LiquidityAmounts.getLiquidityForAmount1(SQRT_5_X96, SQRT_95_X96, 10e18);
+
+        openMakerPositionParams = Params.OpenMakerPositionParams({
+            margin: 10e6,
+            liquidity: liquidity,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            maxAmount0In: Perp.UINT128_MAX,
+            maxAmount1In: Perp.UINT128_MAX,
+            expiryWindow: 20
+        });
+
+        for (uint256 i = 0; i < 10; i++) {
+            uint256 testMakerPosId = perpHook.openMakerPosition(poolId, openMakerPositionParams);
+            console2.log("maker opens position with id", testMakerPosId);
+        }
+
+        vm.stopPrank();
     }
 }

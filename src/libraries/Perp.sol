@@ -70,6 +70,9 @@ library Perp {
         uint256 creationTimestamp;
         uint256 priceImpactBandX96;
         uint256 makerLockupPeriod;
+        uint256 badDebt;
+        uint256 totalMargin;
+        uint256 marketDeathThresholdX96;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -91,6 +94,7 @@ library Perp {
     error CallerNotOwner(address caller, address owner);
     error InvalidFeeSplits(uint256 tradingFeeInsuranceSplitX96, uint256 tradingFeeCreatorSplitX96);
     error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
+    error MarketNotKillable();
 
     function createPerp(
         mapping(PoolId => Info) storage self,
@@ -151,6 +155,7 @@ library Perp {
         perp.creationTimestamp = block.timestamp;
         perp.priceImpactBandX96 = params.priceImpactBandX96;
         perp.makerLockupPeriod = params.makerLockupPeriod;
+        perp.marketDeathThresholdX96 = params.marketDeathThresholdX96;
 
         (perp.twapState.index, perp.twapState.cardinality) = perp.twapState.observations.write(
             perp.twapState.index,
@@ -175,6 +180,7 @@ library Perp {
         returns (uint256 makerPosId)
     {
         validateOpeningMargin(self.marginBounds, params.margin);
+        self.totalMargin += params.margin;
 
         if (params.liquidity == 0) {
             revert InvalidLiquidity(params.liquidity);
@@ -234,6 +240,7 @@ library Perp {
         if (msg.sender != owner) revert CallerNotOwner(msg.sender, owner);
 
         self.makerPositions[params.posId].margin += params.amount;
+        self.totalMargin += params.amount;
         contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.amount);
 
         emit MakerMarginAdded(perpId, params.posId, params.amount);
@@ -254,6 +261,8 @@ library Perp {
         if (!revertChanges && block.timestamp <= makerPos.entryTimestamp + self.makerLockupPeriod) {
             revert MakerPositionLocked(block.timestamp, makerPos.entryTimestamp + self.makerLockupPeriod);
         }
+
+        self.totalMargin -= makerPos.margin;
 
         (uint256 perpsReceived, uint256 usdReceived) =
             contracts.positionManager.burnLiquidityPosition(poolKey, params.posId, params.expiryWindow);
@@ -314,6 +323,7 @@ library Perp {
             if (revertChanges) {
                 LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
             } else {
+                self.badDebt += uint256(-effectiveMargin);
                 emit MakerPositionClosed(perpId, params.posId, true, makerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
                 delete self.makerPositions[params.posId];
                 return;
@@ -364,6 +374,7 @@ library Perp {
     {
         validateOpeningMargin(self.marginBounds, params.margin);
         validateOpeningLeverage(self.leverageBounds, params.leverageX96);
+        self.totalMargin += params.margin;
 
         uint128 perpsMoved;
         uint128 usdMoved =
@@ -412,6 +423,7 @@ library Perp {
         if (msg.sender != owner) revert CallerNotOwner(msg.sender, owner);
 
         self.takerPositions[params.posId].margin += params.amount;
+        self.totalMargin += params.amount;
         contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.amount);
 
         emit TakerMarginAdded(perpId, params.posId, params.amount);
@@ -427,6 +439,8 @@ library Perp {
         external
     {
         Positions.TakerInfo memory takerPos = self.takerPositions[params.posId];
+
+        self.totalMargin -= takerPos.margin;
 
         uint256 notionalValue;
         int256 pnl;
@@ -470,6 +484,7 @@ library Perp {
             if (revertChanges) {
                 LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, true);
             } else {
+                self.badDebt += uint256(-effectiveMargin);
                 (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(perpId);
                 emit TakerPositionClosed(perpId, params.posId, true, takerPos, sqrtPriceX96ToPriceX96(sqrtPriceX96));
                 delete self.takerPositions[params.posId];
@@ -621,5 +636,234 @@ library Perp {
         cardinalityNextOld = self.twapState.cardinalityNext;
         cardinalityNextNew = self.twapState.observations.grow(cardinalityNextOld, cardinalityNext);
         self.twapState.cardinalityNext = cardinalityNextNew;
+    }
+
+    function marketHealthX96(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts
+    )
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 badDebtScaled = self.badDebt.scale18To6();
+        uint256 vaultBalance = contracts.usdc.balanceOf(self.vault);
+        if (badDebtScaled >= vaultBalance) {
+            return 0; // Market is completely insolvent
+        }
+
+        return FullMath.mulDiv(vaultBalance - badDebtScaled, FixedPoint96.UINT_Q96, self.totalMargin);
+    }
+
+    function marketDeath(Info storage self, ExternalContracts.Contracts memory contracts) internal {
+        uint256 currentMarketHealthX96 = marketHealthX96(self, contracts);
+        if (currentMarketHealthX96 > self.marketDeathThresholdX96) revert MarketNotKillable();
+
+        // First pass: close taker positions without payouts until market health >= 1 or all taker positions are closed
+        closeTakerPositionsInReverseOrder(self, contracts, false);
+
+        // Check market health after taker liquidation
+        currentMarketHealthX96 = marketHealthX96(self, contracts);
+
+        if (currentMarketHealthX96 >= FixedPoint96.UINT_Q96) {
+            // Market health restored, close remaining taker positions with payouts
+            closeTakerPositionsInReverseOrder(self, contracts, true);
+
+            // Close all maker positions with payouts
+            closeMakerPositionsInReverseOrder(self, contracts, true);
+        } else {
+            // Market health still < 1, close maker positions without payouts until >= 1
+            closeMakerPositionsInReverseOrder(self, contracts, false);
+
+            // Check market health after maker liquidation
+            currentMarketHealthX96 = marketHealthX96(self, contracts);
+
+            if (currentMarketHealthX96 >= FixedPoint96.UINT_Q96) {
+                // Market health restored, close remaining maker positions with payouts
+                closeMakerPositionsInReverseOrder(self, contracts, true);
+            }
+        }
+    }
+
+    function closeTakerPositionsInReverseOrder(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        bool withPayouts
+    )
+        internal
+    {
+        uint256 currentPosId = self.nextTakerPosId;
+
+        // Loop through taker positions in reverse order (newest first)
+        while (currentPosId > 0) {
+            if (self.takerPositions[currentPosId].holder != address(0)) {
+                // Close the position
+                closeTakerPositionInMarketDeath(self, contracts, currentPosId, withPayouts);
+                // While not paying out, check if market health >= 1 to stop
+                if (!withPayouts) {
+                    uint256 currentMarketHealthX96 = marketHealthX96(self, contracts);
+                    if (currentMarketHealthX96 >= FixedPoint96.UINT_Q96) {
+                        break;
+                    }
+                }
+            }
+            currentPosId--;
+        }
+    }
+
+    function closeMakerPositionsInReverseOrder(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        bool withPayouts
+    )
+        internal
+    {
+        uint256 currentPosId = contracts.positionManager.nextTokenId();
+
+        // Close maker positions from newest to oldest (highest ID to lowest)
+        while (currentPosId >= 1) {
+            if (self.makerPositions[currentPosId].holder != address(0)) {
+                // Close the position
+                closeMakerPositionInMarketDeath(self, contracts, currentPosId, withPayouts);
+                // Check if we should stop (market health >= 1) when doing payouts
+                if (!withPayouts) {
+                    uint256 currentMarketHealthX96 = marketHealthX96(self, contracts);
+                    if (currentMarketHealthX96 >= FixedPoint96.UINT_Q96) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    function closeTakerPositionInMarketDeath(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        uint256 posId,
+        bool withPayouts
+    )
+        internal
+    {
+        Positions.TakerInfo memory takerPos = self.takerPositions[posId];
+
+        if (takerPos.holder == address(0)) return; // Position already closed
+
+        self.totalMargin -= takerPos.margin;
+
+        uint256 notionalValue;
+        int256 pnl;
+
+        // Perform the reverse swap to close the position
+        if (takerPos.isLong) {
+            uint128 amountIn = takerPos.size;
+            notionalValue = contracts.router.swapExactInSingle(
+                self.poolKey,
+                true,
+                amountIn,
+                0,
+                0,
+                20 // No slippage protection in market death
+            );
+            pnl = (notionalValue.toInt256() - takerPos.entryValue.toInt256());
+        } else {
+            uint128 amountOut = takerPos.size;
+            notionalValue = contracts.router.swapExactOutSingle(
+                self.poolKey,
+                false,
+                amountOut,
+                type(uint128).max,
+                0,
+                20 // No slippage protection in market death
+            );
+            pnl = (takerPos.entryValue.toInt256() - notionalValue.toInt256());
+        }
+
+        int256 funding = MoreSignedMath.mulDiv(
+            self.twPremiumX96 - takerPos.entryTwPremiumX96, takerPos.size.toInt256(), FixedPoint96.UINT_Q96
+        );
+        if (!takerPos.isLong) funding = -funding;
+
+        int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        if (withPayouts && effectiveMargin > 0) {
+            // Pay out the position holder
+            contracts.usdc.safeTransferFrom(self.vault, takerPos.holder, uint256(effectiveMargin).scale18To6());
+        } else if (effectiveMargin < 0) {
+            // Add to bad debt
+            self.badDebt += uint256(-effectiveMargin);
+        }
+        // If effectiveMargin == 0, no payout and no bad debt
+
+        delete self.takerPositions[posId];
+    }
+
+    function closeMakerPositionInMarketDeath(
+        Info storage self,
+        ExternalContracts.Contracts memory contracts,
+        uint256 posId,
+        bool withPayouts
+    )
+        internal
+    {
+        Positions.MakerInfo memory makerPos = self.makerPositions[posId];
+
+        if (makerPos.holder == address(0)) return; // Position already closed
+
+        self.totalMargin -= makerPos.margin;
+
+        (uint256 perpsReceived, uint256 usdReceived) =
+            contracts.positionManager.burnLiquidityPosition(self.poolKey, posId, 0);
+
+        int256 pnl = usdReceived.toInt256() - makerPos.usdBorrowed.toInt256();
+        int128 excessPerps = perpsReceived.toInt128() - makerPos.perpsBorrowed.toInt128();
+        uint128 excessPerpsAbs = excessPerps < 0 ? (-excessPerps).toUint128() : excessPerps.toUint128();
+
+        // Handle excess perps if there's liquidity
+        uint128 liquidity = contracts.poolManager.getLiquidity(self.poolKey.toId());
+        if (liquidity > 0) {
+            if (excessPerps < 0) {
+                pnl -= contracts.router.swapExactOutSingle(self.poolKey, false, excessPerpsAbs, type(uint128).max, 0, 0)
+                    .toInt256();
+            } else if (excessPerps > 0) {
+                pnl += contracts.router.swapExactInSingle(self.poolKey, true, excessPerpsAbs, 0, 0, 0).toInt256();
+            }
+        }
+
+        (uint160 sqrtPriceX96,,,) = contracts.poolManager.getSlot0(self.poolKey.toId());
+        int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+
+        int256 funding = Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
+            makerPos.perpsBorrowed.toInt256(),
+            makerPos.entryTwPremiumX96,
+            Funding.Growth({
+                twPremiumX96: self.twPremiumX96,
+                twPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96
+            }),
+            Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
+                makerPos.liquidity,
+                makerPos.tickLower,
+                makerPos.tickUpper,
+                self.tickGrowthInfo.getAllFundingGrowth(
+                    makerPos.tickLower,
+                    makerPos.tickUpper,
+                    currentTick,
+                    self.twPremiumX96,
+                    self.twPremiumDivBySqrtPriceX96
+                )
+            )
+        );
+
+        int256 effectiveMargin = makerPos.margin.scale6To18().toInt256() + pnl - funding;
+
+        if (withPayouts && effectiveMargin > 0) {
+            // Pay out the position holder
+            contracts.usdc.safeTransferFrom(self.vault, makerPos.holder, uint256(effectiveMargin).scale18To6());
+        } else if (effectiveMargin < 0) {
+            // Add to bad debt
+            self.badDebt += uint256(-effectiveMargin);
+        }
+        // If effectiveMargin == 0, no payout and no bad debt
+
+        delete self.makerPositions[posId];
     }
 }

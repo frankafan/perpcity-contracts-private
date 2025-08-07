@@ -17,6 +17,7 @@ library Params {
         uint32 twapWindow;
         uint256 priceImpactBandX96;
         uint256 makerLockupPeriod;
+        uint256 marketDeathThresholdX96;
     }
 
     struct OpenMakerPositionParams {
