@@ -16,6 +16,7 @@ library Params {
         uint32 initialCardinalityNext;
         uint32 twapWindow;
         uint256 priceImpactBandX96;
+        uint256 makerLockupPeriod;
     }
 
     struct OpenMakerPositionParams {

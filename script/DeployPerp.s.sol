@@ -42,6 +42,7 @@ contract DeployPerp is Script {
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
     uint32 constant TWAP_WINDOW = 5 minutes;
     uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
+    uint256 constant MAKER_LOCKUP_PERIOD = 1 days;
 
     function run() public {
         vm.startBroadcast();
@@ -62,7 +63,8 @@ contract DeployPerp is Script {
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
             twapWindow: TWAP_WINDOW,
-            priceImpactBandX96: PRICE_IMPACT_BAND_X96
+            priceImpactBandX96: PRICE_IMPACT_BAND_X96,
+            makerLockupPeriod: MAKER_LOCKUP_PERIOD
         });
 
         PerpHook perpHook = PerpHook(PERP_HOOK);

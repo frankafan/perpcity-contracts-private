@@ -14,6 +14,7 @@ library Positions {
         uint128 usdBorrowed;
         int128 entryTwPremiumX96;
         int128 entryTwPremiumDivBySqrtPriceX96;
+        uint256 entryTimestamp;
     }
 
     struct TakerInfo {

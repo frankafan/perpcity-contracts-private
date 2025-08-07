@@ -71,6 +71,7 @@ contract PerpTest is Test, Fixtures {
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
     uint32 constant TWAP_WINDOW = 1 hours;
     uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
+    uint256 constant MAKER_LOCKUP_PERIOD = 1 hours;
 
     address creationFeeRecipient = vm.addr(1);
     address perpCreator = vm.addr(2);
@@ -144,7 +145,8 @@ contract PerpTest is Test, Fixtures {
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
             twapWindow: TWAP_WINDOW,
-            priceImpactBandX96: PRICE_IMPACT_BAND_X96
+            priceImpactBandX96: PRICE_IMPACT_BAND_X96,
+            makerLockupPeriod: MAKER_LOCKUP_PERIOD
         });
 
         vm.startPrank(perpCreator);
@@ -430,7 +432,7 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
         console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));

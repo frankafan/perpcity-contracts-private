@@ -69,6 +69,7 @@ library Perp {
         uint32 twapWindow;
         uint256 creationTimestamp;
         uint256 priceImpactBandX96;
+        uint256 makerLockupPeriod;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -89,6 +90,7 @@ library Perp {
     error InvalidLiquidity(uint128 liquidity);
     error CallerNotOwner(address caller, address owner);
     error InvalidFeeSplits(uint256 tradingFeeInsuranceSplitX96, uint256 tradingFeeCreatorSplitX96);
+    error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
 
     function createPerp(
         mapping(PoolId => Info) storage self,
@@ -148,6 +150,7 @@ library Perp {
         perp.twapWindow = params.twapWindow;
         perp.creationTimestamp = block.timestamp;
         perp.priceImpactBandX96 = params.priceImpactBandX96;
+        perp.makerLockupPeriod = params.makerLockupPeriod;
 
         (perp.twapState.index, perp.twapState.cardinality) = perp.twapState.observations.write(
             perp.twapState.index,
@@ -208,7 +211,8 @@ library Perp {
             perpsBorrowed: perpsBorrowed.toUint128(),
             usdBorrowed: usdBorrowed.toUint128(),
             entryTwPremiumX96: self.twPremiumX96,
-            entryTwPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96
+            entryTwPremiumDivBySqrtPriceX96: self.twPremiumDivBySqrtPriceX96,
+            entryTimestamp: block.timestamp
         });
 
         contracts.usdc.safeTransferFrom(msg.sender, self.vault, params.margin);
@@ -246,6 +250,10 @@ library Perp {
     {
         PoolKey memory poolKey = self.poolKey;
         Positions.MakerInfo memory makerPos = self.makerPositions[params.posId];
+
+        if (!revertChanges && block.timestamp <= makerPos.entryTimestamp + self.makerLockupPeriod) {
+            revert MakerPositionLocked(block.timestamp, makerPos.entryTimestamp + self.makerLockupPeriod);
+        }
 
         (uint256 perpsReceived, uint256 usdReceived) =
             contracts.positionManager.burnLiquidityPosition(poolKey, params.posId, params.expiryWindow);

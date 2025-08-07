@@ -49,7 +49,7 @@ contract PerpHook is BaseHook {
 
     error InvalidPeriphery(address periphery, address expectedRouter, address expectedPositionManager);
     error InvalidCaller(address caller, address expectedCaller);
-    error PriceImpactTooHigh(uint256 sqrtPriceX96, uint256 minPriceX96, uint256 maxPriceX96);
+    error PriceImpactTooHigh(uint256 priceX96, uint256 minPriceX96, uint256 maxPriceX96);
 
     modifier validateCaller(address hookSender) {
         if (hookSender != address(externalContracts.router) && hookSender != address(externalContracts.positionManager))
