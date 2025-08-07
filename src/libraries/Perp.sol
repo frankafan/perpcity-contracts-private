@@ -33,6 +33,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { TickTWAP } from "./TickTWAP.sol";
 import { MAX_CARDINALITY } from "../utils/Constants.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { Fees } from "./Fees.sol";
 
 library Perp {
     using SafeCast for *;
@@ -52,13 +53,9 @@ library Perp {
         PoolKey poolKey;
         address vault;
         address beacon;
-        uint24 tradingFee;
-        uint128 tradingFeeCreatorSplitX96;
-        uint256 tradingFeeInsuranceSplitX96;
+        Fees.FeeInfo fees;
         Bounds.MarginBounds marginBounds;
         Bounds.LeverageBounds leverageBounds;
-        uint128 liquidationFeeX96;
-        uint128 liquidationFeeSplitX96;
         int128 premiumPerSecondX96;
         int128 twPremiumX96;
         int128 twPremiumDivBySqrtPriceX96;
@@ -71,6 +68,7 @@ library Perp {
         TickTWAP.State twapState;
         uint32 twapWindow;
         uint256 creationTimestamp;
+        uint256 priceImpactBandX96;
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 markPriceX96);
@@ -101,8 +99,8 @@ library Perp {
         external
         returns (PoolId perpId)
     {
-        if (params.tradingFeeInsuranceSplitX96 + params.tradingFeeCreatorSplitX96 > FixedPoint96.UINT_Q96) {
-            revert InvalidFeeSplits(params.tradingFeeInsuranceSplitX96, params.tradingFeeCreatorSplitX96);
+        if (params.fees.tradingFeeInsuranceSplitX96 + params.fees.tradingFeeCreatorSplitX96 > FixedPoint96.UINT_Q96) {
+            revert InvalidFeeSplits(params.fees.tradingFeeInsuranceSplitX96, params.fees.tradingFeeCreatorSplitX96);
         }
 
         IERC20 currency0 = new AccountingToken(UINT128_MAX);
@@ -123,16 +121,15 @@ library Perp {
 
         contracts.poolManager.initialize(poolKey, params.startingSqrtPriceX96);
 
-        Bounds.MarginBounds memory marginBounds =
-            Bounds.MarginBounds({ minOpeningMargin: params.minMargin, maxOpeningMargin: params.maxMargin });
-
-        Bounds.LeverageBounds memory leverageBounds = Bounds.LeverageBounds({
-            minOpeningLeverageX96: params.minOpeningLeverageX96,
-            maxOpeningLeverageX96: params.maxOpeningLeverageX96,
-            liquidationLeverageX96: params.liquidationLeverageX96
-        });
-
         PerpVault perpVault = new PerpVault(address(this), contracts.usdc);
+
+        Fees.FeeInfo memory fees = Fees.FeeInfo({
+            tradingFee: params.fees.tradingFee,
+            tradingFeeCreatorSplitX96: params.fees.tradingFeeCreatorSplitX96,
+            tradingFeeInsuranceSplitX96: params.fees.tradingFeeInsuranceSplitX96,
+            liquidationFeeX96: params.fees.liquidationFeeX96,
+            liquidationFeeSplitX96: params.fees.liquidationFeeSplitX96
+        });
 
         Info storage perp = self[perpId];
 
@@ -140,13 +137,9 @@ library Perp {
         perp.poolKey = poolKey;
         perp.vault = address(perpVault);
         perp.beacon = params.beacon;
-        perp.tradingFee = params.tradingFee;
-        perp.tradingFeeCreatorSplitX96 = params.tradingFeeCreatorSplitX96;
-        perp.tradingFeeInsuranceSplitX96 = params.tradingFeeInsuranceSplitX96;
-        perp.marginBounds = marginBounds;
-        perp.leverageBounds = leverageBounds;
-        perp.liquidationFeeX96 = params.liquidationFeeX96;
-        perp.liquidationFeeSplitX96 = params.liquidationFeeSplitX96;
+        perp.fees = fees;
+        perp.marginBounds = params.marginBounds;
+        perp.leverageBounds = params.leverageBounds;
         perp.fundingInterval = params.fundingInterval;
         (perp.twapState.cardinality, perp.twapState.cardinalityNext) =
             perp.twapState.observations.initialize(uint32(block.timestamp));
@@ -154,6 +147,7 @@ library Perp {
             perp.twapState.observations.grow(perp.twapState.cardinalityNext, params.initialCardinalityNext);
         perp.twapWindow = params.twapWindow;
         perp.creationTimestamp = block.timestamp;
+        perp.priceImpactBandX96 = params.priceImpactBandX96;
 
         (perp.twapState.index, perp.twapState.cardinality) = perp.twapState.observations.write(
             perp.twapState.index,
@@ -306,7 +300,7 @@ library Perp {
             sqrtPriceX96, makerPos.sqrtPriceLowerX96, makerPos.sqrtPriceUpperX96, makerPos.liquidity
         );
 
-        uint256 liquidationFee = FullMath.mulDiv(notional, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+        uint256 liquidationFee = FullMath.mulDiv(notional, self.fees.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
         if (effectiveMargin < 0) {
             if (revertChanges) {
@@ -332,7 +326,7 @@ library Perp {
             contracts.usdc.safeTransferFrom(
                 self.vault,
                 msg.sender,
-                FullMath.mulDiv(liquidationFee.scale18To6(), self.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
+                FullMath.mulDiv(liquidationFee.scale18To6(), self.fees.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
             );
         } else if (makerPos.holder == msg.sender) {
             // If not liquidated and caller is the owner, return full margin
@@ -369,12 +363,12 @@ library Perp {
         if (params.isLong) {
             // For long: swap USD in for Perp out
             perpsMoved = contracts.router.swapExactInSingle(
-                self.poolKey, false, usdMoved, params.minAmount0Out, self.tradingFee, params.expiryWindow
+                self.poolKey, false, usdMoved, params.minAmount0Out, self.fees.tradingFee, params.expiryWindow
             ).toUint128();
         } else {
             // For short: swap Perp in for USD out
             perpsMoved = contracts.router.swapExactOutSingle(
-                self.poolKey, true, usdMoved, params.maxAmount0In, self.tradingFee, params.expiryWindow
+                self.poolKey, true, usdMoved, params.maxAmount0In, self.fees.tradingFee, params.expiryWindow
             ).toUint128();
         }
 
@@ -461,7 +455,7 @@ library Perp {
         // Calculate effective margin after PnL and funding
         int256 effectiveMargin = takerPos.margin.scale6To18().toInt256() + pnl - funding;
 
-        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.liquidationFeeX96, FixedPoint96.UINT_Q96);
+        uint256 liquidationFee = FullMath.mulDiv(notionalValue, self.fees.liquidationFeeX96, FixedPoint96.UINT_Q96);
 
         // If margin is negative, position is liquidated
         if (effectiveMargin < 0) {
@@ -489,7 +483,7 @@ library Perp {
             contracts.usdc.safeTransferFrom(
                 self.vault,
                 msg.sender,
-                FullMath.mulDiv(liquidationFee.scale18To6(), self.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
+                FullMath.mulDiv(liquidationFee.scale18To6(), self.fees.liquidationFeeSplitX96, FixedPoint96.UINT_Q96)
             );
         } else if (takerPos.holder == msg.sender) {
             // If not liquidated and caller is the owner, return full margin

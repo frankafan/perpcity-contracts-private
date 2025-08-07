@@ -9,6 +9,8 @@ import { FixedPoint96 } from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
 import { Perp } from "../src/libraries/Perp.sol";
 import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import { Params } from "../src/libraries/Params.sol";
+import { Bounds } from "../src/libraries/Bounds.sol";
+import { Fees } from "../src/libraries/Fees.sol";
 
 contract DeployPerp is Script {
     using SafeCast for *;
@@ -23,9 +25,15 @@ contract DeployPerp is Script {
     uint128 immutable TRADING_FEE_INSURANCE_SPLIT_X96 = (10 * FixedPoint96.Q96 / 100).toUint128(); // 10%
     uint128 constant MIN_MARGIN = 0;
     uint128 constant MAX_MARGIN = 1000e6; // 1000 USDC
-    uint128 constant MIN_OPENING_LEVERAGE_X96 = 0;
-    uint128 immutable MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128(); // 10x
-    uint128 immutable LIQUIDATION_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128(); // 10x
+    Bounds.MarginBounds MARGIN_BOUNDS = Bounds.MarginBounds({
+        minOpeningMargin: 0,
+        maxOpeningMargin: 1000e6 // 1000 USDC
+     });
+    Bounds.LeverageBounds LEVERAGE_BOUNDS = Bounds.LeverageBounds({
+        minOpeningLeverageX96: 0,
+        maxOpeningLeverageX96: (10 * FixedPoint96.Q96).toUint128(),
+        liquidationLeverageX96: (10 * FixedPoint96.Q96).toUint128()
+    });
     uint128 immutable LIQUIDATION_FEE_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 immutable LIQUIDATION_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128(); // 50%
     int128 constant FUNDING_INTERVAL = 1 days;
@@ -33,27 +41,28 @@ contract DeployPerp is Script {
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
     uint32 constant TWAP_WINDOW = 5 minutes;
+    uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
 
     function run() public {
         vm.startBroadcast();
 
         Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: BEACON,
-            tradingFee: TRADING_FEE,
-            tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
-            tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
-            minMargin: MIN_MARGIN,
-            maxMargin: MAX_MARGIN,
-            minOpeningLeverageX96: MIN_OPENING_LEVERAGE_X96,
-            maxOpeningLeverageX96: MAX_OPENING_LEVERAGE_X96,
-            liquidationLeverageX96: LIQUIDATION_LEVERAGE_X96,
-            liquidationFeeX96: LIQUIDATION_FEE_X96,
-            liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96,
+            fees: Fees.FeeInfo({
+                tradingFee: TRADING_FEE,
+                tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
+                tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
+                liquidationFeeX96: LIQUIDATION_FEE_X96,
+                liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96
+            }),
+            marginBounds: MARGIN_BOUNDS,
+            leverageBounds: LEVERAGE_BOUNDS,
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
-            twapWindow: TWAP_WINDOW
+            twapWindow: TWAP_WINDOW,
+            priceImpactBandX96: PRICE_IMPACT_BAND_X96
         });
 
         PerpHook perpHook = PerpHook(PERP_HOOK);

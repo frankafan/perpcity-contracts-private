@@ -29,6 +29,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { TickTWAP } from "./libraries/TickTWAP.sol";
 import { MAX_CARDINALITY } from "./utils/Constants.sol";
+import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 contract PerpHook is BaseHook {
     using Perp for *;
@@ -39,6 +40,7 @@ contract PerpHook is BaseHook {
     using TokenMath for uint256;
     using SafeERC20 for IERC20;
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
+    using FullMath for uint256;
 
     ExternalContracts.Contracts public externalContracts;
     uint256 public creationFee; // flat fee in usdc
@@ -47,6 +49,7 @@ contract PerpHook is BaseHook {
 
     error InvalidPeriphery(address periphery, address expectedRouter, address expectedPositionManager);
     error InvalidCaller(address caller, address expectedCaller);
+    error PriceImpactTooHigh(uint256 sqrtPriceX96, uint256 minPriceX96, uint256 maxPriceX96);
 
     modifier validateCaller(address hookSender) {
         if (hookSender != address(externalContracts.router) && hookSender != address(externalContracts.positionManager))
@@ -336,14 +339,14 @@ contract PerpHook is BaseHook {
         uint256 feeAmount = FullMath.mulDiv(absAmountSpecified, fee, LPFeeLibrary.MAX_LP_FEE);
 
         uint256 creatorFeeAmount =
-            FullMath.mulDiv(feeAmount, perps[poolId].tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
+            FullMath.mulDiv(feeAmount, perps[poolId].fees.tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
         poolManager.mint(address(this), key.currency1.toId(), creatorFeeAmount);
         externalContracts.usdc.safeTransferFrom(
             perps[poolId].vault, perps[poolId].creator, creatorFeeAmount.scale18To6()
         );
 
         uint256 insuranceFeeAmount =
-            FullMath.mulDiv(feeAmount, perps[poolId].tradingFeeInsuranceSplitX96, FixedPoint96.UINT_Q96);
+            FullMath.mulDiv(feeAmount, perps[poolId].fees.tradingFeeInsuranceSplitX96, FixedPoint96.UINT_Q96);
         poolManager.mint(address(this), key.currency1.toId(), insuranceFeeAmount);
 
         uint256 lpFeeAmount = feeAmount - creatorFeeAmount - insuranceFeeAmount;
@@ -371,6 +374,16 @@ contract PerpHook is BaseHook {
         }
 
         (uint160 sqrtPriceX96, int24 endingTick) = poolManager.getSqrtPriceX96AndTick(poolId);
+        uint256 priceX96 = Perp.sqrtPriceX96ToPriceX96(sqrtPriceX96);
+
+        uint256 markTwapX96 = perps[poolId].getTWAP(perps[poolId].twapWindow, startingTick);
+        uint256 minPriceX96 =
+            markTwapX96.mulDiv(FixedPoint96.UINT_Q96 - perps[poolId].priceImpactBandX96, FixedPoint96.UINT_Q96);
+        uint256 maxPriceX96 =
+            markTwapX96.mulDiv(FixedPoint96.UINT_Q96 + perps[poolId].priceImpactBandX96, FixedPoint96.UINT_Q96);
+        if (priceX96 < minPriceX96 || priceX96 > maxPriceX96) {
+            revert PriceImpactTooHigh(priceX96, minPriceX96, maxPriceX96);
+        }
 
         perps[poolId].updatePremiumPerSecond(sqrtPriceX96);
 

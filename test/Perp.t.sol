@@ -28,6 +28,8 @@ import { ExternalContracts } from "../src/libraries/ExternalContracts.sol";
 import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 import { Params } from "../src/libraries/Params.sol";
 import { ITWAPBeacon } from "../src/interfaces/ITWAPBeacon.sol";
+import { Bounds } from "../src/libraries/Bounds.sol";
+import { Fees } from "../src/libraries/Fees.sol";
 
 contract PerpTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
@@ -52,11 +54,15 @@ contract PerpTest is Test, Fixtures {
     uint24 constant TRADING_FEE = 5000; // 0.5%
     uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 immutable TRADING_FEE_INSURANCE_SPLIT_X96 = (10 * FixedPoint96.Q96 / 100).toUint128(); // 10%
-    uint128 constant MIN_MARGIN = 0;
-    uint128 constant MAX_MARGIN = 1000e6; // 1000 USDC
-    uint128 constant MIN_OPENING_LEVERAGE_X96 = 0;
-    uint128 immutable MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128(); // 10x
-    uint128 immutable LIQUIDATION_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128(); // 10x
+    Bounds.MarginBounds MARGIN_BOUNDS = Bounds.MarginBounds({
+        minOpeningMargin: 0,
+        maxOpeningMargin: 1000e6 // 1000 USDC
+     });
+    Bounds.LeverageBounds LEVERAGE_BOUNDS = Bounds.LeverageBounds({
+        minOpeningLeverageX96: 0,
+        maxOpeningLeverageX96: (10 * FixedPoint96.Q96).toUint128(),
+        liquidationLeverageX96: (10 * FixedPoint96.Q96).toUint128()
+    });
     uint128 immutable LIQUIDATION_FEE_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 immutable LIQUIDATION_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128(); // 50%
     int128 constant FUNDING_INTERVAL = 1 days;
@@ -64,6 +70,7 @@ contract PerpTest is Test, Fixtures {
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
     uint32 constant TWAP_WINDOW = 1 hours;
+    uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
 
     address creationFeeRecipient = vm.addr(1);
     address perpCreator = vm.addr(2);
@@ -123,21 +130,21 @@ contract PerpTest is Test, Fixtures {
 
         Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
             beacon: address(beacon),
-            tradingFee: TRADING_FEE,
-            tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
-            tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
-            minMargin: MIN_MARGIN,
-            maxMargin: MAX_MARGIN,
-            minOpeningLeverageX96: MIN_OPENING_LEVERAGE_X96,
-            maxOpeningLeverageX96: MAX_OPENING_LEVERAGE_X96,
-            liquidationLeverageX96: LIQUIDATION_LEVERAGE_X96,
-            liquidationFeeX96: LIQUIDATION_FEE_X96,
-            liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96,
+            fees: Fees.FeeInfo({
+                tradingFee: TRADING_FEE,
+                tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
+                tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
+                liquidationFeeX96: LIQUIDATION_FEE_X96,
+                liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96
+            }),
+            marginBounds: MARGIN_BOUNDS,
+            leverageBounds: LEVERAGE_BOUNDS,
             fundingInterval: FUNDING_INTERVAL,
             tickSpacing: TICK_SPACING,
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
-            twapWindow: TWAP_WINDOW
+            twapWindow: TWAP_WINDOW,
+            priceImpactBandX96: PRICE_IMPACT_BAND_X96
         });
 
         vm.startPrank(perpCreator);
@@ -220,11 +227,11 @@ contract PerpTest is Test, Fixtures {
         usdc.mint(taker1, 20e6);
         usdc.approve(address(perpHook), 20e6);
 
-        uint256 taker1LeverageX96 = 5 * FixedPoint96.Q96;
+        uint256 taker1LeverageX96 = 2 * FixedPoint96.Q96;
 
         Params.OpenTakerPositionParams memory openTaker1PositionParams = Params.OpenTakerPositionParams({
             isLong: true,
-            margin: 20e6,
+            margin: 10e6,
             leverageX96: taker1LeverageX96,
             minAmount0Out: 0,
             maxAmount0In: Perp.UINT128_MAX,
@@ -274,7 +281,7 @@ contract PerpTest is Test, Fixtures {
         usdc.mint(taker2, 20e6);
         usdc.approve(address(perpHook), 20e6);
 
-        uint256 taker2LeverageX96 = FixedPoint96.Q96;
+        uint256 taker2LeverageX96 = 1 * FixedPoint96.Q96 / 2;
 
         Params.OpenTakerPositionParams memory openTaker2PositionParams = Params.OpenTakerPositionParams({
             isLong: false,
@@ -423,7 +430,7 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        (,, address vault,,,,,,,,,,,,,,) = perpHook.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
         console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
