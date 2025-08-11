@@ -733,6 +733,7 @@ library Perp {
                     }
                 }
             }
+            currentPosId--;
         }
     }
 
