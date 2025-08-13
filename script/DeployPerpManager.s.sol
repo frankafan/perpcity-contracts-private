@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { Script, console2 } from "forge-std/Script.sol";
-import { PerpHook } from "../src/PerpHook.sol";
-import { Hooks } from "@uniswap/v4-core/src/libraries/Hooks.sol";
-import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import { HookMiner } from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
-import { ExternalContracts } from "../src/libraries/ExternalContracts.sol";
-import { IUniversalRouter } from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
-import { IPositionManager } from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
-import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {PerpManager} from "../src/PerpManager.sol";
 
-contract DeployPerpHook is Script {
+import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
+import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
+import {IUniversalRouter} from "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
+import {Script, console2} from "forge-std/Script.sol";
+
+contract DeployPerpManager is Script {
+    using SafeTransferLib for address;
+
+    // replace addresses as needed
     address public constant POOLMANAGER = 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408;
     address public constant ROUTER = 0x492E6456D9528771018DeB9E87ef7750EF184104;
     address public constant POSITION_MANAGER = 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80;
-    address public constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address public constant USDC = 0xC1a5D4E99BB224713dd179eA9CA2Fa6600706210;
     address public constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address public constant CREATION_FEE_RECIPIENT = 0x0000000000000000000000000000000000000000;
@@ -33,24 +35,23 @@ contract DeployPerpHook is Script {
         );
 
         // Create the ExternalContracts struct
-        ExternalContracts.Contracts memory contracts = ExternalContracts.Contracts({
+        IPerpManager.ExternalContracts memory contracts = IPerpManager.ExternalContracts({
             poolManager: IPoolManager(POOLMANAGER),
             router: IUniversalRouter(ROUTER),
-            positionManager: IPositionManager(POSITION_MANAGER),
-            permit2: IPermit2(PERMIT2),
-            usdc: IERC20(USDC),
+            posm: IPositionManager(POSITION_MANAGER),
+            usdc: USDC,
             creationFeeRecipient: CREATION_FEE_RECIPIENT
         });
 
         // Mine a salt that will produce a hook address with the correct flags
         bytes memory constructorArgs = abi.encode(contracts, CREATION_FEE);
         (address hookAddress, bytes32 salt) =
-            HookMiner.find(CREATE2_DEPLOYER, flags, type(PerpHook).creationCode, constructorArgs);
+            HookMiner.find(CREATE2_DEPLOYER, flags, type(PerpManager).creationCode, constructorArgs);
 
-        PerpHook perpHook = new PerpHook{ salt: salt }(contracts, CREATION_FEE);
-        require(address(perpHook) == hookAddress, "PerpHookScript: hook address mismatch");
+        PerpManager perpManager = new PerpManager{salt: salt}(contracts, CREATION_FEE);
+        require(address(perpManager) == hookAddress, "hook address mismatch");
 
-        console2.log("PerpHook: ", address(perpHook));
+        console2.log("PerpManager: ", address(perpManager));
 
         vm.stopBroadcast();
     }

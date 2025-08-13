@@ -2,13 +2,13 @@
 pragma solidity ^0.8.26;
 
 library LivePositionDetailsReverter {
-    error LivePositionDetails(int256 pnl, int256 funding, int256 effectiveMargin, bool isLiquidatable);
+    error LivePositionDetails(int256 pnl, int256 funding, uint256 effectiveMargin, bool isLiquidatable);
     error UnexpectedRevertBytes(bytes reason);
 
     function revertLivePositionDetails(
         int256 pnl,
         int256 funding,
-        int256 effectiveMargin,
+        uint256 effectiveMargin,
         bool isLiquidatable
     )
         internal
@@ -22,9 +22,7 @@ library LivePositionDetailsReverter {
         pure
         returns (int256 pnl, int256 funding, int256 effectiveMargin, bool isLiquidatable)
     {
-        if (parseSelector(reason) != LivePositionDetails.selector) {
-            revert UnexpectedRevertBytes(reason);
-        }
+        if (parseSelector(reason) != LivePositionDetails.selector) revert UnexpectedRevertBytes(reason);
 
         // equivalent: (, pnl, funding, effectiveMargin, isLiquidatable) = abi.decode(
         //     reason,

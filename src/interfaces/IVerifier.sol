@@ -2,5 +2,5 @@
 pragma solidity ^0.8.26;
 
 interface IVerifier {
-    function verify(bytes memory proof, bytes memory publicSignals) external view returns (bool);
+    function verify(bytes calldata proof, bytes calldata publicSignals) external view returns (bool);
 }

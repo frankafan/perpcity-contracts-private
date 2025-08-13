@@ -1,46 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
+import {PerpManager} from "../src/PerpManager.sol";
+import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
+import {ITWAPBeacon} from "../src/interfaces/ITWAPBeacon.sol";
+import {MakerActions} from "../src/libraries/MakerActions.sol";
+import {PerpLogic} from "../src/libraries/PerpLogic.sol";
+import {TokenMath} from "../src/libraries/TokenMath.sol";
+import {TestnetBeacon} from "../src/testnet/TestnetBeacon.sol";
+import {TestnetUSDC} from "../src/testnet/TestnetUSDC.sol";
+import {EasyPosm} from "./utils/EasyPosm.sol";
+import {Fixtures} from "./utils/Fixtures.sol";
+import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
+import {UniversalRouter} from "@uniswap/universal-router/contracts/UniversalRouter.sol";
+import {RouterParameters} from "@uniswap/universal-router/contracts/types/RouterParameters.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
 import "forge-std/Test.sol";
-import { console2 } from "forge-std/console2.sol";
-import { Hooks } from "@uniswap/v4-core/src/libraries/Hooks.sol";
-import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import { BalanceDelta } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import { PoolId } from "@uniswap/v4-core/src/types/PoolId.sol";
-import { LiquidityAmounts } from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import { TestnetUSDC } from "../src/testnet/TestnetUSDC.sol";
-import { TestnetBeacon } from "../src/testnet/TestnetBeacon.sol";
-import { PerpHook } from "../src/PerpHook.sol";
-import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import { IPositionManager } from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
-import { EasyPosm } from "./utils/EasyPosm.sol";
-import { Fixtures } from "./utils/Fixtures.sol";
-import { FixedPoint96 } from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
-import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
-import { UniversalRouter } from "@uniswap/universal-router/contracts/UniversalRouter.sol";
-import { RouterParameters } from "@uniswap/universal-router/contracts/types/RouterParameters.sol";
-import { Positions } from "../src/libraries/Positions.sol";
-import { Perp } from "../src/libraries/Perp.sol";
-import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import { TokenMath } from "../src/libraries/TokenMath.sol";
-import { ExternalContracts } from "../src/libraries/ExternalContracts.sol";
-import { IPermit2 } from "@uniswap/permit2/src/interfaces/IPermit2.sol";
-import { Params } from "../src/libraries/Params.sol";
-import { ITWAPBeacon } from "../src/interfaces/ITWAPBeacon.sol";
-import { Bounds } from "../src/libraries/Bounds.sol";
-import { Fees } from "../src/libraries/Fees.sol";
+import {console2} from "forge-std/console2.sol";
 
 contract PerpTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
     using StateLibrary for IPoolManager;
     using SafeCast for *;
     using TokenMath for uint128;
+    using SafeTransferLib for address;
 
     UniversalRouter router;
     TestnetUSDC usdc;
     TestnetBeacon beacon;
-    PerpHook perpHook;
+    PerpManager perpManager;
     PoolId poolId;
 
     uint160 constant SQRT_5_X96 = 177_159_557_114_295_718_903_631_839_232; // 2 ** 96 * sqrt(5)
@@ -54,25 +52,18 @@ contract PerpTest is Test, Fixtures {
     uint24 constant TRADING_FEE = 5000; // 0.5%
     uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 immutable TRADING_FEE_INSURANCE_SPLIT_X96 = (10 * FixedPoint96.Q96 / 100).toUint128(); // 10%
-    Bounds.MarginBounds MARGIN_BOUNDS = Bounds.MarginBounds({
-        minOpeningMargin: 0,
-        maxOpeningMargin: 1000e6 // 1000 USDC
-     });
-    Bounds.LeverageBounds LEVERAGE_BOUNDS = Bounds.LeverageBounds({
-        minOpeningLeverageX96: 0,
-        maxOpeningLeverageX96: (10 * FixedPoint96.Q96).toUint128(),
-        liquidationLeverageX96: (10 * FixedPoint96.Q96).toUint128()
-    });
+    uint128 immutable MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128();
+    uint128 immutable LIQUIDATION_LEVERAGE_X96 = (15 * FixedPoint96.Q96).toUint128();
     uint128 immutable LIQUIDATION_FEE_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
-    uint128 immutable LIQUIDATION_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128(); // 50%
-    int128 constant FUNDING_INTERVAL = 1 days;
+    uint128 immutable LIQUIDATOR_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128(); // 50%
+    uint32 constant FUNDING_INTERVAL = 1 days;
     int24 constant TICK_SPACING = 30;
     uint160 constant STARTING_SQRT_PRICE_X96 = SQRT_50_X96;
     uint32 constant INITIAL_CARDINALITY_NEXT = 100;
     uint32 constant TWAP_WINDOW = 1 hours;
-    uint256 constant PRICE_IMPACT_BAND_X96 = 5 * FixedPoint96.Q96 / 100; // 5%
-    uint256 constant MAKER_LOCKUP_PERIOD = 1 hours;
-    uint256 constant MARKET_DEATH_THRESHOLD_X96 = 95 * FixedPoint96.Q96 / 100; // 95%
+    uint128 immutable PRICE_IMPACT_BAND_X96 = (5 * FixedPoint96.Q96 / 100).toUint128(); // 5%
+    uint32 constant MAKER_LOCKUP_PERIOD = 1 hours;
+    uint128 immutable MARKET_DEATH_THRESHOLD_X96 = (95 * FixedPoint96.Q96 / 100).toUint128(); // 95%
 
     address creationFeeRecipient = vm.addr(1);
     address perpCreator = vm.addr(2);
@@ -102,12 +93,11 @@ contract PerpTest is Test, Fixtures {
 
         usdc = new TestnetUSDC();
 
-        ExternalContracts.Contracts memory externalContracts = ExternalContracts.Contracts({
+        IPerpManager.ExternalContracts memory externalContracts = IPerpManager.ExternalContracts({
             poolManager: manager,
             router: router,
-            positionManager: posm,
-            permit2: IPermit2(address(permit2)),
-            usdc: usdc,
+            posm: posm,
+            usdc: address(usdc),
             creationFeeRecipient: creationFeeRecipient
         });
 
@@ -127,34 +117,32 @@ contract PerpTest is Test, Fixtures {
         );
         // Add all the necessary constructor arguments from the hook
         bytes memory constructorArgs = abi.encode(externalContracts, 1_000_000); // 1 USDC creation fee
-        deployCodeTo("PerpHook.sol:PerpHook", constructorArgs, flags);
-        perpHook = PerpHook(flags);
+        deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, flags);
+        perpManager = PerpManager(flags);
 
-        Params.CreatePerpParams memory createPerpParams = Params.CreatePerpParams({
-            beacon: address(beacon),
-            fees: Fees.FeeInfo({
-                tradingFee: TRADING_FEE,
-                tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
-                tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
-                liquidationFeeX96: LIQUIDATION_FEE_X96,
-                liquidationFeeSplitX96: LIQUIDATION_FEE_SPLIT_X96
-            }),
-            marginBounds: MARGIN_BOUNDS,
-            leverageBounds: LEVERAGE_BOUNDS,
-            fundingInterval: FUNDING_INTERVAL,
-            tickSpacing: TICK_SPACING,
+        IPerpManager.CreatePerpParams memory createPerpParams = IPerpManager.CreatePerpParams({
             startingSqrtPriceX96: STARTING_SQRT_PRICE_X96,
             initialCardinalityNext: INITIAL_CARDINALITY_NEXT,
-            twapWindow: TWAP_WINDOW,
-            priceImpactBandX96: PRICE_IMPACT_BAND_X96,
             makerLockupPeriod: MAKER_LOCKUP_PERIOD,
+            fundingInterval: FUNDING_INTERVAL,
+            beacon: address(beacon),
+            tickSpacing: TICK_SPACING,
+            tradingFee: TRADING_FEE,
+            twapWindow: TWAP_WINDOW,
+            tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
+            tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,
+            priceImpactBandX96: PRICE_IMPACT_BAND_X96,
+            maxOpeningLevX96: MAX_OPENING_LEVERAGE_X96,
+            liquidationLevX96: LIQUIDATION_LEVERAGE_X96,
+            liquidationFeeX96: LIQUIDATION_FEE_X96,
+            liquidatorFeeSplitX96: LIQUIDATOR_FEE_SPLIT_X96,
             marketDeathThresholdX96: MARKET_DEATH_THRESHOLD_X96
         });
 
         vm.startPrank(perpCreator);
         usdc.mint(perpCreator, 1_000_000);
-        usdc.approve(address(perpHook), 1_000_000);
-        poolId = perpHook.createPerp(createPerpParams);
+        usdc.approve(address(perpManager), 1_000_000);
+        poolId = perpManager.createPerp(createPerpParams);
         vm.stopPrank();
 
         (uint160 sqrtPriceX96,,,) = manager.getSlot0(poolId);
@@ -164,9 +152,8 @@ contract PerpTest is Test, Fixtures {
 
         console2.log("perp created");
         console2.log("sqrtPriceX96", sqrtPriceX96);
-        console2.log("priceX96", Perp.sqrtPriceX96ToPriceX96(sqrtPriceX96));
         console2.log("current tick", tick);
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
     }
@@ -175,7 +162,7 @@ contract PerpTest is Test, Fixtures {
         vm.startPrank(maker1);
 
         usdc.mint(maker1, 100e6);
-        usdc.approve(address(perpHook), 100e6);
+        usdc.approve(address(perpManager), 100e6);
 
         int24 tickLower = TickMath.getTickAtSqrtPrice(SQRT_5_X96);
         tickLower = (tickLower / TICK_SPACING) * TICK_SPACING; // round to the nearest ticks
@@ -185,43 +172,33 @@ contract PerpTest is Test, Fixtures {
 
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(SQRT_5_X96, SQRT_95_X96, 1000e18);
 
-        Params.OpenMakerPositionParams memory openMakerPositionParams = Params.OpenMakerPositionParams({
+        IPerpManager.OpenMakerPositionParams memory openMakerPositionParams = IPerpManager.OpenMakerPositionParams({
             margin: 100e6,
             liquidity: liquidity,
             tickLower: tickLower,
             tickUpper: tickUpper,
-            maxAmount0In: Perp.UINT128_MAX,
-            maxAmount1In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            maxAmt0In: type(uint128).max,
+            maxAmt1In: type(uint128).max,
+            timeout: 20
         });
 
-        uint256 makerPosId = perpHook.openMakerPosition(poolId, openMakerPositionParams);
+        uint128 makerPosId = perpManager.openMakerPosition(poolId, openMakerPositionParams);
 
-        Positions.MakerInfo memory makerPos = perpHook.getMakerPosition(poolId, makerPosId);
+        IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(poolId, makerPosId);
 
         (uint160 startingSqrtPriceX96,,,) = manager.getSlot0(poolId);
-
-        uint256 notional = Perp.calculateMakerNotional(startingSqrtPriceX96, SQRT_5_X96, SQRT_95_X96, liquidity);
-
-        uint256 makerLeverageX96 = FullMath.mulDiv(notional, FixedPoint96.Q96, makerPos.margin.scale6To18());
 
         console2.log("maker opens position with id", makerPosId);
         console2.log("holder", makerPos.holder);
         console2.log("tickLower", makerPos.tickLower);
         console2.log("tickUpper", makerPos.tickUpper);
-        console2.log("sqrtPriceLowerX96", makerPos.sqrtPriceLowerX96);
-        console2.log("sqrtPriceUpperX96", makerPos.sqrtPriceUpperX96);
-        console2.log("priceLowerX96", Perp.sqrtPriceX96ToPriceX96(makerPos.sqrtPriceLowerX96));
-        console2.log("priceUpperX96", Perp.sqrtPriceX96ToPriceX96(makerPos.sqrtPriceUpperX96));
         console2.log("margin", makerPos.margin);
         console2.log("liquidity", makerPos.liquidity);
         console2.log("perpsBorrowed", makerPos.perpsBorrowed);
         console2.log("usdBorrowed", makerPos.usdBorrowed);
-        console2.log("notional", notional);
-        console2.log("leverageX96", makerLeverageX96);
         console2.log("entryTwPremiumX96", makerPos.entryTwPremiumX96);
         console2.log("entryTwPremiumDivBySqrtPriceX96", makerPos.entryTwPremiumDivBySqrtPriceX96);
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -229,22 +206,22 @@ contract PerpTest is Test, Fixtures {
         vm.startPrank(taker1);
 
         usdc.mint(taker1, 20e6);
-        usdc.approve(address(perpHook), 20e6);
+        usdc.approve(address(perpManager), 20e6);
 
-        uint256 taker1LeverageX96 = 2 * FixedPoint96.Q96;
+        uint128 taker1LeverageX96 = (2 * FixedPoint96.Q96).toUint128();
 
-        Params.OpenTakerPositionParams memory openTaker1PositionParams = Params.OpenTakerPositionParams({
+        IPerpManager.OpenTakerPositionParams memory openTaker1PositionParams = IPerpManager.OpenTakerPositionParams({
             isLong: true,
             margin: 10e6,
-            leverageX96: taker1LeverageX96,
-            minAmount0Out: 0,
-            maxAmount0In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            levX96: taker1LeverageX96,
+            minAmt0Out: 0,
+            maxAmt0In: type(uint128).max,
+            timeout: 20
         });
 
-        uint256 taker1PosId = perpHook.openTakerPosition(poolId, openTaker1PositionParams);
+        uint128 taker1PosId = perpManager.openTakerPosition(poolId, openTaker1PositionParams);
 
-        Positions.TakerInfo memory taker1Pos = perpHook.getTakerPosition(poolId, taker1PosId);
+        IPerpManager.TakerPos memory taker1Pos = perpManager.getTakerPosition(poolId, taker1PosId);
 
         (uint160 postTaker1LongSqrtPriceX96,,,) = manager.getSlot0(poolId);
 
@@ -257,8 +234,7 @@ contract PerpTest is Test, Fixtures {
         console2.log("entryTwPremiumX96", taker1Pos.entryTwPremiumX96);
         console2.log("leverageX96", taker1LeverageX96);
         console2.log("new sqrtPriceX96", postTaker1LongSqrtPriceX96);
-        console2.log("new priceX96", Perp.sqrtPriceX96ToPriceX96(postTaker1LongSqrtPriceX96));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -276,29 +252,29 @@ contract PerpTest is Test, Fixtures {
         skip(30 minutes);
 
         console2.log("30 minutes passes");
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.startPrank(taker2);
 
         usdc.mint(taker2, 20e6);
-        usdc.approve(address(perpHook), 20e6);
+        usdc.approve(address(perpManager), 20e6);
 
-        uint256 taker2LeverageX96 = 1 * FixedPoint96.Q96 / 2;
+        uint128 taker2LeverageX96 = (1 * FixedPoint96.Q96 / 2).toUint128();
 
-        Params.OpenTakerPositionParams memory openTaker2PositionParams = Params.OpenTakerPositionParams({
+        IPerpManager.OpenTakerPositionParams memory openTaker2PositionParams = IPerpManager.OpenTakerPositionParams({
             isLong: false,
             margin: 20e6,
-            leverageX96: taker2LeverageX96,
-            minAmount0Out: 0,
-            maxAmount0In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            levX96: taker2LeverageX96,
+            minAmt0Out: 0,
+            maxAmt0In: type(uint128).max,
+            timeout: 20
         });
 
-        uint256 taker2PosId = perpHook.openTakerPosition(poolId, openTaker2PositionParams);
+        uint128 taker2PosId = perpManager.openTakerPosition(poolId, openTaker2PositionParams);
 
-        Positions.TakerInfo memory taker2Pos = perpHook.getTakerPosition(poolId, taker2PosId);
+        IPerpManager.TakerPos memory taker2Pos = perpManager.getTakerPosition(poolId, taker2PosId);
 
         (uint160 postTaker2ShortSqrtPriceX96,,,) = manager.getSlot0(poolId);
 
@@ -311,8 +287,7 @@ contract PerpTest is Test, Fixtures {
         console2.log("entryTwPremiumX96", taker2Pos.entryTwPremiumX96);
         console2.log("leverageX96", taker2LeverageX96);
         console2.log("new sqrtPriceX96", postTaker2ShortSqrtPriceX96);
-        console2.log("new priceX96", Perp.sqrtPriceX96ToPriceX96(postTaker2ShortSqrtPriceX96));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -330,14 +305,14 @@ contract PerpTest is Test, Fixtures {
         skip(15 minutes);
 
         console2.log("15 minutes passes");
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.startPrank(taker1);
 
         (int256 taker1Pnl, int256 taker1Funding, int256 taker1EffectiveMargin, bool taker1IsLiquidatable) =
-            perpHook.liveTakerDetails(poolId, taker1PosId);
+            perpManager.liveTakerDetails(poolId, taker1PosId);
         console2.log("liveTakerDetails before state change");
         console2.log("taker1 pnl", taker1Pnl);
         console2.log("taker1 funding", taker1Funding);
@@ -345,17 +320,18 @@ contract PerpTest is Test, Fixtures {
         console2.log("taker1 isLiquidatable", taker1IsLiquidatable);
         console2.log();
 
-        Params.ClosePositionParams memory closeTaker1PositionParams = Params.ClosePositionParams({
+        IPerpManager.ClosePositionParams memory closeTaker1PositionParams = IPerpManager.ClosePositionParams({
             posId: taker1PosId,
-            minAmount1Out: 0,
-            maxAmount1In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            minAmt0Out: 0,
+            minAmt1Out: 0,
+            maxAmt1In: type(uint128).max,
+            timeout: 20
         });
-        perpHook.closeTakerPosition(poolId, closeTaker1PositionParams);
+        perpManager.closeTakerPosition(poolId, closeTaker1PositionParams);
 
         console2.log("taker1 closes position with id", taker1PosId);
         console2.log("taker1 balance", usdc.balanceOf(taker1));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -373,14 +349,14 @@ contract PerpTest is Test, Fixtures {
         skip(30 minutes);
 
         console2.log("30 minutes passes");
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
         vm.startPrank(taker2);
 
         (int256 taker2Pnl, int256 taker2Funding, int256 taker2EffectiveMargin, bool taker2IsLiquidatable) =
-            perpHook.liveTakerDetails(poolId, taker2PosId);
+            perpManager.liveTakerDetails(poolId, taker2PosId);
         console2.log("liveTakerDetails before state change");
         console2.log("taker2 pnl", taker2Pnl);
         console2.log("taker2 funding", taker2Funding);
@@ -388,17 +364,18 @@ contract PerpTest is Test, Fixtures {
         console2.log("taker2 isLiquidatable", taker2IsLiquidatable);
         console2.log();
 
-        Params.ClosePositionParams memory closeTaker2PositionParams = Params.ClosePositionParams({
+        IPerpManager.ClosePositionParams memory closeTaker2PositionParams = IPerpManager.ClosePositionParams({
             posId: taker2PosId,
-            minAmount1Out: 0,
-            maxAmount1In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            minAmt0Out: 0,
+            minAmt1Out: 0,
+            maxAmt1In: type(uint128).max,
+            timeout: 20
         });
-        perpHook.closeTakerPosition(poolId, closeTaker2PositionParams);
+        perpManager.closeTakerPosition(poolId, closeTaker2PositionParams);
 
         console2.log("taker2 closes position with id", taker2PosId);
         console2.log("taker2 balance", usdc.balanceOf(taker2));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -406,7 +383,7 @@ contract PerpTest is Test, Fixtures {
         vm.startPrank(maker1);
 
         (int256 maker1Pnl, int256 maker1Funding, int256 maker1EffectiveMargin, bool maker1IsLiquidatable) =
-            perpHook.liveMakerDetails(poolId, makerPosId);
+            perpManager.liveMakerDetails(poolId, makerPosId);
         console2.log("liveMakerDetails before state change");
         console2.log("maker1 pnl", maker1Pnl);
         console2.log("maker1 funding", maker1Funding);
@@ -414,17 +391,18 @@ contract PerpTest is Test, Fixtures {
         console2.log("maker1 isLiquidatable", maker1IsLiquidatable);
         console2.log();
 
-        Params.ClosePositionParams memory closeMaker1PositionParams = Params.ClosePositionParams({
+        IPerpManager.ClosePositionParams memory closeMaker1PositionParams = IPerpManager.ClosePositionParams({
             posId: makerPosId,
-            minAmount1Out: 0,
-            maxAmount1In: Perp.UINT128_MAX,
-            expiryWindow: 20
+            minAmt0Out: 0,
+            minAmt1Out: 0,
+            maxAmt1In: type(uint128).max,
+            timeout: 20
         });
-        perpHook.closeMakerPosition(poolId, closeMaker1PositionParams);
+        perpManager.closeMakerPosition(poolId, closeMaker1PositionParams);
 
         console2.log("maker closes position with id", makerPosId);
         console2.log("maker balance", usdc.balanceOf(maker1));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
 
@@ -433,36 +411,12 @@ contract PerpTest is Test, Fixtures {
         console2.log("perp creator balance", usdc.balanceOf(perpCreator));
         vm.stopPrank();
 
-        console2.log("perp hook balance", usdc.balanceOf(address(perpHook)));
-        (,, address vault,,,,,,,,,,,,,,,,,,) = perpHook.perps(poolId);
+        console2.log("perp manager balance", usdc.balanceOf(address(perpManager)));
+        (address vault,,,,,,,,,,,,,,,,,,,,,,,,) = perpManager.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
-        console2.log("mark twap", perpHook.getTWAP(poolId, TWAP_WINDOW));
+        console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
         console2.log("index twap", ITWAPBeacon(address(beacon)).getTWAP(TWAP_WINDOW));
         console2.log();
-
-        vm.startPrank(maker1);
-
-        usdc.mint(maker1, 100e6);
-        usdc.approve(address(perpHook), 100e6);
-
-        liquidity = LiquidityAmounts.getLiquidityForAmount1(SQRT_5_X96, SQRT_95_X96, 10e18);
-
-        openMakerPositionParams = Params.OpenMakerPositionParams({
-            margin: 10e6,
-            liquidity: liquidity,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            maxAmount0In: Perp.UINT128_MAX,
-            maxAmount1In: Perp.UINT128_MAX,
-            expiryWindow: 20
-        });
-
-        for (uint256 i = 0; i < 10; i++) {
-            uint256 testMakerPosId = perpHook.openMakerPosition(poolId, openMakerPositionParams);
-            console2.log("maker opens position with id", testMakerPosId);
-        }
-
-        vm.stopPrank();
     }
 }

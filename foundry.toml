@@ -16,23 +16,29 @@
   test = "test"
   via_ir = true
 
-[profile.lite]
-  via_ir = false
-  optimizer_runs = 200
+ignored_error_codes = [
+  2394, # Transient storage warning
+]
+
+remappings = [
+  "@forge-std/=lib/forge-std/",
+  "@solady/=lib/solady/",
+  "@uniswap/universal-router/=lib/universal-router/",
+  "@uniswap/v4-core/=lib/v4-core/",
+  "@uniswap/v4-periphery/=lib/v4-periphery/",
+  "@uniswap/v2-core/=lib/v2-core/",
+  "@uniswap/v3-core/=lib/v3-core/"
+]
+libs = ["node_modules", "lib"]
 
 [profile.ci]
   fuzz = { runs = 10_000 }
   verbosity = 4
 
 [fmt]
-  bracket_spacing = true
-  int_types = "long"
-  line_length = 120
+  sort_imports = true
+  single_line_statement_blocks = "single"
   multiline_func_header = "all"
-  number_underscore = "thousands"
-  quote_style = "double"
-  tab_width = 4
-  wrap_comments = true
 
 [etherscan]
   base = { key = "${API_KEY_BASESCAN}" }
@@ -44,7 +50,7 @@
   localhost = "http://localhost:8545"
 
 # Anvil resource optimization settings
-[anvil]
+[profile.anvil]
   block_time = 1            # 1 second block time instead of instant
   gas_limit = 30_000_000    # Reasonable gas limit
   gas_price = 20_000_000_000 # 20 gwei

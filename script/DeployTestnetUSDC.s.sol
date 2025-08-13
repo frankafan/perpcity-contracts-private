@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { Script, console2 } from "forge-std/Script.sol";
-import { TestnetUSDC } from "../src/testnet/TestnetUSDC.sol";
+import {TestnetUSDC} from "../src/testnet/TestnetUSDC.sol";
+import {Script, console2} from "forge-std/Script.sol";
 
 contract DeployTestnetUSDC is Script {
     TestnetUSDC public usdc;

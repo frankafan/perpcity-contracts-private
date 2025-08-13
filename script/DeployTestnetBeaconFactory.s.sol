@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { Script, console2 } from "forge-std/Script.sol";
-import { TestnetBeaconFactory } from "../src/testnet/TestnetBeaconFactory.sol";
+import {TestnetBeaconFactory} from "../src/testnet/TestnetBeaconFactory.sol";
+import {Script, console2} from "forge-std/Script.sol";
 
 contract DeployTestnetBeaconFactory is Script {
     TestnetBeaconFactory public factory;

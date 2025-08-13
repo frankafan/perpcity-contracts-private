@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.26;
 
-import { MAX_CARDINALITY } from "../utils/Constants.sol";
+import {MAX_CARDINALITY} from "../utils/Constants.sol";
 
 /// @title UintTWAP
 /// @notice Provides price data useful for a wide variety of system designs. Based on Uniswap's V3 Oracle
@@ -65,7 +65,7 @@ library UintTWAP {
         internal
         returns (uint32 cardinality, uint32 cardinalityNext)
     {
-        self[0] = Observation({ blockTimestamp: time, priceCumulative: 0, initialized: true });
+        self[0] = Observation({blockTimestamp: time, priceCumulative: 0, initialized: true});
         return (1, 1);
     }
 
@@ -99,11 +99,8 @@ library UintTWAP {
         if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
 
         // if the conditions are right, we can bump the cardinality
-        if (cardinalityNext > cardinality && index == (cardinality - 1)) {
-            cardinalityUpdated = cardinalityNext;
-        } else {
-            cardinalityUpdated = cardinality;
-        }
+        if (cardinalityNext > cardinality && index == (cardinality - 1)) cardinalityUpdated = cardinalityNext;
+        else cardinalityUpdated = cardinality;
 
         indexUpdated = (index + 1) % cardinalityUpdated;
         self[indexUpdated] = transform(last, blockTimestamp, price);
