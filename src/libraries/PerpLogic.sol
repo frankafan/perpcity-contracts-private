@@ -13,7 +13,6 @@ import {UniswapV4Utility} from "./UniswapV4Utility.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
-import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
@@ -21,7 +20,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 library PerpLogic {
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
-    using FixedPointMathLib for uint256;
+    using FixedPointMathLib for *;
     using SafeCastLib for *;
     using MoreSignedMath for int256;
     using PerpLogic for uint160;
@@ -51,7 +50,6 @@ library PerpLogic {
         perp.vault = address(vault);
         perp.creationTimestamp = currentTimestamp;
         perp.makerLockupPeriod = params.makerLockupPeriod;
-        perp.tradingFee = params.tradingFee;
         perp.beacon = params.beacon;
         perp.fundingInterval = params.fundingInterval;
         perp.twapWindow = params.twapWindow;
@@ -65,6 +63,7 @@ library PerpLogic {
         perp.liquidationFeeX96 = params.liquidationFeeX96;
         perp.liquidatorFeeSplitX96 = params.liquidatorFeeSplitX96;
         perp.marketDeathThresholdX96 = params.marketDeathThresholdX96;
+        perp.tradingFeeConfig = params.tradingFeeConfig;
         perp.key = key;
 
         // initialize twap helpers, cardinalityNext will be set to 1 at first
@@ -88,9 +87,11 @@ library PerpLogic {
     }
 
     function validateParams(IPerpManager.CreatePerpParams calldata params) internal pure {
-        if (params.beacon == address(0)) revert IPerpManager.InvalidBeaconAddress(params.beacon);
+        if (params.startingSqrtPriceX96 == 0) {
+            revert IPerpManager.InvalidStartingSqrtPriceX96(params.startingSqrtPriceX96);
+        }
 
-        if (params.tradingFee > LPFeeLibrary.MAX_LP_FEE) revert IPerpManager.InvalidTradingFee(params.tradingFee);
+        if (params.beacon == address(0)) revert IPerpManager.InvalidBeaconAddress(params.beacon);
 
         if (params.maxOpeningLevX96 == 0) revert IPerpManager.InvalidMaxOpeningLev(params.maxOpeningLevX96);
 
@@ -121,6 +122,19 @@ library PerpLogic {
         if (params.marketDeathThresholdX96 >= FixedPoint96.UINT_Q96) {
             revert IPerpManager.InvalidMarketDeathThreshold(params.marketDeathThresholdX96);
         }
+
+        if (params.tradingFeeConfig.decay == 0) revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
+
+        if (params.tradingFeeConfig.maxFeeMultiplierX96 < FixedPoint96.UINT_Q96) {
+            revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
+        }
+
+        // maxFee = maxFeeMultiplier * startFee; maxFee can't be more than 100%
+        if (
+            params.tradingFeeConfig.maxFeeMultiplierX96.mulDiv(
+                params.tradingFeeConfig.startFeeX96, FixedPoint96.UINT_Q96
+            ) > FixedPoint96.UINT_Q96
+        ) revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
     }
 
     function createUniswapPool(

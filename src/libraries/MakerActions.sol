@@ -232,7 +232,8 @@ library MakerActions {
         if (isExcessLong) {
             // must sell excess perp contracts to close long exposure
             uint256 usdOut;
-            (usdOut, reverted) = c.router.swapExactIn(key, true, absExcessPerps, params.minAmt1Out, 0, params.timeout);
+            (usdOut, reverted) =
+                c.router.swapExactIn(key, true, absExcessPerps, params.minAmt1Out, false, params.timeout);
 
             // if swap was successful, update pnlChange with profit from selling
             if (!reverted) pnlChange = int256(usdOut);
@@ -240,7 +241,8 @@ library MakerActions {
             // if excessPerps != 0, there is a short exposure to close
             // must buy perps to pay back debt / close short exposure
             uint256 usdIn;
-            (usdIn, reverted) = c.router.swapExactOut(key, false, absExcessPerps, params.maxAmt1In, 0, params.timeout);
+            (usdIn, reverted) =
+                c.router.swapExactOut(key, false, absExcessPerps, params.maxAmt1In, false, params.timeout);
 
             // if swap was successful, update pnlChange with cost of buying
             if (!reverted) pnlChange = -int256(usdIn);

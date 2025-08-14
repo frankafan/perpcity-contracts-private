@@ -7,6 +7,8 @@ import {ITWAPBeacon} from "../src/interfaces/ITWAPBeacon.sol";
 import {MakerActions} from "../src/libraries/MakerActions.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {TokenMath} from "../src/libraries/TokenMath.sol";
+
+import {TradingFee} from "../src/libraries/TradingFee.sol";
 import {TestnetBeacon} from "../src/testnet/TestnetBeacon.sol";
 import {TestnetUSDC} from "../src/testnet/TestnetUSDC.sol";
 import {EasyPosm} from "./utils/EasyPosm.sol";
@@ -49,7 +51,14 @@ contract PerpTest is Test, Fixtures {
     uint256 constant NUMBER_50_X96 = 50 * FixedPoint96.Q96;
     uint256 constant NUMBER_55_X96 = 55 * FixedPoint96.Q96;
 
-    uint24 constant TRADING_FEE = 5000; // 0.5%
+    TradingFee.Config TRADING_FEE_CONFIG = TradingFee.Config({
+        baseFeeX96: 0, // will be updated when liquidity is provided
+        startFeeX96: (5 * FixedPoint96.Q96 / 100).toUint128(), // 5%
+        targetFeeX96: (5 * FixedPoint96.Q96 / 1000).toUint128(), // 0.5%
+        decay: 100,
+        volatilityScalerX96: (2 * FixedPoint96.Q96 / 10).toUint128(), // 0.2
+        maxFeeMultiplierX96: (2 * FixedPoint96.Q96).toUint128() // 2x baseFee
+    });
     uint128 immutable TRADING_FEE_CREATOR_SPLIT_X96 = (1 * FixedPoint96.Q96 / 100).toUint128(); // 1%
     uint128 immutable TRADING_FEE_INSURANCE_SPLIT_X96 = (10 * FixedPoint96.Q96 / 100).toUint128(); // 10%
     uint128 immutable MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128();
@@ -127,7 +136,7 @@ contract PerpTest is Test, Fixtures {
             fundingInterval: FUNDING_INTERVAL,
             beacon: address(beacon),
             tickSpacing: TICK_SPACING,
-            tradingFee: TRADING_FEE,
+            tradingFeeConfig: TRADING_FEE_CONFIG,
             twapWindow: TWAP_WINDOW,
             tradingFeeCreatorSplitX96: TRADING_FEE_CREATOR_SPLIT_X96,
             tradingFeeInsuranceSplitX96: TRADING_FEE_INSURANCE_SPLIT_X96,

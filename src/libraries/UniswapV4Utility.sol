@@ -137,7 +137,7 @@ library UniswapV4Utility {
         bool zeroForOne,
         uint128 amountIn,
         uint128 minAmountOut,
-        uint24 fee,
+        bool chargeFee,
         uint256 timeout
     )
         internal
@@ -151,7 +151,7 @@ library UniswapV4Utility {
                 zeroForOne: zeroForOne,
                 amountIn: amountIn,
                 amountOutMinimum: minAmountOut,
-                hookData: abi.encode(fee)
+                hookData: abi.encode(chargeFee)
             })
         );
 
@@ -191,7 +191,7 @@ library UniswapV4Utility {
         bool zeroForOne,
         uint128 amountOut,
         uint128 maxAmountIn,
-        uint24 fee,
+        bool chargeFee,
         uint256 timeout
     )
         internal
@@ -205,7 +205,7 @@ library UniswapV4Utility {
                 zeroForOne: zeroForOne,
                 amountOut: amountOut,
                 amountInMaximum: maxAmountIn,
-                hookData: abi.encode(fee)
+                hookData: abi.encode(chargeFee)
             })
         );
 

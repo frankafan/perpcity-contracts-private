@@ -2,18 +2,19 @@
 pragma solidity ^0.8.26;
 
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
-import {FixedPoint96} from "../libraries/FixedPoint96.sol";
-import {PerpLogic} from "../libraries/PerpLogic.sol";
-import {Tick} from "../libraries/Tick.sol";
-import {TickTWAP} from "../libraries/TickTWAP.sol";
-import {TokenMath} from "../libraries/TokenMath.sol";
-import {UniswapV4Utility} from "../libraries/UniswapV4Utility.sol";
+import {FixedPoint96} from "./FixedPoint96.sol";
+import {PerpLogic} from "./PerpLogic.sol";
+import {Tick} from "./Tick.sol";
+import {TickTWAP} from "./TickTWAP.sol";
+import {TokenMath} from "./TokenMath.sol";
+
 import {MAX_CARDINALITY} from "../utils/Constants.sol";
+import {TradingFee} from "./TradingFee.sol";
+import {UniswapV4Utility} from "./UniswapV4Utility.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {
@@ -35,6 +36,7 @@ library Hook {
     using SafeCastLib for *;
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
     using FixedPointMathLib for *;
+    using TradingFee for IPerpManager.Perp;
 
     modifier validateCaller(IPerpManager.ExternalContracts storage c, address hookSender) {
         // ensures sender hook param is either the router or position manager
@@ -106,6 +108,9 @@ library Hook {
             perp.twapState.cardinalityNext
         );
 
+        // update liquidity-based fee component
+        perp.updateBaseFeeX96(c);
+
         return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -150,6 +155,9 @@ library Hook {
             perp.twapState.cardinalityNext
         );
 
+        // update liquidity-based fee component
+        perp.updateBaseFeeX96(c);
+
         bool isTickLowerInitializedAfter = c.poolManager.isTickInitialized(poolId, params.tickLower);
         bool isTickUpperInitializedAfter = c.poolManager.isTickInitialized(poolId, params.tickUpper);
 
@@ -183,11 +191,15 @@ library Hook {
             tstore(poolId, startingTick)
         }
 
-        // get fee from hookData; if no fee is charged, skip fee collection
-        uint24 fee = abi.decode(hookData, (uint24));
-        if (fee == 0) return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        // determine whether or not to charge fee based on hookData passed in
+        bool chargeFee = abi.decode(hookData, (bool));
+        if (!chargeFee) return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
 
-        uint256 feeAmount = params.amountSpecified.abs().mulDiv(fee, LPFeeLibrary.MAX_LP_FEE);
+        // if charging a fee, calculate the fee amount
+        uint256 tradingFeeX96 = perp.calculateTradingFeeX96(c);
+        uint256 feeAmount = params.amountSpecified.abs().mulDiv(tradingFeeX96, FixedPoint96.UINT_Q96);
+
+        // use market splits to determine how much of fee goes to each party
         uint256 creatorFeeAmount = feeAmount.mulDiv(perp.tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
         uint256 insuranceFeeAmount = feeAmount.mulDiv(perp.tradingFeeInsuranceSplitX96, FixedPoint96.UINT_Q96);
         uint256 lpFeeAmount = feeAmount - creatorFeeAmount - insuranceFeeAmount;

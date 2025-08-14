@@ -52,13 +52,11 @@ library TakerActions {
         bool reverted;
         if (params.isLong) {
             // if long, swap usd in for perps out; buying perps
-            (size, reverted) =
-                c.router.swapExactIn(key, false, value, params.minAmt0Out, perp.tradingFee, params.timeout);
+            (size, reverted) = c.router.swapExactIn(key, false, value, params.minAmt0Out, true, params.timeout);
             if (reverted) revert UniswapV4Utility.SwapReverted();
         } else {
             // if short, swap perps in for usd out; borrowing then selling perps
-            (size, reverted) =
-                c.router.swapExactOut(key, true, value, params.maxAmt0In, perp.tradingFee, params.timeout);
+            (size, reverted) = c.router.swapExactOut(key, true, value, params.maxAmt0In, true, params.timeout);
             if (reverted) revert UniswapV4Utility.SwapReverted();
         }
 
@@ -125,15 +123,15 @@ library TakerActions {
         bool reverted;
         if (takerPos.isLong) {
             // sell perps for usd (swap in perps, get out usd)
-            uint128 amountIn = takerPos.size;
-            (notional, reverted) = c.router.swapExactIn(key, true, amountIn, params.minAmt1Out, 0, params.timeout);
+            uint128 perpsIn = takerPos.size;
+            (notional, reverted) = c.router.swapExactIn(key, true, perpsIn, params.minAmt1Out, false, params.timeout);
             if (reverted) revert UniswapV4Utility.SwapReverted();
             // usd received minus entry cost
             pnl = int256(notional) - int256(uint256(takerPos.entryValue));
         } else {
             // buy back perps for usd (swap in usd, get out perps)
-            uint128 amountOut = takerPos.size;
-            (notional, reverted) = c.router.swapExactOut(key, false, amountOut, params.maxAmt1In, 0, params.timeout);
+            uint128 perpsOut = takerPos.size;
+            (notional, reverted) = c.router.swapExactOut(key, false, perpsOut, params.maxAmt1In, false, params.timeout);
             if (reverted) revert UniswapV4Utility.SwapReverted();
             // entry loan value minus usd used to buy back and pay debt
             pnl = int256(uint256(takerPos.entryValue)) - int256(notional);
