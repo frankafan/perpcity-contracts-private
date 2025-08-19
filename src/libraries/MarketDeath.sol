@@ -114,7 +114,7 @@ library MarketDeath {
         internal
         returns (uint256 newMarketHealthX96)
     {
-        uint128 currentPosId = c.posm.nextTokenId().toUint128() - 1;
+        uint128 currentPosId = perp.nextMakerPosId - 1;
 
         // params are minimized / maximized where possible to ensure no reverts
         IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({

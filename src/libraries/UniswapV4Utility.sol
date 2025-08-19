@@ -62,7 +62,7 @@ library UniswapV4Utility {
         uint256 timeout
     )
         internal
-        returns (uint128 tokenId, uint256 amount0In, uint256 amount1In)
+        returns (uint256 uniswapLiqPosTokenId, uint256 amount0In, uint256 amount1In)
     {
         // Prepare parameters for each action
         bytes[] memory params = new bytes[](2);
@@ -71,7 +71,7 @@ library UniswapV4Utility {
         params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
 
         // Get token ID for the position about to be minted
-        tokenId = positionManager.nextTokenId().toUint128();
+        uniswapLiqPosTokenId = positionManager.nextTokenId();
 
         // Get balances of currencies before mint, used to calculate amount0In & amount1In
         uint256 amount0BalanceBefore = poolKey.currency0.balanceOfSelf();
@@ -97,7 +97,7 @@ library UniswapV4Utility {
     function burnLiqPos(
         IPositionManager positionManager,
         PoolKey memory poolKey,
-        uint128 tokenId,
+        uint256 uniswapLiqPosTokenId,
         uint128 amount0Min,
         uint128 amount1Min,
         uint256 timeout
@@ -107,7 +107,7 @@ library UniswapV4Utility {
     {
         // Prepare parameters for each action
         bytes[] memory params = new bytes[](2);
-        params[0] = abi.encode(tokenId, 0, 0, bytes(""));
+        params[0] = abi.encode(uniswapLiqPosTokenId, 0, 0, bytes(""));
         params[1] = abi.encode(poolKey.currency0, poolKey.currency1, address(this));
 
         // Get balances of currencies before burn, used to calculate amount0Out & amount1Out

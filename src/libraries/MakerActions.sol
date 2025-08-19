@@ -61,9 +61,7 @@ library MakerActions {
         if (levX96 > perp.maxOpeningLevX96) revert IPerpManager.InvalidLevX96(levX96, perp.maxOpeningLevX96);
 
         // mint underlying lp position
-        uint256 perpsBorrowed;
-        uint256 usdBorrowed;
-        (makerPosId, perpsBorrowed, usdBorrowed) = c.posm.mintLiqPos(
+        (uint256 uniswapLiqPosTokenId, uint256 perpsBorrowed, uint256 usdBorrowed) = c.posm.mintLiqPos(
             key,
             params.tickLower,
             params.tickUpper,
@@ -73,8 +71,12 @@ library MakerActions {
             params.timeout
         );
 
+        makerPosId = perp.nextMakerPosId;
+        perp.nextMakerPosId++;
+
         // update maker position state
         perp.makerPositions[makerPosId] = IPerpManager.MakerPos({
+            uniswapLiqPosTokenId: uniswapLiqPosTokenId,
             holder: msg.sender,
             margin: params.margin,
             liquidity: params.liquidity,
@@ -130,7 +132,7 @@ library MakerActions {
         perp.totalMargin -= makerPos.margin;
 
         (uint256 perpsReceived, uint256 usdReceived) =
-            c.posm.burnLiqPos(key, params.posId, params.minAmt0Out, params.minAmt1Out, params.timeout);
+            c.posm.burnLiqPos(key, makerPos.uniswapLiqPosTokenId, params.minAmt0Out, params.minAmt1Out, params.timeout);
 
         int256 pnl = int256(usdReceived) - int256(uint256(makerPos.usdBorrowed));
         int256 excessPerps = int256(perpsReceived) - int256(uint256(makerPos.perpsBorrowed));

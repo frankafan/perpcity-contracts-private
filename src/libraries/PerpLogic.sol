@@ -56,6 +56,7 @@ library PerpLogic {
         perp.creator = msg.sender;
         perp.tradingFeeCreatorSplitX96 = params.tradingFeeCreatorSplitX96;
         perp.tradingFeeInsuranceSplitX96 = params.tradingFeeInsuranceSplitX96;
+        perp.nextMakerPosId = 1; // maker IDs start at 1
         perp.nextTakerPosId = 1; // taker IDs start at 1
         perp.priceImpactBandX96 = params.priceImpactBandX96;
         perp.maxOpeningLevX96 = params.maxOpeningLevX96;

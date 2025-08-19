@@ -26,7 +26,8 @@ interface IPerpManager {
         int256 twPremiumX96; // Time-weighted cumulative funding premium (mark - index), scaled by Q96 & WAD
         int256 twPremiumDivBySqrtPriceX96; // Time-weighted cumulative (premium / sqrtPrice), scaled by Q96 & WAD
         int256 premiumPerSecondX96; // Current funding premium per second, scaled by Q96 and WAD
-        uint128 nextTakerPosId; // ID of the next taker position opened
+        uint128 nextMakerPosId; // ID of the next maker position opened; starts at 1
+        uint128 nextTakerPosId; // ID of the next taker position opened; starts at 1
         uint128 priceImpactBandX96; // Maximum allowed divergence between mark and mark twap (e.g. 0.05 = 5%)
         uint128 maxOpeningLevX96; // Maximum leverage allowed when opening any position
         uint128 liquidationLevX96; // Leverage at which a position is considered liquidatable
@@ -52,6 +53,7 @@ interface IPerpManager {
     }
 
     struct MakerPos {
+        uint256 uniswapLiqPosTokenId; // ID of the token representing the liquidity position in the uniswap pool
         address holder; // Address of the maker
         uint32 entryTimestamp; // Timestamp of when the maker opened their position
         int24 tickLower; // Lower tick of the maker's position

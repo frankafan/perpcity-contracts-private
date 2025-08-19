@@ -421,7 +421,7 @@ contract PerpTest is Test, Fixtures {
         vm.stopPrank();
 
         console2.log("perp manager balance", usdc.balanceOf(address(perpManager)));
-        (address vault,,,,,,,,,,,,,,,,,,,,,,,,) = perpManager.perps(poolId);
+        (address vault,,,,,,,,,,,,,,,,,,,,,,,,,) = perpManager.perps(poolId);
         console2.log("perp vault balance", usdc.balanceOf(vault));
         console2.log("creation fee recipient balance", usdc.balanceOf(creationFeeRecipient));
         console2.log("mark twap", perpManager.getTWAP(poolId, TWAP_WINDOW));
