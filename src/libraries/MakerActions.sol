@@ -53,11 +53,11 @@ library MakerActions {
         perp.totalMargin += params.margin;
 
         // calculate notional value of liquidity at current price
-        (uint160 sqrtPriceX96,,,) = c.poolManager.getSlot0(perpId);
+        (uint160 sqrtPriceX96, int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
         uint256 notional = liquidityNotional(params.liquidity, sqrtPriceX96, params.tickLower, params.tickUpper);
 
         // check that opening leverage is within bounds
-        uint256 levX96 = notional.mulDiv(FixedPoint96.UINT_Q96, scaledMargin);
+        uint256 levX96 = notional.fullMulDiv(FixedPoint96.UINT_Q96, scaledMargin);
         if (levX96 > perp.maxOpeningLevX96) revert IPerpManager.InvalidLevX96(levX96, perp.maxOpeningLevX96);
 
         // mint underlying lp position
@@ -71,6 +71,14 @@ library MakerActions {
             params.timeout
         );
 
+        //  counteract uniswap rounding
+        if (perpsBorrowed != 0) perpsBorrowed -= 1;
+        if (usdBorrowed != 0) usdBorrowed -= 1;
+
+        Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo = perp.tickGrowthInfo.getAllFundingGrowth(
+            params.tickLower, params.tickUpper, currentTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
+        );
+
         makerPosId = perp.nextMakerPosId;
         perp.nextMakerPosId++;
 
@@ -78,6 +86,7 @@ library MakerActions {
         perp.makerPositions[makerPosId] = IPerpManager.MakerPos({
             uniswapLiqPosTokenId: uniswapLiqPosTokenId,
             holder: msg.sender,
+            entryTimestamp: block.timestamp.toUint32(),
             margin: params.margin,
             liquidity: params.liquidity,
             tickLower: params.tickLower,
@@ -85,8 +94,9 @@ library MakerActions {
             perpsBorrowed: perpsBorrowed.toUint128(),
             usdBorrowed: usdBorrowed.toUint128(),
             entryTwPremiumX96: perp.twPremiumX96,
-            entryTwPremiumDivBySqrtPriceX96: perp.twPremiumDivBySqrtPriceX96,
-            entryTimestamp: block.timestamp.toUint32()
+            entryTwPremiumGrowthInsideX96: fundingGrowthRangeInfo.twPremiumGrowthInsideX96,
+            entryTwPremiumDivBySqrtPriceGrowthInsideX96: fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96,
+            entryTwPremiumGrowthBelowX96: fundingGrowthRangeInfo.twPremiumGrowthBelowX96
         });
 
         // transfer margin from sender to vault
@@ -135,6 +145,7 @@ library MakerActions {
             c.posm.burnLiqPos(key, makerPos.uniswapLiqPosTokenId, params.minAmt0Out, params.minAmt1Out, params.timeout);
 
         int256 pnl = int256(usdReceived) - int256(uint256(makerPos.usdBorrowed));
+
         int256 excessPerps = int256(perpsReceived) - int256(uint256(makerPos.perpsBorrowed));
 
         pnl += settleExcess(perp, c, params, excessPerps, makerPos.holder);
@@ -147,6 +158,16 @@ library MakerActions {
 
         bool wasLiquidation =
             perp.closePosition(c, makerPos.holder, scaledMargin, pnl, funding, notional, revertChanges, doNotPayout);
+
+        int24 tickLower = makerPos.tickLower;
+        int24 tickUpper = makerPos.tickUpper;
+
+        bool isTickLowerInitializedAfter = c.poolManager.isTickInitialized(perpId, tickLower);
+        bool isTickUpperInitializedAfter = c.poolManager.isTickInitialized(perpId, tickUpper);
+
+        // clear tick mapping to mimick uniswap pool ticks cleared
+        if (!isTickLowerInitializedAfter) perp.tickGrowthInfo.clear(tickLower);
+        if (!isTickUpperInitializedAfter) perp.tickGrowthInfo.clear(tickUpper);
 
         emit IPerpManager.MakerPositionClosed(perpId, params.posId, wasLiquidation, makerPos, sqrtPriceX96);
         delete perp.makerPositions[params.posId];
@@ -202,7 +223,10 @@ library MakerActions {
                     currentTick,
                     perp.twPremiumX96,
                     perp.twPremiumDivBySqrtPriceX96
-                )
+                ),
+                makerPos.entryTwPremiumGrowthInsideX96,
+                makerPos.entryTwPremiumDivBySqrtPriceGrowthInsideX96,
+                makerPos.entryTwPremiumGrowthBelowX96
             )
         );
     }
@@ -226,6 +250,9 @@ library MakerActions {
     {
         PoolKey memory key = perp.key;
 
+        // Early return if excessPerps is zero
+        if (excessPerps == 0) return 0;
+
         uint128 absExcessPerps = excessPerps.abs().toUint128();
 
         bool reverted;
@@ -239,7 +266,7 @@ library MakerActions {
 
             // if swap was successful, update pnlChange with profit from selling
             if (!reverted) pnlChange = int256(usdOut);
-        } else if (excessPerps != 0) {
+        } else {
             // if excessPerps != 0, there is a short exposure to close
             // must buy perps to pay back debt / close short exposure
             uint256 usdIn;

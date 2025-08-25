@@ -49,7 +49,6 @@ interface IPerpManager {
         IUniversalRouter router;
         IPositionManager posm;
         address usdc;
-        address creationFeeRecipient;
     }
 
     struct MakerPos {
@@ -63,7 +62,9 @@ interface IPerpManager {
         uint128 perpsBorrowed; // Amount of perp accounting tokens borrowed as liquidity in WAD (e.g. 2e18 = 2 perps)
         uint128 usdBorrowed; // Amount of usd accounting tokens borrowed as liquidity in WAD (e.g. 100e10 = 100 usd)
         int256 entryTwPremiumX96; // twPremiumX96 at the time of entry
-        int256 entryTwPremiumDivBySqrtPriceX96; // twPremiumDivBySqrtPriceX96 at the time of entry
+        int256 entryTwPremiumGrowthInsideX96; // twPremiumGrowthInsideX96 at the time of entry
+        int256 entryTwPremiumDivBySqrtPriceGrowthInsideX96; // twPremiumDivBySqrtPriceGrowthInsideX96 at time of entry
+        int256 entryTwPremiumGrowthBelowX96; // twPremiumGrowthBelowX96 at the time of entry
     }
 
     struct TakerPos {

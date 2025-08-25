@@ -11,6 +11,7 @@ import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol
 // modified from https://github.com/perpetual-protocol/perp-curie-contract/blob/main/contracts/lib/Funding.sol
 library Funding {
     using SafeCastLib for *;
+    using MoreSignedMath for *;
 
     //
     // STRUCT
@@ -48,7 +49,10 @@ library Funding {
         uint128 liquidity,
         int24 lowerTick,
         int24 upperTick,
-        Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo
+        Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo,
+        int256 lastTwPremiumGrowthInsideX96,
+        int256 lastTwPremiumDivBySqrtPriceGrowthInsideX96,
+        int256 lastTwPremiumGrowthBelowX96
     )
         internal
         pure
@@ -60,18 +64,24 @@ library Funding {
         uint256 baseAmountBelow = LiquidityAmounts.getAmount0ForLiquidity(
             TickMath.getSqrtPriceAtTick(lowerTick), sqrtPriceX96AtUpperTick, liquidity
         );
+
         // funding below the range
-        int256 fundingBelowX96 = baseAmountBelow.toInt256() * fundingGrowthRangeInfo.twPremiumGrowthBelowX96;
+        int256 fundingBelow = baseAmountBelow.toInt256().fullMulDivSigned(
+            fundingGrowthRangeInfo.twPremiumGrowthBelowX96 - lastTwPremiumGrowthBelowX96, FixedPoint96.UINT_Q96
+        );
+
         // funding inside the range =
         // liquidity * (ΔtwPremiumDivBySqrtPriceGrowthInsideX96 - ΔtwPremiumGrowthInsideX96 / sqrtPriceAtUpperTick)
-        int256 fundingInsideX96 = liquidity.toInt256()
-        // ΔtwPremiumDivBySqrtPriceGrowthInsideX96
-        * (
-            fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96
-                - MoreSignedMath.mulDivSigned(
-                    fundingGrowthRangeInfo.twPremiumGrowthInsideX96, FixedPoint96.INT_Q96, sqrtPriceX96AtUpperTick
-                )
+        int256 fundingInside = liquidity.toInt256().fullMulDivSigned(
+            fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96 - lastTwPremiumDivBySqrtPriceGrowthInsideX96
+                - MoreSignedMath.fullMulDivSigned(
+                    (fundingGrowthRangeInfo.twPremiumGrowthInsideX96 - lastTwPremiumGrowthInsideX96),
+                    FixedPoint96.INT_Q96,
+                    sqrtPriceX96AtUpperTick
+                ),
+            FixedPoint96.UINT_Q96
         );
-        return (fundingBelowX96 + fundingInsideX96) / FixedPoint96.INT_Q96;
+
+        return fundingBelow + fundingInside;
     }
 }

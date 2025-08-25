@@ -1,24 +1,12 @@
-# Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
-
 [profile.default]
-  auto_detect_solc = false
-  block_timestamp = 1_738_368_000 # Feb 1, 2025 at 00:00 GMT
-  bytecode_hash = "none"
+  solc = "0.8.26"
   evm_version = "cancun"
-  fuzz = { runs = 1_000 }
-  gas_reports = ["*"]
+  bytecode_hash = "none"
+  cbor_metadata = false
+  via_ir = true
   optimizer = true
   optimizer_runs = 10_000
-  out = "out"
-  script = "script"
-  solc = "0.8.26"
-  src = "src"
-  test = "test"
-  via_ir = true
-
-ignored_error_codes = [
-  2394, # Transient storage warning
-]
+  block_gas_limit = 1_000_000_000_000
 
 remappings = [
   "@forge-std/=lib/forge-std/",
@@ -29,25 +17,19 @@ remappings = [
   "@uniswap/v2-core/=lib/v2-core/",
   "@uniswap/v3-core/=lib/v3-core/"
 ]
-libs = ["node_modules", "lib"]
+
+[profile.default.invariant]
+  depth = 10
+  runs = 128
+  fail_on_revert = true
 
 [profile.ci]
-  fuzz = { runs = 10_000 }
   verbosity = 4
 
-[fmt]
-  sort_imports = true
-  single_line_statement_blocks = "single"
-  multiline_func_header = "all"
-
-[etherscan]
-  base = { key = "${API_KEY_BASESCAN}" }
-  base_sepolia = { key = "${API_KEY_BASESCAN}" }
-
-[rpc_endpoints]
-  base = "https://mainnet.base.org"
-  base_sepolia = "https://sepolia.base.org"
-  localhost = "http://localhost:8545"
+[profile.ci.invariant]
+  depth = 20
+  runs = 256
+  fail_on_revert = true
 
 # Anvil resource optimization settings
 [profile.anvil]
@@ -58,3 +40,17 @@ libs = ["node_modules", "lib"]
   balance = 10_000          # 10k ETH per account instead of 100k
   state_interval = 0        # Disable periodic state dumps
   no_storage_caching = true # Disable storage caching
+
+[fmt]
+  sort_imports = true
+  single_line_statement_blocks = "single"
+  multiline_func_header = "all"
+
+ignored_error_codes = [
+  2394, # Transient storage warning
+]
+
+[rpc_endpoints]
+  base = "https://mainnet.base.org"
+  base_sepolia = "https://sepolia.base.org"
+  localhost = "http://localhost:8545"

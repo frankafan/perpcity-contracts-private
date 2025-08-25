@@ -140,17 +140,24 @@ library SharedPositionLogic {
     {
         (uint160 sqrtPriceX96, int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perp.key.toId());
 
+        uint32 oldestObservationTimestamp =
+            perp.twapState.observations.getOldestObservationTimestamp(perp.twapState.index, perp.twapState.cardinality);
+        uint32 twapSecondsAgo = (block.timestamp - oldestObservationTimestamp).toUint32();
+        uint32 twapWindow = perp.twapWindow;
+        twapSecondsAgo = twapSecondsAgo > twapWindow ? twapWindow : twapSecondsAgo;
+
         // get mark twap, and calculate price band around it
-        uint256 markTwapX96 = perp.getTWAP(perp.twapWindow, currentTick);
+        uint256 markTwapX96 = perp.getTWAP(twapSecondsAgo, currentTick);
 
         uint256 priceImpactBandLowerX96 = FixedPoint96.UINT_Q96 - perp.priceImpactBandX96;
         uint256 priceImpactBandUpperX96 = FixedPoint96.UINT_Q96 + perp.priceImpactBandX96;
 
-        uint256 minPriceX96 = markTwapX96.mulDiv(priceImpactBandLowerX96, FixedPoint96.UINT_Q96);
-        uint256 maxPriceX96 = markTwapX96.mulDiv(priceImpactBandUpperX96, FixedPoint96.UINT_Q96);
+        uint256 minPriceX96 = markTwapX96.fullMulDiv(priceImpactBandLowerX96, FixedPoint96.UINT_Q96);
+        uint256 maxPriceX96 = markTwapX96.fullMulDiv(priceImpactBandUpperX96, FixedPoint96.UINT_Q96);
 
         // ensure new price is within price band
         uint256 priceX96 = sqrtPriceX96.toPriceX96();
+
         if (priceX96 < minPriceX96 || priceX96 > maxPriceX96) {
             revert IPerpManager.PriceImpactTooHigh(priceX96, minPriceX96, maxPriceX96);
         }

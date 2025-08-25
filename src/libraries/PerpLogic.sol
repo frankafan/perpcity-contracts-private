@@ -75,15 +75,6 @@ library PerpLogic {
         perp.twapState.cardinalityNext =
             perp.twapState.observations.grow(perp.twapState.cardinalityNext, params.initialCardinalityNext);
 
-        // add the current tick as the first observation
-        (perp.twapState.index, perp.twapState.cardinality) = perp.twapState.observations.write(
-            perp.twapState.index,
-            currentTimestamp,
-            TickMath.getTickAtSqrtPrice(params.startingSqrtPriceX96),
-            perp.twapState.cardinality,
-            perp.twapState.cardinalityNext
-        );
-
         emit IPerpManager.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96);
     }
 
@@ -116,9 +107,11 @@ library PerpLogic {
 
         if (params.fundingInterval == 0) revert IPerpManager.InvalidFundingInterval(params.fundingInterval);
 
-        if (params.priceImpactBandX96 >= FixedPoint96.UINT_Q96) {
+        if (params.priceImpactBandX96 > FixedPoint96.UINT_Q96) {
             revert IPerpManager.InvalidPriceImpactBand(params.priceImpactBandX96);
         }
+
+        if (params.priceImpactBandX96 == 0) revert IPerpManager.InvalidPriceImpactBand(params.priceImpactBandX96);
 
         if (params.marketDeathThresholdX96 >= FixedPoint96.UINT_Q96) {
             revert IPerpManager.InvalidMarketDeathThreshold(params.marketDeathThresholdX96);
@@ -134,6 +127,13 @@ library PerpLogic {
         if (
             params.tradingFeeConfig.maxFeeMultiplierX96.mulDiv(
                 params.tradingFeeConfig.startFeeX96, FixedPoint96.UINT_Q96
+            ) > FixedPoint96.UINT_Q96
+        ) revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
+
+        // maxFee = maxFeeMultiplier * targetFee when (targetFee > startFee); maxFee can't be more than 100%
+        if (
+            params.tradingFeeConfig.maxFeeMultiplierX96.mulDiv(
+                params.tradingFeeConfig.targetFeeX96, FixedPoint96.UINT_Q96
             ) > FixedPoint96.UINT_Q96
         ) revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
     }
@@ -176,14 +176,16 @@ library PerpLogic {
         perp.twPremiumX96 += perp.premiumPerSecondX96 * timeSinceLastUpdate;
 
         perp.twPremiumDivBySqrtPriceX96 +=
-            perp.premiumPerSecondX96.mulDivSigned(timeSinceLastUpdate * FixedPoint96.INT_Q96, sqrtPriceX96);
+            perp.premiumPerSecondX96.fullMulDivSigned(timeSinceLastUpdate * FixedPoint96.INT_Q96, sqrtPriceX96);
 
         perp.lastTwPremiumsUpdate = block.timestamp.toUint32();
     }
 
     // expects updateTwPremiums() to have been called before to account for time during old premiumPerSecondX96
     function updatePremiumPerSecond(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal {
-        uint32 twapSecondsAgo = (block.timestamp - perp.creationTimestamp).toUint32();
+        uint32 oldestObservationTimestamp =
+            perp.twapState.observations.getOldestObservationTimestamp(perp.twapState.index, perp.twapState.cardinality);
+        uint32 twapSecondsAgo = (block.timestamp - oldestObservationTimestamp).toUint32();
         twapSecondsAgo = twapSecondsAgo > perp.twapWindow ? perp.twapWindow : twapSecondsAgo;
 
         uint256 markTwapX96 = getTWAP(perp, twapSecondsAgo, TickMath.getTickAtSqrtPrice(sqrtPriceX96));
@@ -226,6 +228,6 @@ library PerpLogic {
     }
 
     function toPriceX96(uint256 sqrtPriceX96) internal pure returns (uint256) {
-        return sqrtPriceX96.mulDiv(sqrtPriceX96, FixedPoint96.UINT_Q96);
+        return sqrtPriceX96.fullMulDiv(sqrtPriceX96, FixedPoint96.UINT_Q96);
     }
 }

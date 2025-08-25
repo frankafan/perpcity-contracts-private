@@ -158,13 +158,6 @@ library Hook {
         // update liquidity-based fee component
         perp.updateBaseFeeX96(c);
 
-        bool isTickLowerInitializedAfter = c.poolManager.isTickInitialized(poolId, params.tickLower);
-        bool isTickUpperInitializedAfter = c.poolManager.isTickInitialized(poolId, params.tickUpper);
-
-        // clear tick mapping to mimick uniswap pool ticks cleared
-        if (!isTickLowerInitializedAfter) perp.tickGrowthInfo.clear(params.tickLower);
-        if (!isTickUpperInitializedAfter) perp.tickGrowthInfo.clear(params.tickUpper);
-
         return (BaseHook.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 

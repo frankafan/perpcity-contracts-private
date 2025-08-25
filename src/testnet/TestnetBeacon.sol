@@ -11,6 +11,8 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
     using UintTWAP for UintTWAP.Observation[MAX_CARDINALITY];
     using SafeCastLib for *;
 
+    uint256 public immutable creationTimestamp;
+
     uint256 private data;
     uint256 private timestamp;
 
@@ -29,6 +31,8 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
         (twapState.index, twapState.cardinality) = twapState.observations.write(
             twapState.index, block.timestamp.toUint32(), initialData, twapState.cardinality, twapState.cardinalityNext
         );
+
+        creationTimestamp = block.timestamp;
     }
 
     function getData() external view returns (uint256, uint256) {
@@ -57,6 +61,9 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
 
     function getTWAP(uint32 twapSecondsAgo) external view returns (uint256 twapPrice) {
         if (twapSecondsAgo == 0) return data;
+
+        uint32 timeSinceCreation = (block.timestamp - creationTimestamp).toUint32();
+        if (timeSinceCreation < twapSecondsAgo) twapSecondsAgo = timeSinceCreation;
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapSecondsAgo;

@@ -39,16 +39,15 @@ contract DeployPerpManager is Script {
             poolManager: IPoolManager(POOLMANAGER),
             router: IUniversalRouter(ROUTER),
             posm: IPositionManager(POSITION_MANAGER),
-            usdc: USDC,
-            creationFeeRecipient: CREATION_FEE_RECIPIENT
+            usdc: USDC
         });
 
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(contracts, CREATION_FEE);
+        bytes memory constructorArgs = abi.encode(contracts, CREATION_FEE, CREATION_FEE_RECIPIENT);
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(PerpManager).creationCode, constructorArgs);
 
-        PerpManager perpManager = new PerpManager{salt: salt}(contracts, CREATION_FEE);
+        PerpManager perpManager = new PerpManager{salt: salt}(contracts, CREATION_FEE, CREATION_FEE_RECIPIENT);
         require(address(perpManager) == hookAddress, "hook address mismatch");
 
         console2.log("PerpManager: ", address(perpManager));

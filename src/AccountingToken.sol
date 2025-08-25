@@ -5,7 +5,7 @@ import {ERC20} from "@solady/src/tokens/ERC20.sol";
 
 // tokens held only by the perp manager and uniswap pools for accounting
 contract AccountingToken is ERC20 {
-    constructor(uint128 initialSupply) ERC20() {
+    constructor(uint128 initialSupply) {
         _mint(msg.sender, initialSupply);
     }
 

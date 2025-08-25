@@ -8,7 +8,11 @@ import {MakerActions} from "./libraries/MakerActions.sol";
 import {MarketDeath} from "./libraries/MarketDeath.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
 import {TakerActions} from "./libraries/TakerActions.sol";
+
+import {TickTWAP} from "./libraries/TickTWAP.sol";
 import {UniswapV4Utility} from "./libraries/UniswapV4Utility.sol";
+import {MAX_CARDINALITY} from "./utils/Constants.sol";
+import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
@@ -32,15 +36,26 @@ contract PerpManager is IPerpManager, BaseHook {
     using LivePositionDetailsReverter for bytes;
     using UniswapV4Utility for IPoolManager;
     using MarketDeath for IPerpManager.Perp;
+    using SafeCastLib for *;
+    using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
     IPerpManager.ExternalContracts public c;
+
     uint256 public immutable CREATION_FEE_AMT;
+    address public immutable CREATION_FEE_RECIPIENT;
 
     mapping(PoolId => IPerpManager.Perp) public perps;
 
-    constructor(ExternalContracts memory _c, uint256 _creationFee) BaseHook(_c.poolManager) {
+    constructor(
+        ExternalContracts memory _c,
+        uint256 _creationFee,
+        address _creationFeeRecipient
+    )
+        BaseHook(_c.poolManager)
+    {
         c = _c;
         CREATION_FEE_AMT = _creationFee;
+        CREATION_FEE_RECIPIENT = _creationFeeRecipient;
     }
 
     // ------------
@@ -50,7 +65,7 @@ contract PerpManager is IPerpManager, BaseHook {
     function createPerp(CreatePerpParams calldata params) external returns (PoolId perpId) {
         perpId = perps.createPerp(c, params);
         // transfer creation fee from sender to creation fee recipient
-        c.usdc.safeTransferFrom(msg.sender, c.creationFeeRecipient, CREATION_FEE_AMT);
+        c.usdc.safeTransferFrom(msg.sender, CREATION_FEE_RECIPIENT, CREATION_FEE_AMT);
     }
 
     function openMakerPosition(
@@ -93,19 +108,26 @@ contract PerpManager is IPerpManager, BaseHook {
         perps[perpId].marketDeath(c);
     }
 
-    // // -------------
-    // /// TWAP ACTIONS
-    // // -------------
+    // -------------
+    // TWAP ACTIONS
+    // -------------
 
     function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
         perps[perpId].increaseCardinalityNext(cardinalityNext);
     }
 
-    // // ----
-    // // VIEW / READ
-    // // ----
+    // ----
+    // VIEW / READ
+    // ----
 
-    function getTWAP(PoolId perpId, uint32 twapSecondsAgo) external view returns (uint256) {
+    function getTWAP(PoolId perpId) external view returns (uint256) {
+        uint32 oldestObservationTimestamp = perps[perpId].twapState.observations.getOldestObservationTimestamp(
+            perps[perpId].twapState.index, perps[perpId].twapState.cardinality
+        );
+        uint32 twapSecondsAgo = (block.timestamp - oldestObservationTimestamp).toUint32();
+        uint32 twapWindow = perps[perpId].twapWindow;
+        twapSecondsAgo = twapSecondsAgo > twapWindow ? twapWindow : twapSecondsAgo;
+
         (, int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
         return perps[perpId].getTWAP(twapSecondsAgo, currentTick);
     }
@@ -170,9 +192,9 @@ contract PerpManager is IPerpManager, BaseHook {
         return perps[perpId].marketHealthX96(c);
     }
 
-    // // -----
-    // // HOOKS
-    // // -----
+    // -----
+    // HOOKS
+    // -----
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({

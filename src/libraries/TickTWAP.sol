@@ -318,4 +318,18 @@ library TickTWAP {
             (tickCumulatives[i]) = observeSingle(self, time, secondsAgos[i], tick, index, cardinality);
         }
     }
+
+    function getOldestObservationTimestamp(
+        Observation[MAX_CARDINALITY] storage self,
+        uint32 index,
+        uint32 cardinality
+    )
+        internal
+        view
+        returns (uint32)
+    {
+        Observation memory beforeOrAt = self[(index + 1) % cardinality];
+        if (!beforeOrAt.initialized) beforeOrAt = self[0];
+        return beforeOrAt.blockTimestamp;
+    }
 }
