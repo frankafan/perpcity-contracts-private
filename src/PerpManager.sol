@@ -5,10 +5,9 @@ import {IPerpManager} from "./interfaces/IPerpManager.sol";
 import {Hook} from "./libraries/Hook.sol";
 import {LivePositionDetailsReverter} from "./libraries/LivePositionDetailsReverter.sol";
 import {MakerActions} from "./libraries/MakerActions.sol";
-import {MarketDeath} from "./libraries/MarketDeath.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
 import {TakerActions} from "./libraries/TakerActions.sol";
-
+import {FixedPoint96} from "./libraries/FixedPoint96.sol";
 import {TickTWAP} from "./libraries/TickTWAP.sol";
 import {UniswapV4Utility} from "./libraries/UniswapV4Utility.sol";
 import {MAX_CARDINALITY} from "./utils/Constants.sol";
@@ -23,6 +22,8 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {BaseHook} from "@uniswap/v4-periphery/src/utils/BaseHook.sol";
+import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 // manages state for all perps and contains hooks for uniswap pools
 contract PerpManager is IPerpManager, BaseHook {
@@ -35,21 +36,22 @@ contract PerpManager is IPerpManager, BaseHook {
     using SafeTransferLib for address;
     using LivePositionDetailsReverter for bytes;
     using UniswapV4Utility for IPoolManager;
-    using MarketDeath for IPerpManager.Perp;
     using SafeCastLib for *;
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
+    using FixedPointMathLib for *;
 
-    IPerpManager.ExternalContracts public c;
-
+    IPoolManager public immutable POOL_MANAGER;
+    address public immutable USDC;
     uint256 public immutable CREATION_FEE_AMT;
     address public immutable CREATION_FEE_RECIPIENT;
 
     mapping(PoolId => IPerpManager.Perp) public perps;
 
     constructor(
-        ExternalContracts memory _c,
-        uint256 _creationFee,
-        address _creationFeeRecipient
+        IPoolManager poolManager,
+        address usdc,
+        uint256 creationFee,
+        address creationFeeRecipient
     )
         BaseHook(_c.poolManager)
     {
@@ -104,10 +106,6 @@ contract PerpManager is IPerpManager, BaseHook {
         perps[perpId].closeTakerPosition(c, params, false, false); // in TakerActions library
     }
 
-    function marketDeath(PoolId perpId) external {
-        perps[perpId].marketDeath(c);
-    }
-
     // -------------
     // TWAP ACTIONS
     // -------------
@@ -120,7 +118,7 @@ contract PerpManager is IPerpManager, BaseHook {
     // VIEW / READ
     // ----
 
-    function getTWAP(PoolId perpId) external view returns (uint256) {
+    function getTWAP(PoolId perpId) public view returns (uint256) {
         uint32 oldestObservationTimestamp = perps[perpId].twapState.observations.getOldestObservationTimestamp(
             perps[perpId].twapState.index, perps[perpId].twapState.cardinality
         );
@@ -146,7 +144,7 @@ contract PerpManager is IPerpManager, BaseHook {
         uint128 makerPosId
     )
         external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
+        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
     {
         // params are minimized / maximized where possible to ensure no reverts
         ClosePositionParams memory params = ClosePositionParams({
@@ -160,7 +158,7 @@ contract PerpManager is IPerpManager, BaseHook {
         // pass revert == true into close so we can parse live position details from the reason
         try perps[perpId].closeMakerPosition(c, params, true, false) {}
         catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
+            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = reason.parseLivePositionDetails();
         }
     }
 
@@ -170,7 +168,7 @@ contract PerpManager is IPerpManager, BaseHook {
         uint128 takerPosId
     )
         external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
+        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
     {
         // params are minimized / maximized where possible to ensure no reverts
         ClosePositionParams memory params = ClosePositionParams({
@@ -184,12 +182,83 @@ contract PerpManager is IPerpManager, BaseHook {
         // pass revert == true into close so we can parse live position details from the reason
         try perps[perpId].closeTakerPosition(c, params, true, false) {}
         catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
+            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = reason.parseLivePositionDetails();
         }
     }
 
-    function marketHealthX96(PoolId perpId) external view returns (uint256) {
-        return perps[perpId].marketHealthX96(c);
+    // returns max notional size scaled by WAD
+    function maxNotionalTakerSize(PoolId perpId, bool isLong) external view returns (uint256 maxNotionalSize) {
+        (,int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
+
+        // get mark twap, and calculate price band around it
+        uint256 markTwapX96 = getTWAP(perpId);
+
+        int24 tickBound;
+        if (isLong) {
+            uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 + perps[perpId].priceImpactBandX96;
+            uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
+            uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
+            if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
+                tickBound = TickMath.MAX_TICK;
+            } else if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
+                tickBound = TickMath.MIN_TICK;
+            } else {
+                tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
+            }
+        } else {
+            uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 - perps[perpId].priceImpactBandX96;
+            uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
+            uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
+            if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
+                tickBound = TickMath.MIN_TICK;
+            } else if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
+                tickBound = TickMath.MAX_TICK;
+            } else {
+                tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
+            }
+        }
+
+        int24 tickSpacing = perps[perpId].key.tickSpacing;
+        int128 liquidity = int128(c.poolManager.getLiquidity(perpId));
+
+        int24 tickUpper = currentTick;
+        bool isInitialized;
+        if (isLong) {
+            while (tickUpper < tickBound) {
+                (tickUpper, isInitialized) =
+                    c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, false);
+
+                if (isInitialized || tickUpper > tickBound) {
+                    if (tickUpper > tickBound) tickUpper = tickBound;
+                    uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(currentTick);
+                    uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+                    maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96, FixedPoint96.UINT_Q96);
+                    (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
+                    liquidity += liquidityToAdd;
+                    currentTick = tickUpper;
+                }
+
+                // stop if we pass the ending tick
+            }
+        } else {
+            while (tickUpper > tickBound) {
+                (tickUpper, isInitialized) =
+                    c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, true);
+
+                if (isInitialized || tickUpper < tickBound) {
+                    if (tickUpper < tickBound) tickUpper = tickBound;
+                    uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+                    uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(currentTick);
+                    maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96, FixedPoint96.UINT_Q96);
+                    (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
+                    liquidity -= liquidityToAdd;
+                    currentTick = tickUpper;
+                }
+                tickUpper--;
+
+                // stop if we pass the ending tick
+            }
+        }
     }
 
     // -----

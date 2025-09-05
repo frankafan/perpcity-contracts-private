@@ -10,6 +10,8 @@ import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickTWAP} from "./TickTWAP.sol";
+import {MAX_CARDINALITY} from "../utils/Constants.sol";
 
 // a library with a function to calculate a dynamic fee based on liquidity and volatility
 // as liquidity grows, the fee decays from startFee, approaching targetFee asymptotically
@@ -21,6 +23,7 @@ library TradingFee {
     using UniswapV4Utility for IPoolManager;
     using PerpLogic for *;
     using MoreSignedMath for int256;
+    using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
     struct Config {
         uint128 baseFeeX96; // current percent fee if volatility is zero (e.g. 0.05 = 5%)
@@ -64,19 +67,27 @@ library TradingFee {
 
         // get mark and markTwap, used to calculate volatility
         uint256 markX96 = sqrtPriceX96.toPriceX96();
-        uint256 markTwapX96 = perp.getTWAP(perp.twapWindow, currentTick);
+
+        uint32 oldestObservationTimestamp = perp.twapState.observations.getOldestObservationTimestamp(
+            perp.twapState.index, perp.twapState.cardinality
+        );
+        uint32 twapSecondsAgo = (block.timestamp - oldestObservationTimestamp).toUint32();
+        uint32 twapWindow = perp.twapWindow;
+        twapSecondsAgo = twapSecondsAgo > twapWindow ? twapWindow : twapSecondsAgo;
+
+        uint256 markTwapX96 = perp.getTWAP(twapSecondsAgo, currentTick);
 
         // sqrtVolatility = |(mark / markTwap) - 1|
         uint256 sqrtVolatilityX96 =
-            (int256(markX96.mulDiv(FixedPoint96.UINT_Q96, markTwapX96)) - FixedPoint96.INT_Q96).abs();
+            (int256(markX96.fullMulDiv(FixedPoint96.UINT_Q96, markTwapX96 + 1)) - FixedPoint96.INT_Q96).abs();
         // volatility = sqrtVolatility ^ 2
-        uint256 volatilityX96 = sqrtVolatilityX96.mulDiv(sqrtVolatilityX96, FixedPoint96.UINT_Q96);
+        uint256 volatilityX96 = sqrtVolatilityX96.fullMulDiv(sqrtVolatilityX96, FixedPoint96.UINT_Q96);
         // volatilityFee = volatilityScaler * volatility
         // this is just the portion of the fee that is based on volatility; it is not the entire fee
-        uint256 volatilityFeeX96 = config.volatilityScalerX96.mulDiv(volatilityX96, FixedPoint96.UINT_Q96);
+        uint256 volatilityFeeX96 = config.volatilityScalerX96.fullMulDiv(volatilityX96, FixedPoint96.UINT_Q96);
 
         // maxFee = maxFeeMultiplier * baseFee
-        uint256 maxFeeX96 = config.maxFeeMultiplierX96.mulDiv(config.baseFeeX96, FixedPoint96.UINT_Q96);
+        uint256 maxFeeX96 = config.maxFeeMultiplierX96.fullMulDiv(config.baseFeeX96, FixedPoint96.UINT_Q96);
 
         // tradingFee = min(baseFee + volatilityFee, maxFee)
         return FixedPointMathLib.min(config.baseFeeX96 + volatilityFeeX96, maxFeeX96).toUint128();

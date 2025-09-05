@@ -267,7 +267,6 @@ library TickTWAP {
         }
 
         uint32 target = time - secondsAgo;
-
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
             getSurroundingObservations(self, time, target, tick, index, cardinality);
 

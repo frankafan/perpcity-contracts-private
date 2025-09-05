@@ -6,7 +6,7 @@
   via_ir = true
   optimizer = true
   optimizer_runs = 10_000
-  block_gas_limit = 1_000_000_000_000
+  block_gas_limit = 10_000_000_000
 
 remappings = [
   "@forge-std/=lib/forge-std/",
@@ -19,16 +19,16 @@ remappings = [
 ]
 
 [profile.default.invariant]
-  depth = 10
-  runs = 128
+  depth = 64
+  runs = 16
   fail_on_revert = true
 
 [profile.ci]
   verbosity = 4
 
 [profile.ci.invariant]
-  depth = 20
-  runs = 256
+  depth = 128
+  runs = 32
   fail_on_revert = true
 
 # Anvil resource optimization settings

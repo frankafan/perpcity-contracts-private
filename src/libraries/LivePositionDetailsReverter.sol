@@ -2,25 +2,26 @@
 pragma solidity ^0.8.26;
 
 library LivePositionDetailsReverter {
-    error LivePositionDetails(int256 pnl, int256 funding, uint256 effectiveMargin, bool isLiquidatable);
+    error LivePositionDetails(int256 pnl, int256 funding, uint256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96);
     error UnexpectedRevertBytes(bytes reason);
 
     function revertLivePositionDetails(
         int256 pnl,
         int256 funding,
         uint256 effectiveMargin,
-        bool isLiquidatable
+        bool isLiquidatable,
+        uint256 newPriceX96
     )
         internal
         pure
     {
-        revert LivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable);
+        revert LivePositionDetails(pnl, funding, effectiveMargin, isLiquidatable, newPriceX96);
     }
 
     function parseLivePositionDetails(bytes memory reason)
         internal
         pure
-        returns (int256 pnl, int256 funding, int256 effectiveMargin, bool isLiquidatable)
+        returns (int256 pnl, int256 funding, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
     {
         if (parseSelector(reason) != LivePositionDetails.selector) revert UnexpectedRevertBytes(reason);
 
@@ -35,16 +36,18 @@ library LivePositionDetailsReverter {
         // reason+0x44 -> reason+0x63 is funding
         // reason+0x64 -> reason+0x83 is effectiveMargin
         // reason+0x84 -> reason+0xa3 is isLiquidatable
+        // reason+0xa4 -> reason+0xc3 is newPriceX96
         assembly ("memory-safe") {
             pnl := mload(add(reason, 0x24))
             funding := mload(add(reason, 0x44))
             effectiveMargin := mload(add(reason, 0x64))
             isLiquidatable := mload(add(reason, 0x84))
+            newPriceX96 := mload(add(reason, 0xa4))
         }
     }
 
     function parseSelector(bytes memory result) internal pure returns (bytes4 selector) {
-        // equivalent: (selector,) = abi.decode(result, (bytes4, int256, int256, int256, bool));
+        // equivalent: (selector,) = abi.decode(result, (bytes4, int256, int256, int256, bool, uint256));
         assembly ("memory-safe") {
             selector := mload(add(result, 0x20))
         }

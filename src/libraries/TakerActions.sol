@@ -5,7 +5,6 @@ import {IPerpManager} from "../interfaces/IPerpManager.sol";
 import {FixedPoint96} from "./FixedPoint96.sol";
 import {MoreSignedMath} from "./MoreSignedMath.sol";
 import {SharedPositionLogic} from "./SharedPositionLogic.sol";
-import {TokenMath} from "./TokenMath.sol";
 import {UniswapV4Utility} from "./UniswapV4Utility.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
@@ -15,16 +14,18 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {LivePositionDetailsReverter} from "./LivePositionDetailsReverter.sol";
+import {PerpLogic} from "./PerpLogic.sol";
 
 library TakerActions {
-    using TokenMath for uint128;
     using SafeCastLib for *;
-    using FixedPointMathLib for uint256;
+    using FixedPointMathLib for *;
     using UniswapV4Utility for IUniversalRouter;
     using SafeTransferLib for address;
     using StateLibrary for IPoolManager;
     using MoreSignedMath for int256;
     using SharedPositionLogic for IPerpManager.Perp;
+    using PerpLogic for uint160;
 
     function openTakerPosition(
         IPerpManager.Perp storage perp,
@@ -42,12 +43,8 @@ library TakerActions {
         PoolKey memory key = perp.key;
         PoolId perpId = key.toId();
 
-        // scale margin to 18 decimals, and add to total margin
-        uint256 scaledMargin = params.margin.scale6To18();
-        perp.totalMargin += params.margin;
-
         uint256 size;
-        uint128 value = scaledMargin.mulDiv(params.levX96, FixedPoint96.UINT_Q96).toUint128();
+        uint128 value = params.margin.mulDiv(params.levX96, FixedPoint96.UINT_Q96).toUint128();
 
         bool reverted;
         if (params.isLong) {
@@ -114,8 +111,15 @@ library TakerActions {
 
         IPerpManager.TakerPos memory takerPos = perp.takerPositions[params.posId];
 
-        uint256 scaledMargin = takerPos.margin.scale6To18();
-        perp.totalMargin -= takerPos.margin;
+        if (takerPos.holder == address(0)) {
+            if (revertChanges) {
+                (uint160 sqrtPriceX96,,,) = c.poolManager.getSlot0(perpId);
+                uint256 newPriceX96 = sqrtPriceX96.toPriceX96();
+                LivePositionDetailsReverter.revertLivePositionDetails(0, 0, 0, false, newPriceX96);
+            } else {
+                revert IPerpManager.InvalidClose(msg.sender, address(0), false);
+            }
+        }
 
         uint256 notional;
         int256 pnl;
@@ -142,7 +146,7 @@ library TakerActions {
         if (!takerPos.isLong) funding = -funding;
 
         bool wasLiquidation =
-            perp.closePosition(c, takerPos.holder, scaledMargin, pnl, funding, notional, revertChanges, doNotPayout);
+            perp.closePosition(c, takerPos.holder, takerPos.margin, pnl, funding, notional, revertChanges, doNotPayout);
 
         (uint160 sqrtPriceX96,,,) = c.poolManager.getSlot0(perpId);
         emit IPerpManager.TakerPositionClosed(perpId, params.posId, wasLiquidation, takerPos, sqrtPriceX96);

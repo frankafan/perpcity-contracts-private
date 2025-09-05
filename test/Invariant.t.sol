@@ -70,12 +70,12 @@ contract InvariantTest is Test, Fixtures {
 
         targetContract(address(perpHandler));
 
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](5);
         selectors[0] = PerpHandler.createPerp.selector;
         selectors[1] = PerpHandler.openMakerPosition.selector;
         selectors[2] = PerpHandler.addMakerMargin.selector;
         selectors[3] = PerpHandler.closeMakerPosition.selector;
-        // selectors[4] = PerpHandler.openTakerPosition.selector;
+        selectors[4] = PerpHandler.openTakerPosition.selector;
 
         targetSelector(FuzzSelector({addr: address(perpHandler), selectors: selectors}));
     }

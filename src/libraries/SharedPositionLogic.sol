@@ -7,7 +7,6 @@ import {FixedPoint96} from "./FixedPoint96.sol";
 import {LivePositionDetailsReverter} from "./LivePositionDetailsReverter.sol";
 import {PerpLogic} from "./PerpLogic.sol";
 import {TickTWAP} from "./TickTWAP.sol";
-import {TokenMath} from "./TokenMath.sol";
 import {UniswapV4Utility} from "./UniswapV4Utility.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
@@ -16,7 +15,6 @@ import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
 library SharedPositionLogic {
     using SafeCastLib for uint256;
     using FixedPointMathLib for uint256;
-    using TokenMath for *;
     using SafeTransferLib for address;
     using PerpLogic for *;
     using UniswapV4Utility for *;
@@ -49,8 +47,6 @@ library SharedPositionLogic {
         if (msg.sender != holder) revert IPerpManager.InvalidCaller(msg.sender, holder);
         if (margin == 0) revert IPerpManager.InvalidMargin(margin);
 
-        perp.totalMargin += margin;
-
         // transfer margin from sender to vault
         c.usdc.safeTransferFrom(msg.sender, perp.vault, margin);
     }
@@ -76,15 +72,17 @@ library SharedPositionLogic {
             isLiquidatable(perp, scaledMargin, pnl, funding, notional);
 
         if (revertChanges) {
-            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, wasLiquidation);
+            (uint160 sqrtPriceX96,) = c.poolManager.getSqrtPriceX96AndTick(perp.key.toId());
+            uint256 newPriceX96 = sqrtPriceX96.toPriceX96();
+            LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, wasLiquidation, newPriceX96);
         } else if (wasLiquidation) {
             // send remaining margin to position holder
-            if (!doNotPayout) c.usdc.safeTransferFrom(perp.vault, holder, effectiveMargin.scale18To6());
+            if (!doNotPayout) c.usdc.safeTransferFrom(perp.vault, holder, effectiveMargin);
             // send part of liquidation fee to liquidator; the rest is kept as insurance
-            c.usdc.safeTransferFrom(perp.vault, msg.sender, liquidationFeeAmt.scale18To6());
+            c.usdc.safeTransferFrom(perp.vault, msg.sender, liquidationFeeAmt);
         } else if (holder == msg.sender) {
             // If not liquidated and caller is the owner, return effective margin
-            if (!doNotPayout) c.usdc.safeTransferFrom(perp.vault, holder, effectiveMargin.scale18To6());
+            if (!doNotPayout) c.usdc.safeTransferFrom(perp.vault, holder, effectiveMargin);
             // revert if price impact was too high
             checkPriceImpact(perp, c);
         } else if (doNotPayout) {
@@ -115,7 +113,6 @@ library SharedPositionLogic {
             liquidatable = true;
             effectiveMargin = 0;
             liquidationFeeAmt = 0;
-            perp.badDebt += uint128(uint256(-netMargin).scale18To6());
         } else if (uint256(netMargin) <= liquidationFeeAmt) {
             liquidatable = true;
             effectiveMargin = 0;

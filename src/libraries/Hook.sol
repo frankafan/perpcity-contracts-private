@@ -6,7 +6,6 @@ import {FixedPoint96} from "./FixedPoint96.sol";
 import {PerpLogic} from "./PerpLogic.sol";
 import {Tick} from "./Tick.sol";
 import {TickTWAP} from "./TickTWAP.sol";
-import {TokenMath} from "./TokenMath.sol";
 
 import {MAX_CARDINALITY} from "../utils/Constants.sol";
 import {TradingFee} from "./TradingFee.sol";
@@ -25,13 +24,13 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {IMsgSender} from "@uniswap/v4-periphery/src/interfaces/IMsgSender.sol";
 import {BaseHook} from "@uniswap/v4-periphery/src/utils/BaseHook.sol";
+import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 library Hook {
     using PerpLogic for *;
     using Tick for mapping(int24 => Tick.GrowthInfo);
     using UniswapV4Utility for IPoolManager;
     using StateLibrary for IPoolManager;
-    using TokenMath for uint256;
     using SafeTransferLib for address;
     using SafeCastLib for *;
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
@@ -47,6 +46,7 @@ library Hook {
         // ensures original caller of action is the hook (perp manager)
         address msgSender = IMsgSender(hookSender).msgSender();
         if (msgSender != address(this)) revert IPerpManager.InvalidCaller(msgSender, address(this));
+
         _;
     }
 
@@ -186,31 +186,34 @@ library Hook {
 
         // determine whether or not to charge fee based on hookData passed in
         bool chargeFee = abi.decode(hookData, (bool));
-        if (!chargeFee) return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        if (!chargeFee) {
+            c.poolManager.updateDynamicLPFee(key, 0);
+            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        }
 
         // if charging a fee, calculate the fee amount
+        uint256 absAmountSpecified = params.amountSpecified.abs();
         uint256 tradingFeeX96 = perp.calculateTradingFeeX96(c);
-        uint256 feeAmount = params.amountSpecified.abs().mulDiv(tradingFeeX96, FixedPoint96.UINT_Q96);
+        uint256 feeAmount = absAmountSpecified.mulDiv(tradingFeeX96, FixedPoint96.UINT_Q96);
 
         // use market splits to determine how much of fee goes to each party
         uint256 creatorFeeAmount = feeAmount.mulDiv(perp.tradingFeeCreatorSplitX96, FixedPoint96.UINT_Q96);
         uint256 insuranceFeeAmount = feeAmount.mulDiv(perp.tradingFeeInsuranceSplitX96, FixedPoint96.UINT_Q96);
+
         uint256 lpFeeAmount = feeAmount - creatorFeeAmount - insuranceFeeAmount;
+        uint24 fee = uint24(lpFeeAmount.mulDiv(LPFeeLibrary.MAX_LP_FEE, absAmountSpecified));
+        c.poolManager.updateDynamicLPFee(key, fee);
 
         // take usd accounting tokens from pool
         // send same amount of usdc to creator's address
         c.poolManager.mint(address(this), key.currency1.toId(), creatorFeeAmount);
-        c.usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount.scale18To6());
+        c.usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount);
 
         // take usd accounting tokens from pool
         // the vault will keep this amount of usdc instead of it being used for LP fees
         c.poolManager.mint(address(this), key.currency1.toId(), insuranceFeeAmount);
 
-        // send the remainder accounting tokens to liquidity positions
-        // they can claim this amount in usdc when they remove liquidity
-        c.poolManager.donate(key, 0, lpFeeAmount, bytes(""));
-
-        return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(feeAmount.toInt128(), 0), 0);
+        return (BaseHook.beforeSwap.selector, toBeforeSwapDelta((creatorFeeAmount + insuranceFeeAmount).toInt128(), 0), 0);
     }
 
     function afterSwap(
@@ -244,6 +247,10 @@ library Hook {
             if (isInitialized) {
                 perp.tickGrowthInfo.cross(currentTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96);
             }
+            
+            // if going down, decrement tick so it doesnlt get caught by lte in nextInitializedTickWithinOneWord
+            if (zeroForOne) currentTick--;
+
             // stop if we pass the ending tick
         } while (zeroForOne ? (currentTick > endingTick) : (currentTick < endingTick));
 

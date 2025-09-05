@@ -33,22 +33,12 @@ interface IPerpManager {
         uint128 liquidationLevX96; // Leverage at which a position is considered liquidatable
         uint128 liquidationFeeX96; // Fee charged in usdc when a position is liquidated (e.g. 0.05 = 5%)
         uint128 liquidatorFeeSplitX96; // Share of liquidation fee that goes towards the liquidator (e.g. 0.05 = 5%)
-        uint128 badDebt; // Amount of usdc that has been lost without margin covering it (e.g. 100e6 = 100 usd)
-        uint128 totalMargin; // Total margin in usdc (e.g. 100e6 = 100 usd)
-        uint128 marketDeathThresholdX96; // Threshold of market health when market death is allowed (e.g. 0.95 = 95%)
         PoolKey key; // Uniswap's poolKey for identifying a pool
         TradingFee.Config tradingFeeConfig; // Configuration for the trading fee curve
         TickTWAP.State twapState; // Helpers for computing mark twap
         mapping(uint128 => MakerPos) makerPositions; // All open maker positions
         mapping(uint128 => TakerPos) takerPositions; // All open taker positions
         mapping(int24 => Tick.GrowthInfo) tickGrowthInfo; // Growth info for each tick, used to help compute funding
-    }
-
-    struct ExternalContracts {
-        IPoolManager poolManager;
-        IUniversalRouter router;
-        IPositionManager posm;
-        address usdc;
     }
 
     struct MakerPos {
@@ -91,7 +81,6 @@ interface IPerpManager {
         uint128 liquidationLevX96; // Leverage at which a position is considered liquidatable
         uint128 liquidationFeeX96; // Fee charged in usdc when a position is liquidated (e.g. 0.05 = 5%)
         uint128 liquidatorFeeSplitX96; // Share of liquidation fee that goes towards the liquidator (e.g. 0.05 = 5%)
-        uint128 marketDeathThresholdX96; // Market health threshold for when market death is allowed (e.g. 0.95 = 95%)
         TradingFee.Config tradingFeeConfig; // Configuration for the trading fee curve
     }
 
@@ -154,10 +143,8 @@ interface IPerpManager {
     error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
     error InvalidPeriphery(address periphery, address expectedRouter, address expectedPositionManager);
     error PriceImpactTooHigh(uint256 priceX96, uint256 minPriceX96, uint256 maxPriceX96);
-    error MarketNotKillable(uint256 marketHealthX96, uint256 marketDeathThresholdX96);
     error InvalidFundingInterval(uint32 fundingInterval);
     error InvalidPriceImpactBand(uint128 priceImpactBandX96);
-    error InvalidMarketDeathThreshold(uint128 marketDeathThresholdX96);
     error InvalidTickRange(int24 tickLower, int24 tickUpper);
     error InvalidTradingFeeConfig(TradingFee.Config tradingFeeConfig);
     error InvalidStartingSqrtPriceX96(uint160 startingSqrtPriceX96);

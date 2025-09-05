@@ -7,7 +7,6 @@ import {Funding} from "./Funding.sol";
 import {PerpLogic} from "./PerpLogic.sol";
 import {SharedPositionLogic} from "./SharedPositionLogic.sol";
 import {Tick} from "./Tick.sol";
-import {TokenMath} from "./TokenMath.sol";
 import {UniswapV4Utility} from "./UniswapV4Utility.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
@@ -18,11 +17,11 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {LivePositionDetailsReverter} from "./LivePositionDetailsReverter.sol";
 
 library MakerActions {
     using StateLibrary for IPoolManager;
     using FixedPointMathLib for *;
-    using TokenMath for *;
     using UniswapV4Utility for *;
     using SafeCastLib for *;
     using SafeTransferLib for address;
@@ -48,16 +47,12 @@ library MakerActions {
         PoolKey memory key = perp.key;
         PoolId perpId = key.toId();
 
-        // scale margin to 18 decimals, and add to total margin
-        uint256 scaledMargin = params.margin.scale6To18();
-        perp.totalMargin += params.margin;
-
         // calculate notional value of liquidity at current price
         (uint160 sqrtPriceX96, int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
         uint256 notional = liquidityNotional(params.liquidity, sqrtPriceX96, params.tickLower, params.tickUpper);
 
         // check that opening leverage is within bounds
-        uint256 levX96 = notional.fullMulDiv(FixedPoint96.UINT_Q96, scaledMargin);
+        uint256 levX96 = notional.fullMulDiv(FixedPoint96.UINT_Q96, params.margin);
         if (levX96 > perp.maxOpeningLevX96) revert IPerpManager.InvalidLevX96(levX96, perp.maxOpeningLevX96);
 
         // mint underlying lp position
@@ -136,10 +131,15 @@ library MakerActions {
         PoolId perpId = key.toId();
         IPerpManager.MakerPos memory makerPos = perp.makerPositions[params.posId];
 
-        if (!revertChanges) checkLockup(makerPos.entryTimestamp, perp.makerLockupPeriod);
-
-        uint256 scaledMargin = makerPos.margin.scale6To18();
-        perp.totalMargin -= makerPos.margin;
+        if (makerPos.holder == address(0)) {
+            if (revertChanges) {
+                (uint160 sqrtPriceX96,,,) = c.poolManager.getSlot0(perpId);
+                uint256 newPriceX96 = sqrtPriceX96.toPriceX96();
+                LivePositionDetailsReverter.revertLivePositionDetails(0, 0, 0, false, newPriceX96);
+            } else {
+                revert IPerpManager.InvalidClose(msg.sender, address(0), false);
+            }
+        }
 
         (uint256 perpsReceived, uint256 usdReceived) =
             c.posm.burnLiqPos(key, makerPos.uniswapLiqPosTokenId, params.minAmt0Out, params.minAmt1Out, params.timeout);
@@ -157,7 +157,9 @@ library MakerActions {
         uint256 notional = liquidityNotional(makerPos.liquidity, sqrtPriceX96, makerPos.tickLower, makerPos.tickUpper);
 
         bool wasLiquidation =
-            perp.closePosition(c, makerPos.holder, scaledMargin, pnl, funding, notional, revertChanges, doNotPayout);
+            perp.closePosition(c, makerPos.holder, makerPos.margin, pnl, funding, notional, revertChanges, doNotPayout);
+
+        if (!revertChanges && !wasLiquidation) checkLockup(makerPos.entryTimestamp, perp.makerLockupPeriod);
 
         int24 tickLower = makerPos.tickLower;
         int24 tickUpper = makerPos.tickUpper;
@@ -258,6 +260,8 @@ library MakerActions {
         bool reverted;
         bool isExcessLong = excessPerps > 0; // the directional exposure that the excess perps is causing
 
+        (uint160 sqrtPriceX96t,) = c.poolManager.getSqrtPriceX96AndTick(key.toId());
+
         if (isExcessLong) {
             // must sell excess perp contracts to close long exposure
             uint256 usdOut;
@@ -283,14 +287,13 @@ library MakerActions {
             (uint160 sqrtPriceX96,,,) = c.poolManager.getSlot0(key.toId());
 
             // notional = size * price
-            uint256 notional = absExcessPerps.mulDiv(sqrtPriceX96.toPriceX96(), FixedPoint96.UINT_Q96);
-            // margin = notional / maxOpeningLev; the min margin to open a max leverage position
-            uint256 margin = notional.mulDiv(FixedPoint96.UINT_Q96, perp.maxOpeningLevX96).scale18To6();
+            uint256 notional = absExcessPerps.fullMulDiv(sqrtPriceX96.toPriceX96(), FixedPoint96.UINT_Q96);
 
+            // margin = notional / maxOpeningLev; the min margin to open a max leverage position
+            uint256 margin = notional.fullMulDiv(FixedPoint96.UINT_Q96, perp.maxOpeningLevX96);
+            
             // it costs the holder margin amount to open this position
-            pnlChange = -int256(margin.scale6To18());
-            // add margin to total margin
-            perp.totalMargin += margin.toUint128();
+            pnlChange = -int256(margin);
 
             // store taker position
             uint128 takerPosId = perp.nextTakerPosId;

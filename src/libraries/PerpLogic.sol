@@ -17,6 +17,7 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 library PerpLogic {
     using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
@@ -24,6 +25,8 @@ library PerpLogic {
     using SafeCastLib for *;
     using MoreSignedMath for int256;
     using PerpLogic for uint160;
+
+    uint256 constant MAX_PREMIUM_PER_SECOND_X96 = 1000000e18 * FixedPoint96.UINT_Q96;
 
     function createPerp(
         mapping(PoolId => IPerpManager.Perp) storage perps,
@@ -63,7 +66,6 @@ library PerpLogic {
         perp.liquidationLevX96 = params.liquidationLevX96;
         perp.liquidationFeeX96 = params.liquidationFeeX96;
         perp.liquidatorFeeSplitX96 = params.liquidatorFeeSplitX96;
-        perp.marketDeathThresholdX96 = params.marketDeathThresholdX96;
         perp.tradingFeeConfig = params.tradingFeeConfig;
         perp.key = key;
 
@@ -107,15 +109,11 @@ library PerpLogic {
 
         if (params.fundingInterval == 0) revert IPerpManager.InvalidFundingInterval(params.fundingInterval);
 
-        if (params.priceImpactBandX96 > FixedPoint96.UINT_Q96) {
+        if (params.priceImpactBandX96 >= FixedPoint96.UINT_Q96) {
             revert IPerpManager.InvalidPriceImpactBand(params.priceImpactBandX96);
         }
 
         if (params.priceImpactBandX96 == 0) revert IPerpManager.InvalidPriceImpactBand(params.priceImpactBandX96);
-
-        if (params.marketDeathThresholdX96 >= FixedPoint96.UINT_Q96) {
-            revert IPerpManager.InvalidMarketDeathThreshold(params.marketDeathThresholdX96);
-        }
 
         if (params.tradingFeeConfig.decay == 0) revert IPerpManager.InvalidTradingFeeConfig(params.tradingFeeConfig);
 
@@ -147,8 +145,10 @@ library PerpLogic {
         returns (PoolKey memory poolKey)
     {
         // create two accounting tokens for the perp
-        address currency0 = address(new AccountingToken(type(uint128).max));
-        address currency1 = address(new AccountingToken(type(uint128).max));
+        // address currency0 = address(new AccountingToken(type(uint128).max));
+        // address currency1 = address(new AccountingToken(type(uint128).max));
+        address currency0 = address(new AccountingToken(c.poolManager, type(uint128).max));
+        address currency1 = address(new AccountingToken(c.poolManager, type(uint128).max));
 
         // approve the router and position manager to transfer accounting tokens from this address
         UniswapV4Utility.approveRouterAndPositionManager(c, currency0, currency1);
@@ -161,7 +161,7 @@ library PerpLogic {
         poolKey = PoolKey({
             currency0: Currency.wrap(currency0),
             currency1: Currency.wrap(currency1),
-            fee: 0,
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: tickSpacing,
             hooks: IHooks(address(this))
         });
@@ -192,6 +192,17 @@ library PerpLogic {
         uint256 indexTwapX96 = ITWAPBeacon(perp.beacon).getTWAP(twapSecondsAgo);
 
         perp.premiumPerSecondX96 = ((int256(markTwapX96) - int256(indexTwapX96)) / perp.fundingInterval.toInt256());
+
+        // TODO: cleanup
+        uint256 absPremiumPerSecondX96 = perp.premiumPerSecondX96.abs();
+        if (absPremiumPerSecondX96 > MAX_PREMIUM_PER_SECOND_X96) {
+            if (perp.premiumPerSecondX96 > 0) {
+                perp.premiumPerSecondX96 = int256(MAX_PREMIUM_PER_SECOND_X96);
+            } else {
+                perp.premiumPerSecondX96 = -int256(MAX_PREMIUM_PER_SECOND_X96);
+            }
+            
+        }
     }
 
     function getTWAP(
