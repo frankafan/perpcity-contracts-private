@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
 import {IBeacon} from "./interfaces/IBeacon.sol";
 import {Ownable} from "@solady/src/auth/Ownable.sol";
@@ -10,24 +10,20 @@ contract BeaconRegistry is Ownable {
     event BeaconRegistered(address beacon, uint256 data);
     event BeaconUnregistered(address beacon, uint256 data);
 
-    error InvalidBeacon(address beacon);
-
     constructor(address owner) {
         _initializeOwner(owner);
     }
 
-    function registerBeacon(address beacon) external {
-        if (beacon == address(0)) revert InvalidBeacon(beacon);
-
+    function registerBeacon(address beacon) external onlyOwner {
         beacons[beacon] = true;
-        (uint256 data,) = IBeacon(beacon).getData();
+        uint256 data = IBeacon(beacon).getData();
 
         emit BeaconRegistered(beacon, data);
     }
 
     function unregisterBeacon(address beacon) external onlyOwner {
         beacons[beacon] = false;
-        (uint256 data,) = IBeacon(beacon).getData();
+        uint256 data = IBeacon(beacon).getData();
 
         emit BeaconUnregistered(beacon, data);
     }

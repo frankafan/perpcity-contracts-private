@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
 library LivePositionDetailsReverter {
-    error LivePositionDetails(int256 pnl, int256 funding, uint256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96);
+    error LivePositionDetails(
+        int256 pnl, int256 funding, uint256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96
+    );
     error UnexpectedRevertBytes(bytes reason);
 
     function revertLivePositionDetails(

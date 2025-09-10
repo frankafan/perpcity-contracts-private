@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
 import {BeaconRegistry} from "../src/BeaconRegistry.sol";
 import {Script, console2} from "forge-std/Script.sol";

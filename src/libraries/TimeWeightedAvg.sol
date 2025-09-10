@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
-import {MAX_CARDINALITY} from "../utils/Constants.sol";
+import {MAX_CARDINALITY} from "./Constants.sol";
 
-/// @title TickTWAP
+/// @title TWA
 /// @notice Provides price data useful for a wide variety of system designs. Based on Uniswap's V3 Oracle
 /// @dev Instances of stored oracle data, "observations", are collected in the oracle array
 /// Every pool is initialized with an oracle array length of 1. Anyone can pay the SSTOREs to increase the
 /// maximum length of the oracle array. New slots will be added when the array is fully populated.
 /// Observations are overwritten when the full length of the oracle array is populated.
 /// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
-library TickTWAP {
+library TimeWeightedAvg {
     struct State {
         uint32 index;
         uint32 cardinality;
@@ -22,7 +22,7 @@ library TickTWAP {
         // the block timestamp of the observation
         uint32 blockTimestamp;
         // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
-        int56 tickCumulative;
+        uint216 cumulativeValue;
         // whether or not the observation is initialized
         bool initialized;
     }
@@ -33,12 +33,12 @@ library TickTWAP {
     /// overflows
     /// @param last The specified observation to be transformed
     /// @param blockTimestamp The timestamp of the new observation
-    /// @param tick The active tick at the time of the new observation
+    /// @param value The active tick at the time of the new observation
     /// @return Observation The newly populated observation
     function transform(
         Observation memory last,
         uint32 blockTimestamp,
-        int24 tick
+        uint216 value
     )
         private
         pure
@@ -47,26 +47,19 @@ library TickTWAP {
         uint32 delta = blockTimestamp - last.blockTimestamp;
         return Observation({
             blockTimestamp: blockTimestamp,
-            tickCumulative: last.tickCumulative + int56(tick) * int56(uint56(delta)),
+            cumulativeValue: last.cumulativeValue + value * uint216(delta),
             initialized: true
         });
     }
 
     /// @notice Initialize the oracle array by writing the first slot. Called once for the lifecycle of the observations
     /// array
-    /// @param self The stored oracle array
+    /// @param state The stored oracle array
     /// @param time The time of the oracle initialization, via block.timestamp truncated to uint32
-    /// @return cardinality The number of populated elements in the oracle array
-    /// @return cardinalityNext The new length of the oracle array, independent of population
-    function initialize(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 time
-    )
-        internal
-        returns (uint32 cardinality, uint32 cardinalityNext)
-    {
-        self[0] = Observation({blockTimestamp: time, tickCumulative: 0, initialized: true});
-        return (1, 1);
+    function initialize(State storage state, uint32 time) internal {
+        state.observations[0] = Observation({blockTimestamp: time, cumulativeValue: 0, initialized: true});
+        state.cardinality = 1;
+        state.cardinalityNext = 1;
     }
 
     /// @notice Writes an oracle observation to the array
@@ -74,53 +67,41 @@ library TickTWAP {
     /// must be tracked externally.
     /// If the index is at the end of the allowable array length (according to cardinality), and the next cardinality
     /// is greater than the current one, cardinality may be increased. This restriction is created to preserve ordering.
-    /// @param self The stored oracle array
-    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param state The stored oracle array
     /// @param blockTimestamp The timestamp of the new observation
-    /// @param tick The active tick at the time of the new observation
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @param cardinalityNext The new length of the oracle array, independent of population
-    /// @return indexUpdated The new index of the most recently written element in the oracle array
-    /// @return cardinalityUpdated The new cardinality of the oracle array
-    function write(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 index,
-        uint32 blockTimestamp,
-        int24 tick,
-        uint32 cardinality,
-        uint32 cardinalityNext
-    )
-        internal
-        returns (uint32 indexUpdated, uint32 cardinalityUpdated)
-    {
-        Observation memory last = self[index];
+    /// @param value The active tick at the time of the new observation
+    function write(State storage state, uint32 blockTimestamp, uint216 value) internal {
+        Observation[MAX_CARDINALITY] storage observations = state.observations;
+        uint32 index = state.index;
+        uint32 cardinality = state.cardinality;
+        uint32 cardinalityNext = state.cardinalityNext;
+        Observation memory last = observations[index];
 
         // early return if we've already written an observation this block
-        if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
+        if (last.blockTimestamp == blockTimestamp) return;
 
         // if the conditions are right, we can bump the cardinality
-        if (cardinalityNext > cardinality && index == (cardinality - 1)) cardinalityUpdated = cardinalityNext;
-        else cardinalityUpdated = cardinality;
+        if (cardinalityNext > cardinality && index == (cardinality - 1)) state.cardinality = cardinalityNext;
 
-        indexUpdated = (index + 1) % cardinalityUpdated;
-        self[indexUpdated] = transform(last, blockTimestamp, tick);
+        state.index = (index + 1) % state.cardinality;
+        observations[state.index] = transform(last, blockTimestamp, value);
     }
 
     /// @notice Prepares the oracle array to store up to `next` observations
-    /// @param self The stored oracle array
-    /// @param current The current next cardinality of the oracle array
+    /// @param state The stored oracle array
     /// @param next The proposed next cardinality which will be populated in the oracle array
-    /// @return next The next cardinality which will be populated in the oracle array
-    function grow(Observation[MAX_CARDINALITY] storage self, uint32 current, uint32 next) internal returns (uint32) {
+    function grow(State storage state, uint32 next) internal {
+        uint32 current = state.cardinalityNext;
         require(current > 0, "I");
         // no-op if the passed next value isn't greater than the current next value
-        if (next <= current) return current;
+        if (next <= current) return;
         // store in each slot to prevent fresh SSTOREs in swaps
         // this data will not be used because the initialized boolean is still false
+        Observation[MAX_CARDINALITY] storage observations = state.observations;
         for (uint32 i = current; i < next; i++) {
-            self[i].blockTimestamp = 1;
+            observations[i].blockTimestamp = 1;
         }
-        return next;
+        state.cardinalityNext = next;
     }
 
     /// @notice comparator for 32-bit timestamps
@@ -195,7 +176,7 @@ library TickTWAP {
     /// @param self The stored oracle array
     /// @param time The current block.timestamp
     /// @param target The timestamp at which the reserved observation should be for
-    /// @param tick The active tick at the time of the returned or simulated observation
+    /// @param value The active tick at the time of the returned or simulated observation
     /// @param index The index of the observation that was most recently written to the observations array
     /// @param cardinality The number of populated elements in the oracle array
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
@@ -204,7 +185,7 @@ library TickTWAP {
         Observation[MAX_CARDINALITY] storage self,
         uint32 time,
         uint32 target,
-        int24 tick,
+        uint216 value,
         uint32 index,
         uint32 cardinality
     )
@@ -222,7 +203,7 @@ library TickTWAP {
                 return (beforeOrAt, atOrAfter);
             } else {
                 // otherwise, we need to transform
-                return (beforeOrAt, transform(beforeOrAt, target, tick));
+                return (beforeOrAt, transform(beforeOrAt, target, value));
             }
         }
 
@@ -244,46 +225,46 @@ library TickTWAP {
     /// @param self The stored oracle array
     /// @param time The current block timestamp
     /// @param secondsAgo The amount of time to look back, in seconds, at which point to return an observation
-    /// @param tick The current tick
+    /// @param value The current value
     /// @param index The index of the observation that was most recently written to the observations array
     /// @param cardinality The number of populated elements in the oracle array
-    /// @return tickCumulative The tick * time elapsed since the pool was first initialized, as of `secondsAgo`
+    /// @return cumulativeValue The tick * time elapsed since the pool was first initialized, as of `secondsAgo`
     function observeSingle(
         Observation[MAX_CARDINALITY] storage self,
         uint32 time,
         uint32 secondsAgo,
-        int24 tick,
+        uint216 value,
         uint32 index,
         uint32 cardinality
     )
         internal
         view
-        returns (int56 tickCumulative)
+        returns (uint216 cumulativeValue)
     {
         if (secondsAgo == 0) {
             Observation memory last = self[index];
-            if (last.blockTimestamp != time) last = transform(last, time, tick);
-            return (last.tickCumulative);
+            if (last.blockTimestamp != time) last = transform(last, time, value);
+            return (last.cumulativeValue);
         }
 
         uint32 target = time - secondsAgo;
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
-            getSurroundingObservations(self, time, target, tick, index, cardinality);
+            getSurroundingObservations(self, time, target, value, index, cardinality);
 
         if (target == beforeOrAt.blockTimestamp) {
             // we're at the left boundary
-            return (beforeOrAt.tickCumulative);
+            return (beforeOrAt.cumulativeValue);
         } else if (target == atOrAfter.blockTimestamp) {
             // we're at the right boundary
-            return (atOrAfter.tickCumulative);
+            return (atOrAfter.cumulativeValue);
         } else {
             // we're in the middle
             uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
             uint32 targetDelta = target - beforeOrAt.blockTimestamp;
             return (
-                beforeOrAt.tickCumulative
-                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / int56(uint56(observationTimeDelta)))
-                        * int56(uint56(targetDelta))
+                beforeOrAt.cumulativeValue
+                    + ((atOrAfter.cumulativeValue - beforeOrAt.cumulativeValue) / uint216(observationTimeDelta))
+                        * uint216(targetDelta)
             );
         }
     }
@@ -291,44 +272,38 @@ library TickTWAP {
     /// @notice Returns the accumulator values as of each time seconds ago from the given time in the array of
     /// `secondsAgos`
     /// @dev Reverts if `secondsAgos` > oldest observation
-    /// @param self The stored oracle array
+    /// @param state The stored oracle array
     /// @param time The current block.timestamp
     /// @param secondsAgos Each amount of time to look back, in seconds, at which point to return an observation
-    /// @param tick The current tick
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
+    /// @param value The current value
+    /// @return cumulativeValues The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
     function observe(
-        Observation[MAX_CARDINALITY] storage self,
+        State storage state,
         uint32 time,
         uint32[] memory secondsAgos,
-        int24 tick,
-        uint32 index,
-        uint32 cardinality
+        uint216 value
     )
         internal
         view
-        returns (int56[] memory tickCumulatives)
+        returns (uint216[] memory cumulativeValues)
     {
+        Observation[MAX_CARDINALITY] storage observations = state.observations;
+        uint32 index = state.index;
+        uint32 cardinality = state.cardinality;
+
         require(cardinality > 0, "I");
 
-        tickCumulatives = new int56[](secondsAgos.length);
+        cumulativeValues = new uint216[](secondsAgos.length);
         for (uint256 i = 0; i < secondsAgos.length; i++) {
-            (tickCumulatives[i]) = observeSingle(self, time, secondsAgos[i], tick, index, cardinality);
+            (cumulativeValues[i]) = observeSingle(observations, time, secondsAgos[i], value, index, cardinality);
         }
     }
 
-    function getOldestObservationTimestamp(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 index,
-        uint32 cardinality
-    )
-        internal
-        view
-        returns (uint32)
-    {
-        Observation memory beforeOrAt = self[(index + 1) % cardinality];
-        if (!beforeOrAt.initialized) beforeOrAt = self[0];
+    function getOldestObservationTimestamp(State storage state) internal view returns (uint32) {
+        Observation[MAX_CARDINALITY] storage observations = state.observations;
+
+        Observation memory beforeOrAt = observations[(state.index + 1) % state.cardinality];
+        if (!beforeOrAt.initialized) beforeOrAt = observations[0];
         return beforeOrAt.blockTimestamp;
     }
 }

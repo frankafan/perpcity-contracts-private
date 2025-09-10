@@ -1,66 +1,57 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
-import {ITWAPBeacon} from "../interfaces/ITWAPBeacon.sol";
-import {UintTWAP} from "../libraries/UintTWAP.sol";
-import {MAX_CARDINALITY} from "../utils/Constants.sol";
+import {IBeacon} from "../interfaces/IBeacon.sol";
+import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
+import {TimeWeightedAvg} from "../libraries/TimeWeightedAvg.sol";
 import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 
-contract TestnetBeacon is ITWAPBeacon, Ownable {
-    using UintTWAP for UintTWAP.Observation[MAX_CARDINALITY];
+contract TestnetBeacon is IBeacon, ITimeWeightedAvg, Ownable {
+    using TimeWeightedAvg for TimeWeightedAvg.State;
     using SafeCastLib for *;
 
     uint256 public immutable creationTimestamp;
 
-    uint256 private data;
-    uint256 private timestamp;
+    uint216 private priceX96;
 
-    UintTWAP.State public twapState;
+    TimeWeightedAvg.State public twaState;
 
-    event DataUpdated(uint256 data);
+    event DataUpdated(uint256 priceX96);
 
     constructor(address owner, uint256 initialData, uint32 initialCardinalityNext) {
         _initializeOwner(owner);
 
-        (twapState.cardinality, twapState.cardinalityNext) =
-            twapState.observations.initialize(block.timestamp.toUint32());
+        twaState.initialize(block.timestamp.toUint32());
 
-        twapState.cardinalityNext = twapState.observations.grow(twapState.cardinalityNext, initialCardinalityNext);
+        twaState.grow(initialCardinalityNext);
 
-        (twapState.index, twapState.cardinality) = twapState.observations.write(
-            twapState.index, block.timestamp.toUint32(), initialData, twapState.cardinality, twapState.cardinalityNext
-        );
+        twaState.write(block.timestamp.toUint32(), initialData.toUint216());
 
         creationTimestamp = block.timestamp;
     }
 
-    function getData() external view returns (uint256, uint256) {
-        return (data, timestamp);
+    function getData() external view returns (uint256) {
+        return priceX96;
     }
 
     function updateData(bytes calldata proof, bytes calldata publicSignals) external onlyOwner {
-        data = abi.decode(publicSignals, (uint256));
-        timestamp = block.timestamp;
+        priceX96 = abi.decode(publicSignals, (uint256)).toUint216();
 
-        (twapState.index, twapState.cardinality) = twapState.observations.write(
-            twapState.index, block.timestamp.toUint32(), data, twapState.cardinality, twapState.cardinalityNext
-        );
+        twaState.write(block.timestamp.toUint32(), priceX96);
 
-        emit DataUpdated(data);
+        emit DataUpdated(priceX96);
     }
 
-    function increaseCardinalityNext(uint32 cardinalityNext)
-        external
-        returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew)
-    {
-        cardinalityNextOld = twapState.cardinalityNext;
-        cardinalityNextNew = twapState.observations.grow(cardinalityNextOld, cardinalityNext);
-        twapState.cardinalityNext = cardinalityNextNew;
+    function increaseCardinalityNext(uint32 cardinalityNext) external {
+        twaState.grow(cardinalityNext);
     }
 
-    function getTWAP(uint32 twapSecondsAgo) external view returns (uint256 twapPrice) {
-        if (twapSecondsAgo == 0) return data;
+    function getTimeWeightedAvg(uint32 twapSecondsAgo) external view returns (uint256 twapPrice) {
+        uint32 timeSinceLastObservation = (block.timestamp - twaState.getOldestObservationTimestamp()).toUint32();
+        if (twapSecondsAgo > timeSinceLastObservation) twapSecondsAgo = timeSinceLastObservation;
+
+        if (twapSecondsAgo == 0) return priceX96;
 
         uint32 timeSinceCreation = (block.timestamp - creationTimestamp).toUint32();
         if (timeSinceCreation < twapSecondsAgo) twapSecondsAgo = timeSinceCreation;
@@ -68,9 +59,7 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapSecondsAgo;
         secondsAgos[1] = 0;
-        uint256[] memory priceCumulatives = twapState.observations.observe(
-            block.timestamp.toUint32(), secondsAgos, data, twapState.index, twapState.cardinality
-        );
+        uint216[] memory priceCumulatives = twaState.observe(block.timestamp.toUint32(), secondsAgos, priceX96);
         return (priceCumulatives[1] - priceCumulatives[0]) / twapSecondsAgo;
     }
 }

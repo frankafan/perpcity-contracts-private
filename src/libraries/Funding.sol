@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
-import {FixedPoint96} from "./FixedPoint96.sol";
+import {INT_Q96, UINT_Q96} from "./Constants.sol";
 import {MoreSignedMath} from "./MoreSignedMath.sol";
 import {Tick} from "./Tick.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
@@ -35,7 +35,7 @@ library Funding {
         returns (int256)
     {
         int256 balanceCoefficientInFundingPayment = MoreSignedMath.mulDivSigned(
-            baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, FixedPoint96.UINT_Q96
+            baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, UINT_Q96
         );
 
         return (liquidityCoefficientInFundingPayment - balanceCoefficientInFundingPayment);
@@ -67,7 +67,7 @@ library Funding {
 
         // funding below the range
         int256 fundingBelow = baseAmountBelow.toInt256().fullMulDivSigned(
-            fundingGrowthRangeInfo.twPremiumGrowthBelowX96 - lastTwPremiumGrowthBelowX96, FixedPoint96.UINT_Q96
+            fundingGrowthRangeInfo.twPremiumGrowthBelowX96 - lastTwPremiumGrowthBelowX96, UINT_Q96
         );
 
         // funding inside the range =
@@ -76,10 +76,10 @@ library Funding {
             fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96 - lastTwPremiumDivBySqrtPriceGrowthInsideX96
                 - MoreSignedMath.fullMulDivSigned(
                     (fundingGrowthRangeInfo.twPremiumGrowthInsideX96 - lastTwPremiumGrowthInsideX96),
-                    FixedPoint96.INT_Q96,
+                    INT_Q96,
                     sqrtPriceX96AtUpperTick
                 ),
-            FixedPoint96.UINT_Q96
+            UINT_Q96
         );
 
         return fundingBelow + fundingInside;
