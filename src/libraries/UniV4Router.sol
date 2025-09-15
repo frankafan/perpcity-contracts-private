@@ -5,14 +5,12 @@ import {AccountingToken} from "../AccountingToken.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-
 import {BitMath} from "@uniswap/v4-core/src/libraries/BitMath.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
-
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
@@ -112,8 +110,22 @@ library UniV4Router {
         // Uniswap expects positive liquidity when adding and negative when removing
         int256 liquidityChange = params.isAdd ? int256(params.liquidityToMove) : -int256(params.liquidityToMove);
 
+        BalanceDelta feesAccrued;
+        if (!params.isAdd) {
+            (, feesAccrued) = poolManager.modifyLiquidity(
+                params.poolKey,
+                ModifyLiquidityParams({
+                    tickLower: params.tickLower,
+                    tickUpper: params.tickUpper,
+                    liquidityDelta: 0,
+                    salt: bytes32(params.positionId) // using positionId as salt
+                }),
+                "" // no hook data
+            );
+        }
+
         // modifyLiquidity call into PoolManager which returns deltas with information on token movement
-        (BalanceDelta liquidityDelta, BalanceDelta feesAccrued) = poolManager.modifyLiquidity(
+        (BalanceDelta liquidityDelta,) = poolManager.modifyLiquidity(
             params.poolKey,
             ModifyLiquidityParams({
                 tickLower: params.tickLower,
@@ -125,7 +137,7 @@ library UniV4Router {
         );
 
         // if removing liquidity, account the fees accrued into the overall delta
-        if (!params.isAdd) liquidityDelta = liquidityDelta - feesAccrued;
+        if (!params.isAdd) liquidityDelta = liquidityDelta + feesAccrued;
 
         // currency0Delta and currency1Delta should be <= 0 when adding liquidity and >= 0 when removing
         int256 currency0Delta = liquidityDelta.amount0();

@@ -9,40 +9,31 @@ import {PerpHandler} from "./PerpHandler.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {Test} from "forge-std/Test.sol";
+import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 
-contract InvariantTest is Test {
-    IPoolManager public manager;
-    address public usdc;
-
+contract InvariantTest is Test, DeployPoolManager {
     function setUp() public {
-        bytes memory args = abi.encode(address(0));
-        bytes memory bytecode = abi.encodePacked(vm.getCode("PoolManager.sol:PoolManager"), args);
-        address poolManager;
-        assembly {
-            poolManager := create(0, add(bytecode, 0x20), mload(bytecode))
-        }
-        manager = IPoolManager(poolManager);
-
-        usdc = address(new TestnetUSDC());
+        IPoolManager poolManager = deployPoolManager();
+        address usdc = address(new TestnetUSDC());
 
         // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
-        address flags = address(
+        address perpManagerAddress = address(
             uint160(0) ^ (0x5555 << 144) // Namespace the address to avoid collisions
         );
 
         // Add all necessary constructor arguments for PerpManager.sol
-        bytes memory constructorArgs = abi.encode(manager, usdc);
+        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), usdc);
 
         // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
-        deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, flags);
+        deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, perpManagerAddress);
 
-        PerpHandler perpHandler = new PerpHandler(PerpManager(flags), usdc, 10);
+        PerpHandler perpHandler = new PerpHandler(PerpManager(perpManagerAddress), usdc, 10);
 
         targetContract(address(perpHandler));
 
-        bytes4[] memory selectors = new bytes4[](1);
+        bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = PerpHandler.createPerp.selector;
-        // selectors[1] = PerpHandler.openMakerPosition.selector;
+        selectors[1] = PerpHandler.openMakerPosition.selector;
         // selectors[2] = PerpHandler.addMakerMargin.selector;
         // selectors[3] = PerpHandler.closeMakerPosition.selector;
         // selectors[4] = PerpHandler.openTakerPosition.selector;

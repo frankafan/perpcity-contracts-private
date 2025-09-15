@@ -38,7 +38,7 @@ library Funding {
             baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, UINT_Q96
         );
 
-        return (liquidityCoefficientInFundingPayment - balanceCoefficientInFundingPayment);
+        return liquidityCoefficientInFundingPayment + balanceCoefficientInFundingPayment;
     }
 
     /// @dev the funding payment of an order/liquidity is composed of

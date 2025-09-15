@@ -5,7 +5,7 @@ import {PerpManager} from "../src/PerpManager.sol";
 import {IBeacon} from "../src/interfaces/IBeacon.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 
-import {UINT_Q96} from "../src/libraries/Constants.sol";
+import "../src/libraries/Constants.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {TradingFee} from "../src/libraries/TradingFee.sol";
 import {TestnetBeacon} from "../src/testnet/TestnetBeacon.sol";
@@ -16,10 +16,12 @@ import {PoolId, PoolKey} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Test} from "forge-std/Test.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {console2} from "forge-std/console2.sol";
 
 contract PerpHandler is Test {
     using SafeTransferLib for address;
-    using FixedPointMathLib for uint256;
+    using FixedPointMathLib for *;
     using StateLibrary for IPoolManager;
     using PerpLogic for *;
 
@@ -68,7 +70,7 @@ contract PerpHandler is Test {
 
         vm.startPrank(actor);
 
-        initialBeaconData = uint256(bound(initialBeaconData, 0, 1000000000 * UINT_Q96));
+        initialBeaconData = uint256(bound(initialBeaconData, 1 * UINT_Q96, 1000000 * UINT_Q96));
 
         IBeacon beacon =
             new TestnetBeacon(actor, initialBeaconData, uint32(bound(initialCardinalityNext_Beacon, 1, 100)));
@@ -100,84 +102,89 @@ contract PerpHandler is Test {
         // openMakerPosition(makerActorIndex, perps.length - 1, makerMargin, makerLiquidity, makerTickLower, makerIsTickLowerNegative, makerTickRange, makerLeverageX96, makerSecondsToSkip);
     }
 
-    // function openMakerPosition(
-    //     uint256 actorIndex,
-    //     uint256 perpIndex,
-    //     uint128 margin,
-    //     uint128 liquidity,
-    //     int24 tickLower,
-    //     bool isTickLowerNegative,
-    //     uint256 tickRange,
-    //     uint128 leverageX96,
-    //     uint256 secondsToSkip
-    // )
-    //     public
-    // {
-    //     vm.assume(perps.length != 0);
+    function openMakerPosition(
+        uint256 actorIndex,
+        uint256 perpIndex,
+        uint128 margin,
+        int24 tickLower,
+        uint256 tickRange,
+        uint256 marginRatio,
+        uint256 notional,
+        uint256 secondsToSkip
+    )
+        public
+    {
+        vm.assume(perps.length != 0);
 
-    //     address actor = actors[bound(actorIndex, 0, actors.length - 1)];
-    //     PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
+        address actor = actors[bound(actorIndex, 0, actors.length - 1)];
+        PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
 
-    //     (,,,,,,,,,,,,,,,, uint128 maxOpeningLevX96,,,, PoolKey memory key,,) = perpManager.perps(perpId);
+        (,,,,,,,,,,,,,,uint24 minMargin,uint24 minMarginRatio,uint24 maxMarginRatio,,,,,,,, PoolKey memory key,,) = perpManager.perps(perpId);
 
-    //     vm.startPrank(actor);
+        vm.startPrank(actor);
 
-    //     int24 tickSpacing = key.tickSpacing;
+        int24 tickSpacing = key.tickSpacing;
 
-    //     int24 MAX_TICK = TickMath.maxUsableTick(tickSpacing);
+        int24 MAX_TICK = TickMath.maxUsableTick(tickSpacing);
 
-    //     tickLower = int24(bound(tickLower, 0, MAX_TICK));
-    //     tickLower = isTickLowerNegative ? -tickLower : tickLower;
-    //     if (tickLower + tickSpacing > MAX_TICK) tickLower -= tickSpacing;
+        tickLower = int24(bound(tickLower, 0, MAX_TICK - tickSpacing));
+        tickLower = (tickLower / tickSpacing) * tickSpacing;
 
-    //     tickLower = (tickLower / tickSpacing) * tickSpacing;
+        uint256 maxTickRange = uint256(int256(MAX_TICK - tickLower));
+        tickRange = uint256(bound(tickRange, uint256(int256(tickSpacing)), maxTickRange));
+        int24 tickUpper = tickLower + int24(int256(tickRange));
+        tickUpper = (tickUpper / tickSpacing) * tickSpacing;
 
-    //     uint256 maxTickRange = uint256(int256(MAX_TICK - tickLower));
-    //     tickRange = uint256(bound(tickRange, uint256(int256(tickSpacing)), maxTickRange));
-    //     int24 tickUpper = tickLower + int24(int256(tickRange));
-    //     tickUpper = (tickUpper / tickSpacing) * tickSpacing;
+        notional = bound(notional, 1e6, 1000000e6);
+        
+        uint160 sqrtPriceAX96 = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceAX96, sqrtPriceBX96, notional);
+        vm.assume(liquidity != 0);
+        (uint160 sqrtPriceX96,,,) = perpManager.POOL_MANAGER().getSlot0(perpId);
+        (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liquidity);
+        console2.log("perphandler amount0", amount0);
+        console2.log("perphandler amount1", amount1);
 
-    //     uint256 maxLiquidityPerTick = type(uint64).max / 1774544 / 10;
-    //     uint256 maxLiquidity = maxLiquidityPerTick * tickRange;
-    //     liquidity = uint128(bound(liquidity, 1, maxLiquidity));
+        vm.assume(amount0 > 10 || amount1 > 10);
 
-    //     (IPoolManager poolManager,,,) = perpManager.c();
-    //     (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-    //     (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-    //         sqrtPriceX96, TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), liquidity
-    //     );
+        uint256 perpsNotional = sqrtPriceX96.fullMulDiv(amount0 * sqrtPriceX96, UINT_Q192);
+        notional = perpsNotional + uint256(amount1);
 
-    //     uint256 notional = amount0.mulDiv(sqrtPriceX96.toPriceX96(), UINT_Q96) + amount1;
+        uint256 minMarginRatioAdjusted = FixedPointMathLib.max(minMarginRatio, 1e6.mulDiv(SCALE_1E6, notional));
 
-    //     // leverageX96 = uint128(bound(leverageX96, 1 * UINT_Q96 / 2, maxOpeningLevX96));
-    //     leverageX96 = uint128(1 * UINT_Q96);
+        vm.assume(minMarginRatioAdjusted <= maxMarginRatio);
 
-    //     uint256 targetScaledMargin18 = notional.fullMulDiv(UINT_Q96, leverageX96);
-    //     margin = uint128(targetScaledMargin18) + 1;
+        marginRatio = bound(marginRatio, minMarginRatioAdjusted, maxMarginRatio);
 
-    //     IPerpManager.OpenMakerPositionParams memory params = IPerpManager.OpenMakerPositionParams({
-    //         margin: margin,
-    //         liquidity: liquidity,
-    //         tickLower: tickLower,
-    //         tickUpper: tickUpper,
-    //         maxAmt0In: type(uint128).max,
-    //         maxAmt1In: type(uint128).max,
-    //         timeout: 1
-    //     });
+        margin = uint128(notional.fullMulDiv(marginRatio, SCALE_1E6));
 
-    //     deal(usdc, actor, margin);
-    //     usdc.safeApprove(address(perpManager), margin);
-    //     uint128 makerPosId = perpManager.openMakerPosition(perpId, params);
-    //     makerPositions[perpId].push(makerPosId);
+        console2.log("perphandler margin", margin);
+        console2.log("perphandler marginRatio", marginRatio);
+        console2.log("perphandler notional", notional);
 
-    //     IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, makerPosId);
-    //     // TODO: also make this check in open maker ()
-    //     vm.assume(makerPos.perpsBorrowed > 0 || makerPos.usdBorrowed > 0);
+        IPerpManager.OpenMakerPositionParams memory params = IPerpManager.OpenMakerPositionParams({
+            margin: margin,
+            liquidity: liquidity,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            maxAmt0In: type(uint128).max,
+            maxAmt1In: type(uint128).max
+        });
 
-    //     vm.stopPrank();
+        deal(usdc, actor, margin);
+        usdc.safeApprove(address(perpManager), margin);
+        uint128 makerPosId = perpManager.openMakerPosition(perpId, params);
+        makerPositions[perpId].push(makerPosId);
 
-    //     skipTime(secondsToSkip);
-    // }
+        // IPerpManager.Position memory makerPos = perpManager.getMakerPosition(perpId, makerPosId);
+        // // TODO: also make this check in open maker ()
+        // vm.assume(makerPos.perpsBorrowed > 0 || makerPos.usdBorrowed > 0);
+
+        vm.stopPrank();
+
+        skipTime(secondsToSkip);
+    }
 
     // function addMakerMargin(uint256 perpIndex, uint256 positionIndex, uint128 margin, uint256 secondsToSkip) public {
     //     vm.assume(perps.length != 0);

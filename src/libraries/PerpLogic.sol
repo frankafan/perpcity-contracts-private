@@ -3,7 +3,6 @@ pragma solidity 0.8.30;
 
 import {PerpVault} from "../PerpVault.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
-
 import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
 import "./Constants.sol";
 import {Funding} from "./Funding.sol";
@@ -21,6 +20,7 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {console2} from "forge-std/console2.sol";
 
 library PerpLogic {
     using UniV4Router for IPoolManager;
@@ -61,9 +61,9 @@ library PerpLogic {
         perp.creator = msg.sender;
         perp.creatorFee = CREATOR_FEE;
         perp.insuranceFee = INSURANCE_FEE;
-        perp.nextMakerPosId = 1; // maker IDs start at 1
-        perp.nextTakerPosId = 1; // taker IDs start at 1
-        perp.priceImpactBand = PRICE_IMPACT_BAND;
+        perp.nextPosId = 1; // position IDs start at 1
+        perp.sqrtPriceLowerMultiX96 = SQRT_PRICE_LOWER_MULTI_X96;
+        perp.sqrtPriceUpperMultiX96 = SQRT_PRICE_UPPER_MULTI_X96;
         perp.minOpeningMargin = MIN_OPENING_MARGIN;
         perp.minMakerOpeningMarginRatio = MIN_MAKER_OPENING_MARGIN_RATIO;
         perp.maxMakerOpeningMarginRatio = MAX_MAKER_OPENING_MARGIN_RATIO;
@@ -89,114 +89,166 @@ library PerpLogic {
         emit IPerpManager.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96);
     }
 
-    function openMakerPosition(
+    function openPosition(
         IPerpManager.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
-        IPerpManager.OpenMakerPositionParams calldata params
+        bytes memory encodedParams,
+        bool isMaker
     )
         external
-        returns (uint128 makerPosId)
+        returns (uint128 posId)
     {
-        if (params.liquidity == 0) revert IPerpManager.InvalidLiquidity(params.liquidity);
-
         PoolId perpId = perp.key.toId();
-
-        (uint160 sqrtPriceX96, int24 currentTick,,) = poolManager.getSlot0(perpId);
+        (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
 
         updateTwPremiums(perp, sqrtPriceX96);
 
-        bool tickLowerInitializedBefore = poolManager.isTickInitialized(perpId, params.tickLower);
-        bool tickUpperInitializedBefore = poolManager.isTickInitialized(perpId, params.tickUpper);
+        posId = perp.nextPosId;
+        perp.nextPosId++;
 
-        makerPosId = perp.nextMakerPosId;
-        perp.nextMakerPosId++;
+        IPerpManager.Position memory pos;
 
-        bytes memory encodedConfig = abi.encode(
-            UniV4Router.LiquidityConfig({
-                poolKey: perp.key,
-                positionId: makerPosId,
-                isAdd: true,
-                tickLower: params.tickLower,
-                tickUpper: params.tickUpper,
-                liquidityToMove: params.liquidity,
-                amount0Limit: params.maxAmt0In,
-                amount1Limit: params.maxAmt1In
-            })
-        );
-
-        bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.MODIFY_LIQUIDITY, encodedConfig);
-
-        (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
-
-        uint256 notional = liquidityNotional(perpDelta, usdDelta, sqrtPriceX96);
-        validateOpeningMarginAndMarginRatio(perp, params.margin, notional, true);
-
-        updatePremiumPerSecond(perp, sqrtPriceX96);
-
-        if (!tickLowerInitializedBefore) {
-            perp.tickGrowthInfo.initialize(
-                params.tickLower, currentTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-            );
-        }
-        if (!tickUpperInitializedBefore) {
-            perp.tickGrowthInfo.initialize(
-                params.tickUpper, currentTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-            );
-        }
-
-        // update mark twap
-        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
-
-        Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo = perp.tickGrowthInfo.getAllFundingGrowth(
-            params.tickLower, params.tickUpper, currentTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-        );
-
-        // update maker position state
-        perp.makerPositions[makerPosId] = IPerpManager.MakerPos({
-            holder: msg.sender,
-            entryTimestamp: block.timestamp.toUint32(),
-            margin: params.margin,
-            liquidity: params.liquidity,
-            tickLower: params.tickLower,
-            tickUpper: params.tickUpper,
-            perpDelta: perpDelta,
-            usdDelta: usdDelta,
-            entryTwPremiumX96: perp.twPremiumX96,
-            entryTwPremiumGrowthInsideX96: fundingGrowthRangeInfo.twPremiumGrowthInsideX96,
-            entryTwPremiumDivBySqrtPriceGrowthInsideX96: fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96,
-            entryTwPremiumGrowthBelowX96: fundingGrowthRangeInfo.twPremiumGrowthBelowX96
-        });
-
-        // transfer margin from sender to vault
-        usdc.safeTransferFrom(msg.sender, perp.vault, params.margin);
-
-        emit IPerpManager.MakerPositionOpened(perpId, makerPosId, perp.makerPositions[makerPosId], sqrtPriceX96);
-    }
-
-    function validateOpeningMarginAndMarginRatio(
-        IPerpManager.Perp storage perp,
-        uint128 margin,
-        uint256 notional,
-        bool isMaker
-    )
-        internal
-        view
-    {
-        if (margin < perp.minOpeningMargin) revert IPerpManager.InvalidMargin(margin);
-
-        uint256 marginRatio = margin.fullMulDiv(SCALE_1E6, notional);
+        uint256 specifiedMargin;
 
         if (isMaker) {
+            IPerpManager.OpenMakerPositionParams memory params =
+                abi.decode(encodedParams, (IPerpManager.OpenMakerPositionParams));
+
+            if (params.liquidity == 0) revert IPerpManager.InvalidLiquidity(params.liquidity);
+
+            specifiedMargin = params.margin;
+            pos.margin = specifiedMargin;
+
+            Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo = perp.tickGrowthInfo.getAllFundingGrowth(
+                params.tickLower, params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
+            );
+
+            pos.makerDetails = IPerpManager.MakerDetails({
+                entryTimestamp: uint32(block.timestamp),
+                tickLower: params.tickLower,
+                tickUpper: params.tickUpper,
+                liquidity: params.liquidity,
+                entryTwPremiumGrowthInsideX96: fundingGrowthRangeInfo.twPremiumGrowthInsideX96,
+                entryTwPremiumDivBySqrtPriceGrowthInsideX96: fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96,
+                entryTwPremiumGrowthBelowX96: fundingGrowthRangeInfo.twPremiumGrowthBelowX96
+            });
+
+            if (!poolManager.isTickInitialized(perpId, params.tickLower)) {
+                perp.tickGrowthInfo.initialize(
+                    params.tickLower, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
+                );
+            }
+            if (!poolManager.isTickInitialized(perpId, params.tickUpper)) {
+                perp.tickGrowthInfo.initialize(
+                    params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
+                );
+            }
+
+            bytes memory encodedConfig = abi.encode(
+                UniV4Router.LiquidityConfig({
+                    poolKey: perp.key,
+                    positionId: posId,
+                    isAdd: true,
+                    tickLower: params.tickLower,
+                    tickUpper: params.tickUpper,
+                    liquidityToMove: params.liquidity,
+                    amount0Limit: params.maxAmt0In,
+                    amount1Limit: params.maxAmt1In
+                })
+            );
+
+            bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.MODIFY_LIQUIDITY, encodedConfig);
+
+            (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+
+            console2.log("pos.perpDelta", pos.perpDelta);
+            console2.log("pos.usdDelta", pos.usdDelta);
+
+            uint256 notionalValue = liquidityNotional(pos.perpDelta, pos.usdDelta, sqrtPriceX96);
+
+            console2.log("notionalValue", notionalValue);
+            console2.log("pos.margin", pos.margin);
+
+            uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notionalValue);
+
+            console2.log("marginRatio 3", marginRatio);
+
             if (marginRatio < perp.minMakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxMakerOpeningMarginRatio) revert("margin ratio is too high");
         } else {
+            IPerpManager.OpenTakerPositionParams memory params =
+                abi.decode(encodedParams, (IPerpManager.OpenTakerPositionParams));
+
+            specifiedMargin = params.margin;
+
+            // clean up and maybe combine into one muldiv
+            uint256 notionalValue = specifiedMargin.mulDiv(params.levX96, UINT_Q96);
+
+            uint256 creatorFeeAmount = notionalValue.mulDiv(perp.creatorFee, SCALE_1E6);
+            usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount);
+
+            uint256 insuranceFeeAmount = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
+
+            pos.margin = specifiedMargin - creatorFeeAmount - insuranceFeeAmount;
+            notionalValue = pos.margin.mulDiv(params.levX96, UINT_Q96);
+
+            uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notionalValue);
+
             if (marginRatio < perp.minTakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxTakerOpeningMarginRatio) revert("margin ratio is too high");
+
+            // determine whether or not to charge fee based on hookData passed in
+            uint24 fee = perp.calculateTradingFee(poolManager);
+
+            bytes memory encodedConfig = abi.encode(
+                UniV4Router.SwapConfig({
+                    poolKey: perp.key,
+                    isExactIn: params.isLong,
+                    zeroForOne: !params.isLong,
+                    amountSpecified: notionalValue,
+                    sqrtPriceLimitX96: getSqrtPriceLimitX96(perp, sqrtPriceX96, params.isLong),
+                    unspecifiedAmountLimit: params.unspecifiedAmountLimit,
+                    fee: fee
+                })
+            );
+
+            bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
+
+            (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+
+            int24 endingTick;
+            (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
+
+            perp.tickGrowthInfo.crossTicks(
+                poolManager,
+                perpId,
+                startingTick,
+                perp.key.tickSpacing,
+                !params.isLong,
+                endingTick,
+                perp.twPremiumX96,
+                perp.twPremiumDivBySqrtPriceX96
+            );
         }
+
+        pos.holder = msg.sender;
+        pos.entryTwPremiumX96 = perp.twPremiumX96;
+
+        if (pos.margin < perp.minOpeningMargin) revert IPerpManager.InvalidMargin(pos.margin);
+
+        updatePremiumPerSecond(perp, sqrtPriceX96);
+
+        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
+
+        perp.positions[posId] = pos;
+
+        usdc.safeTransferFrom(msg.sender, perp.vault, specifiedMargin);
+
+        emit IPerpManager.PositionOpened(perpId, posId, isMaker, pos.margin, sqrtPriceX96);
     }
 
-    function addMakerMargin(
+    function addMargin(
         IPerpManager.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
@@ -204,337 +256,213 @@ library PerpLogic {
     )
         external
     {
-        address holder = perp.makerPositions[params.posId].holder;
-        uint128 margin = params.margin;
+        address holder = perp.positions[params.posId].holder;
+        uint256 margin = params.margin;
 
-        addMargin(perp, poolManager, usdc, holder, margin);
-
-        // update maker position state
-        perp.makerPositions[params.posId].margin += margin;
-
-        emit IPerpManager.MakerMarginAdded(perp.key.toId(), params.posId, margin);
-    }
-
-    function closeMakerPosition(
-        IPerpManager.Perp storage perp,
-        IPoolManager poolManager,
-        address usdc,
-        IPerpManager.ClosePositionParams calldata params,
-        bool revertChanges // true if used as a view function, otherwise false
-    )
-        external
-        returns (uint128 takerPosId)
-    {
-        PoolId perpId = perp.key.toId();
-        IPerpManager.MakerPos memory makerPos = perp.makerPositions[params.posId];
-
-        // if (makerPos.holder == address(0)) {
-        //     if (revertChanges) {
-        //         (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-        //         uint256 newPriceX96 = sqrtPriceX96.toPriceX96();
-        //         LivePositionDetailsReverter.revertLivePositionDetails(0, 0, 0, false, newPriceX96);
-        //     } else {
-        //         revert IPerpManager.InvalidClose(msg.sender, address(0), false);
-        //     }
-        // }
-
-        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-        updateTwPremiums(perp, sqrtPriceX96);
-
-        bytes memory encodedConfig = abi.encode(
-            UniV4Router.LiquidityConfig({
-                poolKey: perp.key,
-                positionId: params.posId,
-                isAdd: false,
-                tickLower: makerPos.tickLower,
-                tickUpper: makerPos.tickUpper,
-                liquidityToMove: makerPos.liquidity,
-                amount0Limit: params.minAmt0Out,
-                amount1Limit: params.minAmt1Out
-            })
-        );
-
-        bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.MODIFY_LIQUIDITY, encodedConfig);
-
-        (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
-
-        int24 currentTick;
-        (sqrtPriceX96, currentTick,,) = poolManager.getSlot0(perpId);
+        (uint160 sqrtPriceX96, int24 currentTick,,) = poolManager.getSlot0(perp.key.toId());
 
         // update funding accounting
+        updateTwPremiums(perp, sqrtPriceX96);
         updatePremiumPerSecond(perp, sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        int256 pnl = usdDelta + makerPos.usdDelta;
+        // validate caller is holder and that margin is nonzero
+        if (msg.sender != holder) revert IPerpManager.InvalidCaller(msg.sender, holder);
+        if (margin == 0) revert IPerpManager.InvalidMargin(margin);
 
-        int256 takerPerpDelta = perpDelta + makerPos.perpDelta;
+        // TODO: add margin ratio check
 
-        (sqrtPriceX96, currentTick,,) = poolManager.getSlot0(perpId);
+        // transfer margin from sender to vault
+        usdc.safeTransferFrom(msg.sender, perp.vault, margin);
 
-        int256 funding = makerFunding(perp, makerPos, currentTick);
+        // update maker position state
+        perp.positions[params.posId].margin += margin;
 
-        uint256 notional = liquidityNotional(takerPerpDelta, usdDelta, sqrtPriceX96);
-
-        (uint256 effectiveMargin, bool isLiquidation) =
-            calcEffectiveMargin(perp, usdc, makerPos.margin, pnl, funding, notional, true, makerPos.holder);
-
-        if (!revertChanges && !isLiquidation) {
-            if (block.timestamp <= makerPos.entryTimestamp + perp.makerLockupPeriod) {
-                revert IPerpManager.MakerPositionLocked(
-                    block.timestamp, makerPos.entryTimestamp + perp.makerLockupPeriod
-                );
-            }
-        }
-
-        int24 tickLower = makerPos.tickLower;
-        int24 tickUpper = makerPos.tickUpper;
-
-        bool isTickLowerInitializedAfter = poolManager.isTickInitialized(perpId, tickLower);
-        bool isTickUpperInitializedAfter = poolManager.isTickInitialized(perpId, tickUpper);
-
-        // clear tick mapping to mimick uniswap pool ticks cleared
-        if (!isTickLowerInitializedAfter) perp.tickGrowthInfo.clear(tickLower);
-        if (!isTickUpperInitializedAfter) perp.tickGrowthInfo.clear(tickUpper);
-
-        // emit IPerpManager.MakerPositionClosed(perpId, params.posId, wasLiquidation, makerPos, sqrtPriceX96);
-        delete perp.makerPositions[params.posId];
-
-        if (takerPerpDelta != 0) {
-            takerPosId = perp.nextTakerPosId;
-            perp.nextTakerPosId++;
-
-            perp.takerPositions[takerPosId] = IPerpManager.TakerPos({
-                holder: makerPos.holder,
-                isLong: takerPerpDelta > 0,
-                perpDelta: takerPerpDelta,
-                usdDelta: 0,
-                margin: effectiveMargin.toUint128(),
-                entryTwPremiumX96: perp.twPremiumX96
-            });
-
-            // emit IPerpManager.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96);
-        } else {
-            usdc.safeTransferFrom(perp.vault, makerPos.holder, effectiveMargin);
-        }
+        emit IPerpManager.MarginAdded(perp.key.toId(), params.posId, perp.positions[params.posId].margin);
     }
 
-    function openTakerPosition(
+    function closePosition(
         IPerpManager.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
-        IPerpManager.OpenTakerPositionParams calldata params
+        IPerpManager.ClosePositionParams calldata params,
+        bool revertChanges
     )
         external
-        returns (uint128 takerPosId)
+        returns (uint128 posId)
     {
-        // clean up and maybe combine into one muldiv
-        uint256 notional = params.margin.mulDiv(params.levX96, UINT_Q96);
-
-        uint256 creatorFeeAmount = notional.mulDiv(perp.creatorFee, SCALE_1E6);
-        usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount);
-        uint256 insuranceFeeAmount = notional.mulDiv(perp.insuranceFee, SCALE_1E6);
-
-        uint256 margin = params.margin - creatorFeeAmount - insuranceFeeAmount;
-        notional = margin.mulDiv(params.levX96, UINT_Q96);
-        validateOpeningMarginAndMarginRatio(perp, params.margin, notional, false);
-
         PoolId perpId = perp.key.toId();
+        IPerpManager.Position memory pos = perp.positions[params.posId];
+
+        if (pos.holder == address(0)) revert IPerpManager.InvalidClose(msg.sender, address(0), false);
 
         (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
         updateTwPremiums(perp, sqrtPriceX96);
 
-        // determine whether or not to charge fee based on hookData passed in
-        uint24 fee = perp.calculateTradingFee(poolManager);
 
-        uint160 sqrtPriceLimitX96 = params.isLong ? TickMath.MAX_SQRT_PRICE - 1 : TickMath.MIN_SQRT_PRICE + 1; // fix use for band
+        bool isLiquidation;
+        if (pos.makerDetails.liquidity > 0) {
+            IPerpManager.MakerDetails memory makerDetails = pos.makerDetails;
 
-        bytes memory encodedConfig = abi.encode(
-            UniV4Router.SwapConfig({
-                poolKey: perp.key,
-                isExactIn: params.isLong,
-                zeroForOne: !params.isLong,
-                amountSpecified: notional,
-                sqrtPriceLimitX96: sqrtPriceLimitX96, // fix use for band
-                unspecifiedAmountLimit: params.unspecifiedAmountLimit,
-                fee: fee
-            })
-        );
+            bytes memory encodedConfig = abi.encode(
+                UniV4Router.LiquidityConfig({
+                    poolKey: perp.key,
+                    positionId: params.posId,
+                    isAdd: false,
+                    tickLower: makerDetails.tickLower,
+                    tickUpper: makerDetails.tickUpper,
+                    liquidityToMove: makerDetails.liquidity,
+                    amount0Limit: params.minAmt0Out,
+                    amount1Limit: params.minAmt1Out
+                })
+            );
 
-        bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
+            bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.MODIFY_LIQUIDITY, encodedConfig);
 
-        (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+            (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
 
-        // revert if price impact was too high
-        // perp.checkPriceImpact(c);
+            int256 pnl = usdDelta + pos.usdDelta;
 
-        takerPosId = perp.nextTakerPosId;
-        perp.nextTakerPosId++;
+            int256 takerPerpDelta = perpDelta + pos.perpDelta;
 
-        (uint160 sqrtPriceX96After, int24 endingTick,,) = poolManager.getSlot0(perpId);
-        updatePremiumPerSecond(perp, sqrtPriceX96After);
+            int256 funding = makerFunding(perp, pos, startingTick);
 
-        perp.tickGrowthInfo.crossTicks(
-            poolManager,
-            perpId,
-            startingTick,
-            perp.key.tickSpacing,
-            !params.isLong,
-            endingTick,
-            perp.twPremiumX96,
-            perp.twPremiumDivBySqrtPriceX96
-        );
+            uint256 notional = liquidityNotional(takerPerpDelta, usdDelta, sqrtPriceX96);
+
+            (uint256 effectiveMargin, bool isLiquidation) =
+                calcEffectiveMargin(perp, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
+
+            if (revertChanges) LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidation, sqrtPriceX96);
+
+            if (
+                !revertChanges && !isLiquidation
+                    && block.timestamp <= makerDetails.entryTimestamp + perp.makerLockupPeriod
+            ) {
+                revert IPerpManager.MakerPositionLocked(
+                    block.timestamp, makerDetails.entryTimestamp + perp.makerLockupPeriod
+                );
+            }
+
+            // clear tick mapping to mimick uniswap pool ticks cleared
+            if (!poolManager.isTickInitialized(perpId, makerDetails.tickLower)) {
+                perp.tickGrowthInfo.clear(makerDetails.tickLower);
+            }
+            if (!poolManager.isTickInitialized(perpId, makerDetails.tickUpper)) {
+                perp.tickGrowthInfo.clear(makerDetails.tickUpper);
+            }
+
+            if (takerPerpDelta != 0) {
+                posId = perp.nextPosId;
+                perp.nextPosId++;
+
+                IPerpManager.Position memory newPos;
+
+                newPos.holder = pos.holder;
+                newPos.perpDelta = takerPerpDelta;
+                newPos.usdDelta = 0;
+                newPos.margin = effectiveMargin;
+                newPos.entryTwPremiumX96 = perp.twPremiumX96;
+
+                perp.positions[posId] = newPos;
+
+                // emit IPerpManager.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96);
+            } else {
+                usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
+            }
+        } else {
+            bool isLong = pos.perpDelta > 0;
+
+            bytes memory encodedConfig = abi.encode(
+                UniV4Router.SwapConfig({
+                    poolKey: perp.key,
+                    isExactIn: isLong,
+                    zeroForOne: isLong,
+                    amountSpecified: isLong ? uint256(pos.perpDelta) : uint256(-pos.perpDelta),
+                    sqrtPriceLimitX96: getSqrtPriceLimitX96(perp, sqrtPriceX96, !isLong),
+                    unspecifiedAmountLimit: isLong ? params.minAmt1Out : params.maxAmt1In,
+                    fee: 0
+                })
+            );
+
+            bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
+
+            (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+
+            int256 pnl = usdDelta + pos.usdDelta;
+
+            int24 endingTick;
+            (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
+
+            perp.tickGrowthInfo.crossTicks(
+                poolManager,
+                perpId,
+                startingTick,
+                perp.key.tickSpacing,
+                isLong,
+                endingTick,
+                perp.twPremiumX96,
+                perp.twPremiumDivBySqrtPriceX96
+            );
+
+            // update mark twap
+            perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
+
+            int256 twPremiumGrowthX96 = perp.twPremiumX96 - pos.entryTwPremiumX96;
+            int256 funding = twPremiumGrowthX96.mulDivSigned(pos.perpDelta, UINT_Q96);
+
+            uint256 notional = usdDelta < 0 ? uint256(-usdDelta) : uint256(usdDelta);
+
+            (uint256 effectiveMargin, bool isLiquidation) =
+                calcEffectiveMargin(perp, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
+
+            if (revertChanges) LivePositionDetailsReverter.revertLivePositionDetails(pnl, funding, effectiveMargin, isLiquidation, sqrtPriceX96);
+
+            usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
+        }
+
+        updatePremiumPerSecond(perp, sqrtPriceX96);
 
         // update mark twap
-        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96After);
+        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        perp.takerPositions[takerPosId] = IPerpManager.TakerPos({
-            holder: msg.sender,
-            isLong: params.isLong,
-            perpDelta: perpDelta,
-            usdDelta: usdDelta,
-            margin: margin.toUint128(),
-            entryTwPremiumX96: perp.twPremiumX96
-        });
-
-        // Transfer margin from the user to the contract
-        usdc.safeTransferFrom(msg.sender, perp.vault, params.margin);
-
-        emit IPerpManager.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96After);
+        emit IPerpManager.PositionClosed(perpId, params.posId, isLiquidation, sqrtPriceX96);
+        delete perp.positions[params.posId];
     }
 
     function makerFunding(
         IPerpManager.Perp storage perp,
-        IPerpManager.MakerPos memory makerPos,
+        IPerpManager.Position memory pos,
         int24 currentTick
     )
         internal
         view
         returns (int256)
     {
-        // return Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
-        //     makerPos.perpsBorrowed.toInt256(),
-        //     makerPos.entryTwPremiumX96,
-        //     Funding.Growth({
-        //         twPremiumX96: perp.twPremiumX96,
-        //         twPremiumDivBySqrtPriceX96: perp.twPremiumDivBySqrtPriceX96
-        //     }),
-        //     Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
-        //         makerPos.liquidity,
-        //         makerPos.tickLower,
-        //         makerPos.tickUpper,
-        //         perp.tickGrowthInfo.getAllFundingGrowth(
-        //             makerPos.tickLower,
-        //             makerPos.tickUpper,
-        //             currentTick,
-        //             perp.twPremiumX96,
-        //             perp.twPremiumDivBySqrtPriceX96
-        //         ),
-        //         makerPos.entryTwPremiumGrowthInsideX96,
-        //         makerPos.entryTwPremiumDivBySqrtPriceGrowthInsideX96,
-        //         makerPos.entryTwPremiumGrowthBelowX96
-        //     )
-        // );
-        return 0;
-    }
-
-    function addTakerMargin(
-        IPerpManager.Perp storage perp,
-        IPoolManager poolManager,
-        address usdc,
-        IPerpManager.AddMarginParams calldata params
-    )
-        external
-    {
-        address holder = perp.takerPositions[params.posId].holder;
-        uint128 margin = params.margin;
-
-        addMargin(perp, poolManager, usdc, holder, margin);
-
-        // update taker position state
-        perp.takerPositions[params.posId].margin += margin;
-
-        emit IPerpManager.TakerMarginAdded(perp.key.toId(), params.posId, margin);
-    }
-
-    function closeTakerPosition(
-        IPerpManager.Perp storage perp,
-        IPoolManager poolManager,
-        address usdc,
-        IPerpManager.ClosePositionParams calldata params,
-        bool revertChanges // true if used as a view function, otherwise false
-    )
-        external
-    {
-        PoolId perpId = perp.key.toId();
-        IPerpManager.TakerPos memory takerPos = perp.takerPositions[params.posId];
-
-        // if (takerPos.holder == address(0)) {
-        //     if (revertChanges) {
-        //         (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-        //         uint256 newPriceX96 = sqrtPriceX96.toPriceX96();
-        //         LivePositionDetailsReverter.revertLivePositionDetails(0, 0, 0, false, newPriceX96);
-        //     } else {
-        //         revert IPerpManager.InvalidClose(msg.sender, address(0), false);
-        //     }
-        // }
-
-        (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
-        updateTwPremiums(perp, sqrtPriceX96);
-
-        uint160 sqrtPriceLimitX96 = takerPos.isLong ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1; // fix use for band
-
-        bytes memory encodedConfig = abi.encode(
-            UniV4Router.SwapConfig({
-                poolKey: perp.key,
-                isExactIn: takerPos.isLong,
-                zeroForOne: takerPos.isLong,
-                amountSpecified: takerPos.isLong ? uint256(takerPos.perpDelta) : uint256(-takerPos.perpDelta),
-                sqrtPriceLimitX96: sqrtPriceLimitX96,
-                unspecifiedAmountLimit: takerPos.isLong ? params.minAmt1Out : params.maxAmt1In,
-                fee: 0
-            })
+        return Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
+            pos.perpDelta,
+            pos.entryTwPremiumX96,
+            Funding.Growth({
+                twPremiumX96: perp.twPremiumX96,
+                twPremiumDivBySqrtPriceX96: perp.twPremiumDivBySqrtPriceX96
+            }),
+            Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
+                pos.makerDetails.liquidity,
+                pos.makerDetails.tickLower,
+                pos.makerDetails.tickUpper,
+                perp.tickGrowthInfo.getAllFundingGrowth(
+                    pos.makerDetails.tickLower,
+                    pos.makerDetails.tickUpper,
+                    currentTick,
+                    perp.twPremiumX96,
+                    perp.twPremiumDivBySqrtPriceX96
+                ),
+                pos.makerDetails.entryTwPremiumGrowthInsideX96,
+                pos.makerDetails.entryTwPremiumDivBySqrtPriceGrowthInsideX96,
+                pos.makerDetails.entryTwPremiumGrowthBelowX96
+            )
         );
-
-        bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
-
-        (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
-
-        int256 pnl = usdDelta + takerPos.usdDelta;
-
-        (uint160 sqrtPriceX96After, int24 endingTick,,) = poolManager.getSlot0(perpId);
-        updatePremiumPerSecond(perp, sqrtPriceX96After);
-
-        perp.tickGrowthInfo.crossTicks(
-            poolManager,
-            perpId,
-            startingTick,
-            perp.key.tickSpacing,
-            takerPos.isLong,
-            endingTick,
-            perp.twPremiumX96,
-            perp.twPremiumDivBySqrtPriceX96
-        );
-
-        // update mark twap
-        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96After);
-
-        int256 twPremiumGrowthX96 = perp.twPremiumX96 - takerPos.entryTwPremiumX96;
-        int256 size = takerPos.perpDelta >= 0 ? takerPos.perpDelta : -takerPos.perpDelta;
-        int256 funding = twPremiumGrowthX96.mulDivSigned(size, UINT_Q96);
-        if (!takerPos.isLong) funding = -funding;
-
-        uint256 notional = usdDelta < 0 ? uint256(-usdDelta) : uint256(usdDelta);
-
-        (uint256 effectiveMargin, bool isLiquidation) =
-            calcEffectiveMargin(perp, usdc, takerPos.margin, pnl, funding, notional, true, takerPos.holder);
-
-        usdc.safeTransferFrom(perp.vault, takerPos.holder, effectiveMargin);
-
-        (sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-        emit IPerpManager.TakerPositionClosed(perpId, params.posId, isLiquidation, takerPos, sqrtPriceX96);
-        delete perp.takerPositions[params.posId];
     }
 
     function calcEffectiveMargin(
@@ -586,40 +514,18 @@ library PerpLogic {
         pure
         returns (uint256 notional)
     {
-        uint256 perpsBorrowed = (perpDelta < 0) ? uint256(-perpDelta) : uint256(perpDelta);
-        uint256 usdBorrowed = (usdDelta < 0) ? uint256(-usdDelta) : uint256(usdDelta);
+        uint256 perps = perpDelta.abs();
+        uint256 usd = usdDelta.abs();
+
+        console2.log("perps", perps);
+        console2.log("usd", usd);
+        console2.log("sqrtPriceX96", sqrtPriceX96);
 
         // convert currency0Amount (perp contracts) to its value in currency1 (usd)
-        uint256 perpsNotional = perpsBorrowed.mulDiv(sqrtPriceX96.toPriceX96(), UINT_Q96);
+        uint256 perpsNotional = sqrtPriceX96.fullMulDiv(perps * sqrtPriceX96, UINT_Q192);
 
         // currency1Amount is already in USD, so its notional value is its amount
-        notional = perpsNotional + usdBorrowed;
-    }
-
-    function addMargin(
-        IPerpManager.Perp storage perp,
-        IPoolManager poolManager,
-        address usdc,
-        address holder,
-        uint128 margin
-    )
-        internal
-    {
-        (uint160 sqrtPriceX96, int24 currentTick,,) = poolManager.getSlot0(perp.key.toId());
-
-        // update funding accounting
-        updateTwPremiums(perp, sqrtPriceX96);
-        updatePremiumPerSecond(perp, sqrtPriceX96);
-
-        // update mark twap
-        perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
-
-        // validate caller is holder and that margin is nonzero
-        if (msg.sender != holder) revert IPerpManager.InvalidCaller(msg.sender, holder);
-        if (margin == 0) revert IPerpManager.InvalidMargin(margin);
-
-        // transfer margin from sender to vault
-        usdc.safeTransferFrom(msg.sender, perp.vault, margin);
+        notional = perpsNotional + usd;
     }
 
     function updateTwPremiums(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal {
@@ -635,12 +541,16 @@ library PerpLogic {
 
     // expects updateTwPremiums() to have been called before to account for time during old premiumPerSecondX96
     function updatePremiumPerSecond(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal {
-        uint256 markTwapX96 = getTimeWeightedAvg(perp, perp.twapWindow, sqrtPriceX96);
-        uint256 indexTwapX96 = ITimeWeightedAvg(perp.beacon).getTimeWeightedAvg(perp.twapWindow);
+        uint256 twaSqrtMarkX96 = getTimeWeightedAvg(perp, perp.twapWindow, sqrtPriceX96);
+        uint256 twaIndexX96 = ITimeWeightedAvg(perp.beacon).getTimeWeightedAvg(perp.twapWindow);
 
-        perp.premiumPerSecondX96 = ((int256(markTwapX96) - int256(indexTwapX96)) / int256(uint256(FUNDING_INTERVAL)));
+        uint256 twaMarkX192 = twaSqrtMarkX96 * twaSqrtMarkX96;
+        uint256 twaIndexX192 = twaIndexX96 * UINT_Q96;
+
+        perp.premiumPerSecondX96 = ((int256(twaMarkX192) - int256(twaIndexX192)) / INT_Q96 / int256(uint256(FUNDING_INTERVAL)));
     }
 
+    // time weight avg sqrt price x96
     function getTimeWeightedAvg(
         IPerpManager.Perp storage perp,
         uint32 twapSecondsAgo,
@@ -654,21 +564,32 @@ library PerpLogic {
         uint32 timeSinceLastObservation = (block.timestamp - oldestObservationTimestamp).toUint32();
         if (twapSecondsAgo > timeSinceLastObservation) twapSecondsAgo = timeSinceLastObservation;
 
-        if (twapSecondsAgo == 0) return sqrtPriceX96.toPriceX96();
+        if (twapSecondsAgo == 0) return sqrtPriceX96;
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapSecondsAgo;
         secondsAgos[1] = 0;
-        uint216[] memory tickCumulatives = perp.twapState.observe(block.timestamp.toUint32(), secondsAgos, sqrtPriceX96);
-        uint216 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
-        return (tickCumulativesDelta / uint216(twapSecondsAgo)).toPriceX96();
+        uint216[] memory sqrtPriceX96Cumulatives =
+            perp.twapState.observe(block.timestamp.toUint32(), secondsAgos, sqrtPriceX96);
+        uint216 sqrtPriceX96CumulativesDelta = sqrtPriceX96Cumulatives[1] - sqrtPriceX96Cumulatives[0];
+        return (sqrtPriceX96CumulativesDelta / uint216(twapSecondsAgo));
     }
 
-    function increaseCardinalityNext(IPerpManager.Perp storage perp, uint32 cardinalityNext) internal {
-        perp.twapState.grow(cardinalityNext);
-    }
+    function getSqrtPriceLimitX96(
+        IPerpManager.Perp storage perp,
+        uint160 sqrtPriceX96,
+        bool isBuy
+    )
+        internal
+        view
+        returns (uint160 sqrtPriceLimitX96)
+    {
+        uint256 twaSqrtPriceX96 = getTimeWeightedAvg(perp, TWAP_WINDOW, sqrtPriceX96);
+        uint256 multiplier = isBuy ? SQRT_PRICE_UPPER_MULTI_X96 : SQRT_PRICE_LOWER_MULTI_X96;
 
-    function toPriceX96(uint256 sqrtPriceX96) internal pure returns (uint256) {
-        return sqrtPriceX96.fullMulDiv(sqrtPriceX96, UINT_Q96);
+        sqrtPriceLimitX96 = twaSqrtPriceX96.fullMulDiv(multiplier, UINT_Q96).toUint160();
+
+        if (sqrtPriceLimitX96 > TickMath.MAX_SQRT_PRICE) sqrtPriceLimitX96 = TickMath.MAX_SQRT_PRICE;
+        if (sqrtPriceLimitX96 < TickMath.MIN_SQRT_PRICE) sqrtPriceLimitX96 = TickMath.MIN_SQRT_PRICE;
     }
 }

@@ -21,9 +21,9 @@ interface IPerpManager {
         uint24 insuranceFee; // Share of the trading fee that goes towards insurance (e.g. 0.05 = 5%)
         uint24 liquidationFee;
         uint24 liquidatorFeeSplit;
-        uint64 nextMakerPosId; // ID of the next maker position opened; starts at 1
-        uint64 nextTakerPosId; // ID of the next taker position opened; starts at 1
-        uint24 priceImpactBand; // Maximum allowed divergence between mark and mark twap (e.g. 0.05 = 5%)
+        uint128 nextPosId; // ID of the next position opened; starts at 1
+        uint256 sqrtPriceLowerMultiX96; // Maximum allowed divergence between mark and mark twap (e.g. 0.05 = 5%)
+        uint256 sqrtPriceUpperMultiX96; // Maximum allowed divergence between mark and mark twap (e.g. 0.05 = 5%)
         uint24 minOpeningMargin;
         uint24 minMakerOpeningMarginRatio;
         uint24 maxMakerOpeningMarginRatio;
@@ -37,33 +37,27 @@ interface IPerpManager {
         PoolKey key; // Uniswap's poolKey for identifying a pool
         TradingFee.Config tradingFeeConfig; // Configuration for the trading fee curve
         TimeWeightedAvg.State twapState; // Helpers for computing mark twap
-        mapping(uint128 => MakerPos) makerPositions; // All open maker positions
-        mapping(uint128 => TakerPos) takerPositions; // All open taker positions
+        mapping(uint128 => Position) positions; // All open maker positions
         mapping(int24 => Tick.GrowthInfo) tickGrowthInfo; // Growth info for each tick, used to help compute funding
     }
 
-    struct MakerPos {
-        address holder; // Address of the maker
-        uint32 entryTimestamp; // Timestamp of when the maker opened their position
-        int24 tickLower; // Lower tick of the maker's position
-        int24 tickUpper; // Upper tick of the maker's position
-        uint128 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
-        uint128 liquidity; // Liquidity in Uniswap liquidity units
+    struct Position {
+        address holder; // Address of the maker or taker
+        uint256 margin;
         int256 perpDelta;
         int256 usdDelta;
         int256 entryTwPremiumX96; // twPremiumX96 at the time of entry
+        MakerDetails makerDetails;
+    }
+
+    struct MakerDetails {
+        uint32 entryTimestamp; // Timestamp of when the position was opened
+        int24 tickLower; // Lower tick of the position
+        int24 tickUpper; // Upper tick of the position
+        uint128 liquidity; // Liquidity in Uniswap liquidity units
         int256 entryTwPremiumGrowthInsideX96; // twPremiumGrowthInsideX96 at the time of entry
         int256 entryTwPremiumDivBySqrtPriceGrowthInsideX96; // twPremiumDivBySqrtPriceGrowthInsideX96 at time of entry
         int256 entryTwPremiumGrowthBelowX96; // twPremiumGrowthBelowX96 at the time of entry
-    }
-
-    struct TakerPos {
-        address holder; // Address of the taker
-        bool isLong; // Whether the taker is long or short
-        uint128 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
-        int256 perpDelta;
-        int256 usdDelta;
-        int256 entryTwPremiumX96; // twPremiumX96 at the time of entry
     }
 
     struct CreatePerpParams {
@@ -72,7 +66,7 @@ interface IPerpManager {
     }
 
     struct OpenMakerPositionParams {
-        uint128 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
+        uint256 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
         uint128 liquidity; // Liquidity in Uniswap liquidity units
         int24 tickLower; // Lower tick of the maker's position
         int24 tickUpper; // Upper tick of the maker's position
@@ -80,17 +74,16 @@ interface IPerpManager {
         uint128 maxAmt1In; // Maximum amount of token1 to send in
     }
 
-    // TODO: change to just 1 limit amt
     struct OpenTakerPositionParams {
         bool isLong; // Whether the taker is long or short
-        uint128 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
-        uint128 levX96; // Leverage to open the position at
+        uint256 margin; // Margin in usdc (e.g. 100e6 = 100 usdc)
+        uint256 levX96; // Leverage to open the position at
         uint128 unspecifiedAmountLimit; // min perps out if long; max perps in if short
     }
 
     struct AddMarginParams {
         uint128 posId; // ID of the maker or taker position
-        uint128 margin; // Amount of usdc to add as margin (e.g. 100e6 = 100 usdc)
+        uint256 margin; // Amount of usdc to add as margin (e.g. 100e6 = 100 usdc)
     }
 
     struct ClosePositionParams {
@@ -101,35 +94,13 @@ interface IPerpManager {
     }
 
     event PerpCreated(PoolId perpId, address beacon, uint256 startingSqrtPriceX96);
-    event MakerPositionOpened(PoolId perpId, uint256 makerPosId, MakerPos makerPos, uint256 sqrtPriceX96);
-    event MakerMarginAdded(PoolId perpId, uint256 makerPosId, uint128 amount);
-    event MakerPositionClosed(
-        PoolId perpId, uint256 makerPosId, bool wasLiquidated, MakerPos makerPos, uint256 sqrtPriceX96
-    );
-    event TakerPositionOpened(PoolId perpId, uint256 takerPosId, TakerPos takerPos, uint256 sqrtPriceX96);
-    event TakerMarginAdded(PoolId perpId, uint256 takerPosId, uint128 amount);
-    event TakerPositionClosed(
-        PoolId perpId, uint256 takerPosId, bool wasLiquidated, TakerPos takerPos, uint256 sqrtPriceX96
-    );
-    event MarketKilled(PoolId perpId);
+    event PositionOpened(PoolId perpId, uint256 posId, bool isMaker, uint256 margin, uint256 sqrtPriceX96);
+    event MarginAdded(PoolId perpId, uint256 posId, uint256 newMargin);
+    event PositionClosed(PoolId perpId, uint256 posId, bool wasLiquidated, uint256 sqrtPriceX96);
 
-    error InvalidBeaconAddress(address beacon);
-    error InvalidTradingFeeSplits(uint256 tradingFeeInsuranceSplitX96, uint256 tradingFeeCreatorSplitX96);
-    error InvalidMaxOpeningLev(uint128 maxOpeningLevX96);
-    error InvalidLiquidationLev(uint128 liquidationLevX96, uint128 maxOpeningLevX96);
-    error InvalidLiquidationFee(uint128 liquidationFeeX96);
-    error InvalidLiquidatorFeeSplit(uint128 liquidatorFeeSplitX96);
     error InvalidClose(address caller, address holder, bool isLiquidated);
     error InvalidLiquidity(uint128 liquidity);
-    error InvalidMargin(uint128 margin);
-    error InvalidLevX96(uint256 levX96, uint128 maxOpeningLevX96);
+    error InvalidMargin(uint256 margin);
     error InvalidCaller(address caller, address expectedCaller);
     error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
-    error InvalidPeriphery(address periphery, address expectedRouter, address expectedPositionManager);
-    error PriceImpactTooHigh(uint256 priceX96, uint256 minPriceX96, uint256 maxPriceX96);
-    error InvalidFundingInterval(uint32 fundingInterval);
-    error InvalidPriceImpactBand(uint128 priceImpactBandX96);
-    error InvalidTickRange(int24 tickLower, int24 tickUpper);
-    error InvalidTradingFeeConfig(TradingFee.Config tradingFeeConfig);
-    error InvalidStartingSqrtPriceX96(uint160 startingSqrtPriceX96);
 }

@@ -6,18 +6,12 @@ import {IPerpManager} from "./interfaces/IPerpManager.sol";
 import {LivePositionDetailsReverter} from "./libraries/LivePositionDetailsReverter.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
 import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
-
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 
 // manages state for all perps and contains hooks for uniswap pools
 contract PerpManager is IPerpManager, UnlockCallback {
-    using LivePositionDetailsReverter for bytes;
-    using PerpLogic for *;
-    using TimeWeightedAvg for TimeWeightedAvg.State;
-    using StateLibrary for *;
-
     address public immutable USDC;
 
     mapping(PoolId => IPerpManager.Perp) public perps;
@@ -31,7 +25,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
     // ------------
 
     function createPerp(CreatePerpParams calldata params) external returns (PoolId perpId) {
-        perpId = perps.createPerp(POOL_MANAGER, USDC, params);
+        perpId = PerpLogic.createPerp(perps, POOL_MANAGER, USDC, params);
     }
 
     function openMakerPosition(
@@ -41,21 +35,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 makerPosId)
     {
-        return perps[perpId].openMakerPosition(POOL_MANAGER, USDC, params); // in MakerActions library
-    }
-
-    function addMakerMargin(PoolId perpId, AddMarginParams calldata params) external {
-        perps[perpId].addMakerMargin(POOL_MANAGER, USDC, params); // in MakerActions library
-    }
-
-    function closeMakerPosition(
-        PoolId perpId,
-        ClosePositionParams calldata params
-    )
-        external
-        returns (uint128 takerPosId)
-    {
-        return perps[perpId].closeMakerPosition(POOL_MANAGER, USDC, params, false); // in MakerActions library
+        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true);
     }
 
     function openTakerPosition(
@@ -65,15 +45,15 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 takerPosId)
     {
-        return perps[perpId].openTakerPosition(POOL_MANAGER, USDC, params); // in TakerActions library
+        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false);
     }
 
-    function addTakerMargin(PoolId perpId, AddMarginParams calldata params) external {
-        perps[perpId].addTakerMargin(POOL_MANAGER, USDC, params); // in TakerActions library
+    function addMargin(PoolId perpId, AddMarginParams calldata params) external {
+        PerpLogic.addMargin(perps[perpId], POOL_MANAGER, USDC, params);
     }
 
-    function closeTakerPosition(PoolId perpId, ClosePositionParams calldata params) external {
-        perps[perpId].closeTakerPosition(POOL_MANAGER, USDC, params, false); // in TakerActions library
+    function closePosition(PoolId perpId, ClosePositionParams calldata params) external returns (uint128 posId) {
+        return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
     // // -------------
@@ -81,7 +61,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
     // // -------------
 
     function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
-        perps[perpId].increaseCardinalityNext(cardinalityNext);
+        TimeWeightedAvg.grow(perps[perpId].twapState, cardinalityNext);
     }
 
     // // ----
@@ -89,53 +69,31 @@ contract PerpManager is IPerpManager, UnlockCallback {
     // // ----
 
     function getTimeWeightedAvg(PoolId perpId, uint32 secondsAgo) public view returns (uint256) {
-        (uint160 sqrtPriceX96,,,) = POOL_MANAGER.getSlot0(perpId);
-        return perps[perpId].getTimeWeightedAvg(secondsAgo, sqrtPriceX96);
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
+        return PerpLogic.getTimeWeightedAvg(perps[perpId], secondsAgo, sqrtPriceX96);
     }
 
-    function getMakerPosition(PoolId perpId, uint128 makerPosId) external view returns (IPerpManager.MakerPos memory) {
-        return perps[perpId].makerPositions[makerPosId];
-    }
-
-    function getTakerPosition(PoolId perpId, uint128 takerPosId) external view returns (IPerpManager.TakerPos memory) {
-        return perps[perpId].takerPositions[takerPosId];
+    function getPosition(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory) {
+        return perps[perpId].positions[posId];
     }
 
     // isn't view since it calls a non-view function that reverts with live position details
-    function liveMakerDetails(
+    function livePositionDetails(
         PoolId perpId,
-        uint128 makerPosId
+        uint128 posId
     )
         external
         returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
     {
         // params are minimized / maximized where possible to ensure no reverts
         ClosePositionParams memory params =
-            ClosePositionParams({posId: makerPosId, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max});
+            ClosePositionParams({posId: posId, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max});
 
         // pass revert == true into close so we can parse live position details from the reason
-        try perps[perpId].closeMakerPosition(POOL_MANAGER, USDC, params, true) {}
+        try PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, true) {}
         catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = reason.parseLivePositionDetails();
-        }
-    }
-
-    // isn't view since it calls a non-view function that reverts with live position details
-    function liveTakerDetails(
-        PoolId perpId,
-        uint128 takerPosId
-    )
-        external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
-    {
-        // params are minimized / maximized where possible to ensure no reverts
-        ClosePositionParams memory params =
-            ClosePositionParams({posId: takerPosId, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max});
-
-        // pass revert == true into close so we can parse live position details from the reason
-        try perps[perpId].closeTakerPosition(POOL_MANAGER, USDC, params, true) {}
-        catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = reason.parseLivePositionDetails();
+            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) =
+                LivePositionDetailsReverter.parseLivePositionDetails(reason);
         }
     }
 
