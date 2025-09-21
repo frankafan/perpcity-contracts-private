@@ -1,0 +1,179 @@
+{
+    "language": "Solidity",
+    "sources": {
+        "src/PerpManager.sol": {
+            "urls": [
+                "src/PerpManager.sol"
+            ]
+        },
+        "src/AccountingToken.sol": {
+            "urls": [
+                "src/AccountingToken.sol"
+            ]
+        },
+        "src/BeaconRegistry.sol": {
+            "urls": [
+                "src/BeaconRegistry.sol"
+            ]
+        },
+        "src/PerpVault.sol": {
+            "urls": [
+                "src/PerpVault.sol"
+            ]
+        },
+        "src/testnet/TestnetBeacon.sol": {
+            "urls": [
+                "src/testnet/TestnetBeacon.sol"
+            ]
+        },
+        "src/testnet/TestnetBeaconFactory.sol": {
+            "urls": [
+                "src/testnet/TestnetBeaconFactory.sol"
+            ]
+        },
+        "src/testnet/TestnetUSDC.sol": {
+            "urls": [
+                "src/testnet/TestnetUSDC.sol"
+            ]
+        },
+        "src/interfaces/IBeacon.sol": {
+            "urls": [
+                "src/interfaces/IBeacon.sol"
+            ]
+        },
+        "src/interfaces/IPerpManager.sol": {
+            "urls": [
+                "src/interfaces/IPerpManager.sol"
+            ]
+        },
+        "src/interfaces/ITWAPBeacon.sol": {
+            "urls": [
+                "src/interfaces/ITWAPBeacon.sol"
+            ]
+        },
+        "src/interfaces/IVerifier.sol": {
+            "urls": [
+                "src/interfaces/IVerifier.sol"
+            ]
+        },
+        "src/libraries/FixedPoint96.sol": {
+            "urls": [
+                "src/libraries/FixedPoint96.sol"
+            ]
+        },
+        "src/libraries/Funding.sol": {
+            "urls": [
+                "src/libraries/Funding.sol"
+            ]
+        },
+        "src/libraries/Hook.sol": {
+            "urls": [
+                "src/libraries/Hook.sol"
+            ]
+        },
+        "src/libraries/LivePositionDetailsReverter.sol": {
+            "urls": [
+                "src/libraries/LivePositionDetailsReverter.sol"
+            ]
+        },
+        "src/libraries/MakerActions.sol": {
+            "urls": [
+                "src/libraries/MakerActions.sol"
+            ]
+        },
+        "src/libraries/MarketDeath.sol": {
+            "urls": [
+                "src/libraries/MarketDeath.sol"
+            ]
+        },
+        "src/libraries/MoreSignedMath.sol": {
+            "urls": [
+                "src/libraries/MoreSignedMath.sol"
+            ]
+        },
+        "src/libraries/PerpLogic.sol": {
+            "urls": [
+                "src/libraries/PerpLogic.sol"
+            ]
+        },
+        "src/libraries/SharedPositionLogic.sol": {
+            "urls": [
+                "src/libraries/SharedPositionLogic.sol"
+            ]
+        },
+        "src/libraries/TakerActions.sol": {
+            "urls": [
+                "src/libraries/TakerActions.sol"
+            ]
+        },
+        "src/libraries/Tick.sol": {
+            "urls": [
+                "src/libraries/Tick.sol"
+            ]
+        },
+        "src/libraries/TickTWAP.sol": {
+            "urls": [
+                "src/libraries/TickTWAP.sol"
+            ]
+        },
+        "src/libraries/TokenMath.sol": {
+            "urls": [
+                "src/libraries/TokenMath.sol"
+            ]
+        },
+        "src/libraries/TradingFee.sol": {
+            "urls": [
+                "src/libraries/TradingFee.sol"
+            ]
+        },
+        "src/libraries/UintTWAP.sol": {
+            "urls": [
+                "src/libraries/UintTWAP.sol"
+            ]
+        },
+        "src/libraries/UniswapV4Utility.sol": {
+            "urls": [
+                "src/libraries/UniswapV4Utility.sol"
+            ]
+        },
+        "src/utils/Constants.sol": {
+            "urls": [
+                "src/utils/Constants.sol"
+            ]
+        }
+    },
+    "settings": {
+        "optimizer": {
+            "enabled": true,
+            "runs": 10000
+        },
+        "evmVersion": "cancun",
+        "viaIR": true,
+        "metadata": {
+            "bytecodeHash": "none",
+            "appendCBOR": false
+        },
+        "remappings": [
+            "@forge-std/=lib/forge-std/src/",
+            "@solady/=lib/solady/",
+            "@uniswap/universal-router/=lib/universal-router/",
+            "@uniswap/v4-core/=lib/v4-core/",
+            "@uniswap/v4-periphery/=lib/v4-periphery/",
+            "@uniswap/v2-core/=lib/v2-core/",
+            "@uniswap/v3-core/=lib/v3-core/",
+            "permit2/=lib/v4-periphery/lib/permit2/"
+        ],
+        "outputSelection": {
+            "*": {
+                "*": [
+                    "abi",
+                    "evm.bytecode",
+                    "evm.deployedBytecode",
+                    "evm.assembly",
+                    "evm.methodIdentifiers",
+                    "metadata"
+                ]
+            }
+        }
+    }
+}
