@@ -54,12 +54,12 @@ contract TempTest is DeployPoolManager {
 
     function test_temp() public {
         // deploy a beacon
-        IBeacon beacon = new TestnetBeacon(actor, 100 * UINT_Q96, 100);
+        IBeacon beacon = new TestnetBeacon(actor, 50 * UINT_Q96, 100);
 
         // deploy a perp
         PoolId perpId = perpManager.createPerp(
             IPerpManager.CreatePerpParams({
-                startingSqrtPriceX96: uint160(10 * UINT_Q96), // $100
+                startingSqrtPriceX96: 560227709747861399187319382275, // sqrt(50)
                 beacon: address(beacon)
             })
         );
@@ -67,8 +67,8 @@ contract TempTest is DeployPoolManager {
         // open a maker position
         vm.startPrank(actor);
 
-        uint160 sqrtPriceLowerX96 = uint160(FixedPointMathLib.mulSqrt(90, UINT_Q96 * UINT_Q96));
-        uint160 sqrtPriceUpperX96 = uint160(FixedPointMathLib.mulSqrt(110, UINT_Q96 * UINT_Q96));
+        uint160 sqrtPriceLowerX96 = uint160(FixedPointMathLib.mulSqrt(45, UINT_Q96 * UINT_Q96));
+        uint160 sqrtPriceUpperX96 = uint160(FixedPointMathLib.mulSqrt(55, UINT_Q96 * UINT_Q96));
 
         (,,,,,,,,,,,,,,,,,,,,,,,, PoolKey memory key,,) = perpManager.perps(perpId);
         int24 tickSpacing = key.tickSpacing;
@@ -98,50 +98,72 @@ contract TempTest is DeployPoolManager {
 
         uint256 takerMargin = 20e6;
 
-        // // open taker long
-        // deal(usdc, actor, takerMargin);
-        // usdc.safeApprove(address(perpManager), takerMargin);
-
-        // uint128 takerPos1Id = perpManager.openTakerPosition(
-        //     perpId,
-        //     IPerpManager.OpenTakerPositionParams({
-        //         isLong: true,
-        //         margin: takerMargin,
-        //         levX96: 2 * UINT_Q96,
-        //         unspecifiedAmountLimit: 0
-        //     })
-        // );
-
-        // open taker short
+        // open taker long
         deal(usdc, actor, takerMargin);
         usdc.safeApprove(address(perpManager), takerMargin);
 
-        uint128 takerPos2Id = perpManager.openTakerPosition(
+        uint128 takerPos1Id = perpManager.openTakerPosition(
             perpId,
             IPerpManager.OpenTakerPositionParams({
-                isLong: false,
+                isLong: true,
                 margin: takerMargin,
                 levX96: 2 * UINT_Q96,
-                unspecifiedAmountLimit: type(uint128).max
+                unspecifiedAmountLimit: 0
             })
         );
 
-        skip(1 hours);
+        IPerpManager.Position memory takerPos1 = perpManager.getPosition(perpId, takerPos1Id);
 
-        int256 pnl;
-        int256 fundingPayment;
-        int256 effectiveMargin;
-        bool isLiquidatable;
-        uint256 newPriceX96;
-
-        (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, makerPosId);
-        console2.log("makerPosId", makerPosId);
-        console2.log("pnl", pnl);
-        console2.log("fundingPayment", fundingPayment);
-        console2.log("effectiveMargin", effectiveMargin);
-        console2.log("isLiquidatable", isLiquidatable);
-        console2.log("newPriceX96", newPriceX96);
+        console2.log("takerPos1Id", takerPos1Id);
+        console2.log("margin", takerPos1.margin);
+        console2.log("perpDelta", takerPos1.perpDelta);
+        console2.log("usdDelta", takerPos1.usdDelta);
         console2.log();
+
+        (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt) = perpManager.quoteTakerPosition(perpId, IPerpManager.OpenTakerPositionParams({
+            isLong: true,
+            margin: takerMargin,
+            levX96: 2 * UINT_Q96,
+            unspecifiedAmountLimit: 0
+        }));
+
+        console2.log("success", success);
+        console2.log("perpDelta", perpDelta);
+        console2.log("usdDelta", usdDelta);
+        console2.log("creatorFeeAmt", creatorFeeAmt);
+        console2.log("insuranceFeeAmt", insuranceFeeAmt);
+        console2.log("lpFeeAmt", lpFeeAmt);
+
+        // // open taker short
+        // deal(usdc, actor, takerMargin);
+        // usdc.safeApprove(address(perpManager), takerMargin);
+
+        // uint128 takerPos2Id = perpManager.openTakerPosition(
+        //     perpId,
+        //     IPerpManager.OpenTakerPositionParams({
+        //         isLong: false,
+        //         margin: takerMargin,
+        //         levX96: 2 * UINT_Q96,
+        //         unspecifiedAmountLimit: type(uint128).max
+        //     })
+        // );
+
+        // skip(1 hours);
+
+        // int256 pnl;
+        // int256 fundingPayment;
+        // int256 effectiveMargin;
+        // bool isLiquidatable;
+        // uint256 newPriceX96;
+
+        // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, makerPosId);
+        // console2.log("makerPosId", makerPosId);
+        // console2.log("pnl", pnl);
+        // console2.log("fundingPayment", fundingPayment);
+        // console2.log("effectiveMargin", effectiveMargin);
+        // console2.log("isLiquidatable", isLiquidatable);
+        // console2.log("newPriceX96", newPriceX96);
+        // console2.log();
 
         // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos1Id);
         // console2.log("takerPos1Id", takerPos1Id);
@@ -152,12 +174,12 @@ contract TempTest is DeployPoolManager {
         // console2.log("newPriceX96", newPriceX96);
         // console2.log();
         
-        (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos2Id);
-        console2.log("takerPos2Id", takerPos2Id);
-        console2.log("pnl", pnl);
-        console2.log("fundingPayment", fundingPayment);
-        console2.log("effectiveMargin", effectiveMargin);
-        console2.log("isLiquidatable", isLiquidatable);
-        console2.log("newPriceX96", newPriceX96);
+        // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos2Id);
+        // console2.log("takerPos2Id", takerPos2Id);
+        // console2.log("pnl", pnl);
+        // console2.log("fundingPayment", fundingPayment);
+        // console2.log("effectiveMargin", effectiveMargin);
+        // console2.log("isLiquidatable", isLiquidatable);
+        // console2.log("newPriceX96", newPriceX96);
     }
 }

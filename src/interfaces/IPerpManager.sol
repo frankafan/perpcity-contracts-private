@@ -93,14 +93,15 @@ interface IPerpManager {
         uint128 maxAmt1In; // Maximum usd to buy for if short, otherwise ignored
     }
 
-    event PerpCreated(PoolId perpId, address beacon, uint256 startingSqrtPriceX96);
-    event PositionOpened(PoolId perpId, uint256 posId, bool isMaker, uint256 margin, uint256 sqrtPriceX96);
+    event PerpCreated(PoolId perpId, address beacon, uint256 startingSqrtPriceX96, uint256 indexPriceX96);
+    event PositionOpened(PoolId perpId, uint256 posId, address holder, bool isMaker, int256 perpDelta, uint256 sqrtPriceX96, int256 fundingPremiumPerSecX96);
     event MarginAdded(PoolId perpId, uint256 posId, uint256 newMargin);
-    event PositionClosed(PoolId perpId, uint256 posId, bool wasLiquidated, uint256 sqrtPriceX96);
+    event PositionClosed(PoolId perpId, uint256 posId, address holder, bool wasMaker, int256 perpDelta, int256 pnl, bool wasLiquidated, uint256 sqrtPriceX96, int256 fundingPremiumPerSecX96);
 
     error InvalidClose(address caller, address holder, bool isLiquidated);
     error InvalidLiquidity(uint128 liquidity);
     error InvalidMargin(uint256 margin);
     error InvalidCaller(address caller, address expectedCaller);
     error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
+    error ZeroSizePosition(int256 perpDelta, int256 usdDelta);
 }

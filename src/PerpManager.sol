@@ -9,6 +9,11 @@ import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {IBeacon} from "./interfaces/IBeacon.sol";
+import {TradingFee} from "./libraries/TradingFee.sol";
+import {QuoteReverter} from "./libraries/QuoteReverter.sol";
 
 // manages state for all perps and contains hooks for uniswap pools
 contract PerpManager is IPerpManager, UnlockCallback {
@@ -35,7 +40,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 makerPosId)
     {
-        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true);
+        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
     function openTakerPosition(
@@ -45,7 +50,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 takerPosId)
     {
-        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false);
+        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
     function addMargin(PoolId perpId, AddMarginParams calldata params) external {
@@ -56,25 +61,84 @@ contract PerpManager is IPerpManager, UnlockCallback {
         return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
-    // // -------------
-    // // TWAP ACTIONS
-    // // -------------
+    // -------------
+    // TWAP ACTIONS
+    // -------------
 
     function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
         TimeWeightedAvg.grow(perps[perpId].twapState, cardinalityNext);
     }
 
-    // // ----
-    // // VIEW / READ
-    // // ----
+    // ----
+    // VIEW
+    // ----
+
+    function tickSpacing(PoolId perpId) external view returns (int24) {
+        return perps[perpId].key.tickSpacing;
+    }
+
+    function sqrtPriceX96(PoolId perpId) external view returns (uint160 sqrtPrice) {
+        (sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
+    }
+
+    function fees(PoolId perpId) external view returns (uint24 creatorFee, uint24 insurnaceFee, uint24 lpFee, uint24 liquidationFee) {
+        creatorFee = perps[perpId].creatorFee;
+        insurnaceFee = perps[perpId].insuranceFee;
+        lpFee = TradingFee.calculateTradingFee(perps[perpId], POOL_MANAGER);
+        liquidationFee = perps[perpId].liquidationFee;
+    }
+
+    function tradingBounds(PoolId perpId) external view returns (uint24 minOpeningMargin, uint24 minMakerMarginRatio, uint24 maxMakerMarginRatio, uint24 makerLiquidationMarginRatio, uint24 minTakerMarginRatio, uint24 maxTakerMarginRatio, uint24 takerLiquidationMarginRatio) {
+        minOpeningMargin = perps[perpId].minOpeningMargin;
+        minMakerMarginRatio = perps[perpId].minMakerOpeningMarginRatio;
+        maxMakerMarginRatio = perps[perpId].maxMakerOpeningMarginRatio;
+        makerLiquidationMarginRatio = perps[perpId].makerLiquidationMarginRatio;
+        minTakerMarginRatio = perps[perpId].minTakerOpeningMarginRatio;
+        maxTakerMarginRatio = perps[perpId].maxTakerOpeningMarginRatio;
+        takerLiquidationMarginRatio = perps[perpId].takerLiquidationMarginRatio;
+    }
+
+    function estimateLiquidityForAmount1(int24 tickA, int24 tickB, uint256 amount1) external pure returns (uint128 liquidity) {
+        return LiquidityAmounts.getLiquidityForAmount1(TickMath.getSqrtPriceAtTick(tickA), TickMath.getSqrtPriceAtTick(tickB), amount1);
+    }
 
     function getTimeWeightedAvg(PoolId perpId, uint32 secondsAgo) public view returns (uint256) {
-        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
-        return PerpLogic.getTimeWeightedAvg(perps[perpId], secondsAgo, sqrtPriceX96);
+        (uint160 sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
+        return PerpLogic.getTimeWeightedAvg(perps[perpId], secondsAgo, sqrtPrice);
     }
 
     function getPosition(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory) {
         return perps[perpId].positions[posId];
+    }
+    
+    function quoteMakerPosition(
+        PoolId perpId,
+        OpenMakerPositionParams calldata params
+    )
+        external
+        returns (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt)
+    {
+        // pass revert == true into close so we can parse live position details from the reason
+        try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, true) {}
+        catch (bytes memory reason) {
+            (success, perpDelta, usdDelta, creatorFeeAmt, insuranceFeeAmt, lpFeeAmt) =
+                QuoteReverter.parseQuote(reason);
+        }
+    }
+
+    function quoteTakerPosition(
+        PoolId perpId,
+        OpenTakerPositionParams calldata params
+    )
+        external
+        returns (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt)
+    {
+        // pass revert == true into close so we can parse live position details from the reason
+        try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, true) {}
+        catch (bytes memory reason) {
+            (success, perpDelta, usdDelta, creatorFeeAmt, insuranceFeeAmt, lpFeeAmt) =
+                QuoteReverter.parseQuote(reason);
+        }
     }
 
     // isn't view since it calls a non-view function that reverts with live position details

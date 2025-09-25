@@ -21,6 +21,8 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {console2} from "forge-std/console2.sol";
+import {IBeacon} from "../interfaces/IBeacon.sol";
+import {QuoteReverter} from "./QuoteReverter.sol";
 
 library PerpLogic {
     using UniV4Router for IPoolManager;
@@ -86,7 +88,9 @@ library PerpLogic {
         perp.twapState.initialize(uint32(block.timestamp));
         perp.twapState.grow(INITIAL_CARDINALITY_NEXT);
 
-        emit IPerpManager.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96);
+        uint256 indexPriceX96 = IBeacon(params.beacon).getData();
+
+        emit IPerpManager.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96, indexPriceX96);
     }
 
     function openPosition(
@@ -94,7 +98,8 @@ library PerpLogic {
         IPoolManager poolManager,
         address usdc,
         bytes memory encodedParams,
-        bool isMaker
+        bool isMaker,
+        bool revertChanges
     )
         external
         returns (uint128 posId)
@@ -110,6 +115,9 @@ library PerpLogic {
         IPerpManager.Position memory pos;
 
         uint256 specifiedMargin;
+        uint256 creatorFeeAmount;
+        uint256 insuranceFeeAmount;
+        uint256 lpFeeAmount;
 
         if (isMaker) {
             IPerpManager.OpenMakerPositionParams memory params =
@@ -185,10 +193,10 @@ library PerpLogic {
             // clean up and maybe combine into one muldiv
             uint256 notionalValue = specifiedMargin.mulDiv(params.levX96, UINT_Q96);
 
-            uint256 creatorFeeAmount = notionalValue.mulDiv(perp.creatorFee, SCALE_1E6);
+            creatorFeeAmount = notionalValue.mulDiv(perp.creatorFee, SCALE_1E6);
             usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount);
 
-            uint256 insuranceFeeAmount = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
+            insuranceFeeAmount = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
 
             pos.margin = specifiedMargin - creatorFeeAmount - insuranceFeeAmount;
             notionalValue = pos.margin.mulDiv(params.levX96, UINT_Q96);
@@ -197,6 +205,12 @@ library PerpLogic {
 
             if (marginRatio < perp.minTakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxTakerOpeningMarginRatio) revert("margin ratio is too high");
+
+            console2.log("SQRT_PRICE_LIMIT_X96", getSqrtPriceLimitX96(perp, sqrtPriceX96, params.isLong));
+
+            (uint160 sqrtPriceX96Before, int24 endingTickBefore,,) = poolManager.getSlot0(perpId);
+            console2.log("SQRT_PRICE_X96_BEFORE", sqrtPriceX96Before);
+            console2.log("endingTick", endingTickBefore);
 
             // determine whether or not to charge fee based on hookData passed in
             uint24 fee = perp.calculateTradingFee(poolManager);
@@ -215,10 +229,12 @@ library PerpLogic {
 
             bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
 
-            (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+            (pos.perpDelta, pos.usdDelta, lpFeeAmount) = abi.decode(encodedDeltas, (int256, int256, uint256));
 
             int24 endingTick;
             (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
+            console2.log("SQRT_PRICE_X96", sqrtPriceX96);
+            console2.log("endingTick", endingTick);
 
             perp.tickGrowthInfo.crossTicks(
                 poolManager,
@@ -232,20 +248,24 @@ library PerpLogic {
             );
         }
 
+        if (pos.perpDelta == 0 && pos.usdDelta == 0) revert IPerpManager.ZeroSizePosition(pos.perpDelta, pos.usdDelta);
+
         pos.holder = msg.sender;
         pos.entryTwPremiumX96 = perp.twPremiumX96;
 
         if (pos.margin < perp.minOpeningMargin) revert IPerpManager.InvalidMargin(pos.margin);
 
-        updatePremiumPerSecond(perp, sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
 
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
         perp.positions[posId] = pos;
 
+        if (revertChanges) QuoteReverter.revertQuote(pos.perpDelta, pos.usdDelta, creatorFeeAmount, insuranceFeeAmount, lpFeeAmount);
+
         usdc.safeTransferFrom(msg.sender, perp.vault, specifiedMargin);
 
-        emit IPerpManager.PositionOpened(perpId, posId, isMaker, pos.margin, sqrtPriceX96);
+        emit IPerpManager.PositionOpened(perpId, posId, pos.holder, isMaker, pos.perpDelta, sqrtPriceX96, fundingPremiumPerSecX96);
     }
 
     function addMargin(
@@ -303,7 +323,9 @@ library PerpLogic {
 
 
         bool isLiquidation;
-        if (pos.makerDetails.liquidity > 0) {
+        bool isMaker = pos.makerDetails.liquidity > 0;
+        int256 pnl;
+        if (isMaker) {
             IPerpManager.MakerDetails memory makerDetails = pos.makerDetails;
 
             bytes memory encodedConfig = abi.encode(
@@ -323,7 +345,7 @@ library PerpLogic {
 
             (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
 
-            int256 pnl = usdDelta + pos.usdDelta;
+            pnl = usdDelta + pos.usdDelta;
 
             int256 takerPerpDelta = perpDelta + pos.perpDelta;
 
@@ -388,9 +410,9 @@ library PerpLogic {
 
             bytes memory encodedDeltas = poolManager.executeAction(UniV4Router.SWAP, encodedConfig);
 
-            (int256 perpDelta, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+            (int256 perpDelta, int256 usdDelta,) = abi.decode(encodedDeltas, (int256, int256, uint256));
 
-            int256 pnl = usdDelta + pos.usdDelta;
+            pnl = usdDelta + pos.usdDelta;
 
             int24 endingTick;
             (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
@@ -422,12 +444,12 @@ library PerpLogic {
             usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
         }
 
-        updatePremiumPerSecond(perp, sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        emit IPerpManager.PositionClosed(perpId, params.posId, isLiquidation, sqrtPriceX96);
+        emit IPerpManager.PositionClosed(perpId, params.posId, pos.holder, isMaker, pos.perpDelta, pnl, isLiquidation, sqrtPriceX96, fundingPremiumPerSecX96);
         delete perp.positions[params.posId];
     }
 
@@ -540,14 +562,15 @@ library PerpLogic {
     }
 
     // expects updateTwPremiums() to have been called before to account for time during old premiumPerSecondX96
-    function updatePremiumPerSecond(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal {
+    function updatePremiumPerSecond(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal returns (int256 premiumPerSecondX96) {
         uint256 twaSqrtMarkX96 = getTimeWeightedAvg(perp, perp.twapWindow, sqrtPriceX96);
         uint256 twaIndexX96 = ITimeWeightedAvg(perp.beacon).getTimeWeightedAvg(perp.twapWindow);
 
         uint256 twaMarkX192 = twaSqrtMarkX96 * twaSqrtMarkX96;
         uint256 twaIndexX192 = twaIndexX96 * UINT_Q96;
 
-        perp.premiumPerSecondX96 = ((int256(twaMarkX192) - int256(twaIndexX192)) / INT_Q96 / int256(uint256(FUNDING_INTERVAL)));
+        premiumPerSecondX96 = ((int256(twaMarkX192) - int256(twaIndexX192)) / INT_Q96 / int256(uint256(FUNDING_INTERVAL)));
+        perp.premiumPerSecondX96 = premiumPerSecondX96;
     }
 
     // time weight avg sqrt price x96

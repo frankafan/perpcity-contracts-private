@@ -183,14 +183,15 @@ library UniV4Router {
         int256 currency0Delta = swapDelta.amount0();
         int256 currency1Delta = swapDelta.amount1();
 
-        int256 deltaToCheck;
+        // TODO: only charge fee in amount 0 & calculate amount to return here
+        uint256 feeAmount = 0;
         if (params.isExactIn) {
             // for exact input, ensure the output amount is not less than the minimum specified
-            deltaToCheck = params.zeroForOne ? currency1Delta : currency0Delta;
+            int256 deltaToCheck = params.zeroForOne ? currency1Delta : currency0Delta;
             revertIfInsufficientAmount(deltaToCheck, params.unspecifiedAmountLimit);
         } else {
             // for exact output, ensure the input amount is not greater than the maximum specified
-            deltaToCheck = params.zeroForOne ? currency0Delta : currency1Delta;
+            int256 deltaToCheck = params.zeroForOne ? currency0Delta : currency1Delta;
             revertIfExcessiveAmount(deltaToCheck, params.unspecifiedAmountLimit);
         }
 
@@ -198,7 +199,7 @@ library UniV4Router {
         clearBalance(poolManager, params.poolKey.currency0, currency0Delta);
         clearBalance(poolManager, params.poolKey.currency1, currency1Delta);
 
-        return abi.encode(currency0Delta, currency1Delta);
+        return abi.encode(currency0Delta, currency1Delta, feeAmount);
     }
 
     function clearBalance(IPoolManager poolManager, Currency currency, int256 delta) internal {
