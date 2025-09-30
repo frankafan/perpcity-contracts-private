@@ -20,14 +20,14 @@ contract BeaconRegistry is Ownable {
         if (beacon == address(0)) revert InvalidBeacon(beacon);
 
         beacons[beacon] = true;
-        (uint256 data,) = IBeacon(beacon).getData();
+        uint256 data = IBeacon(beacon).getData();
 
         emit BeaconRegistered(beacon, data);
     }
 
     function unregisterBeacon(address beacon) external onlyOwner {
         beacons[beacon] = false;
-        (uint256 data,) = IBeacon(beacon).getData();
+        uint256 data = IBeacon(beacon).getData();
 
         emit BeaconUnregistered(beacon, data);
     }

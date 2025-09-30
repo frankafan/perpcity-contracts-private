@@ -18,10 +18,10 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
 
     UintTWAP.State public twapState;
 
-    event DataUpdated(uint256 data);
-
     constructor(address owner, uint256 initialData, uint32 initialCardinalityNext) {
         _initializeOwner(owner);
+        data = initialData;
+        timestamp = block.timestamp;
 
         (twapState.cardinality, twapState.cardinalityNext) =
             twapState.observations.initialize(block.timestamp.toUint32());
@@ -35,8 +35,8 @@ contract TestnetBeacon is ITWAPBeacon, Ownable {
         creationTimestamp = block.timestamp;
     }
 
-    function getData() external view returns (uint256, uint256) {
-        return (data, timestamp);
+    function getData() external view returns (uint256) {
+        return (data);
     }
 
     function updateData(bytes calldata proof, bytes calldata publicSignals) external onlyOwner {
