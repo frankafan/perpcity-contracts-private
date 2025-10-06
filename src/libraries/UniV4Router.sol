@@ -2,74 +2,118 @@
 pragma solidity 0.8.30;
 
 import {AccountingToken} from "../AccountingToken.sol";
-
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {BitMath} from "@uniswap/v4-core/src/libraries/BitMath.sol";
-import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 
+/// @title UniV4Router
+/// @notice A library that contains functions to execute actions in the Uniswap PoolManager
 library UniV4Router {
-    using TransientStateLibrary for IPoolManager;
     using StateLibrary for IPoolManager;
 
-    error InvalidAction(uint8 action);
-    error MaximumAmountExceeded(uint256 maximumAmount, uint256 amountRequested);
-    error MinimumAmountInsufficient(uint256 minimumAmount, uint256 amountReceived);
+    /* STRUCTS */
 
+    /// @notice Configuration parameters for creating a pool
+    /// @param tickSpacing The tick spacing to create the pool with
+    /// @param startingSqrtPriceX96 The starting square root price of the pool scaled by 2^96
     struct CreatePoolConfig {
         int24 tickSpacing;
         uint160 startingSqrtPriceX96;
     }
 
+    /// @notice Configuration parameters for modifying liquidity in a Uniswap pool
+    /// @param poolKey The key of the pool to modify liquidity for
+    /// @param positionId The position ID to modify liquidity for
+    /// @param isAdd Whether to add or remove liquidity
+    /// @param tickLower The lower tick of the liquidity range
+    /// @param tickUpper The upper tick of the liquidity range
+    /// @param liquidityToMove The amount of liquidity to add or remove
+    /// @param amount0Limit Max currency0 amt in for add liquidity or min currency0 amt out for remove liquidity
+    /// @param amount1Limit Max currency1 amt in for add liquidity or min currency1 amt out for remove liquidity
     struct LiquidityConfig {
         PoolKey poolKey;
         uint256 positionId;
-        bool isAdd; // else isRemove
+        bool isAdd;
         int24 tickLower;
         int24 tickUpper;
-        uint256 liquidityToMove; // liquidity amount that will be added or removed
-        uint128 amount0Limit; // max currency0 amt in for add liquidity or min currency0 amt out for remove liquidity
-        uint128 amount1Limit; // max currency1 amt in for add liquidity or min currency1 amt out for remove liquidity
+        uint256 liquidityToMove;
+        uint128 amount0Limit;
+        uint128 amount1Limit;
     }
 
+    /// @notice Configuration parameters for swapping in a Uniswap pool
+    /// @param poolKey The key of the pool to swap in
+    /// @param isExactIn Whether the specified amount is going in or out of the Uniswap pool
+    /// @param zeroForOne Whether the swapper is sending currency0 into the pool for currency1 out or vice versa
+    /// @param amountSpecified The amount of the specified currency to swap in or out
+    /// @param sqrtPriceLimitX96 The square root price limit of the swap. If the swap reaches this price, it will stop
+    /// and only be partially filled. This is scaled by 2^96
+    /// @param unspecifiedAmountLimit The minimum amount of currency received out of the pool if isExactIn or the
+    /// maximum amount of currency sent in if isExactOut. If the limit is breached, the swap will revert
     struct SwapConfig {
         PoolKey poolKey;
-        bool isExactIn; // else isExactOut
+        bool isExactIn;
         bool zeroForOne;
-        uint256 amountSpecified; // amount of currency to move in if isExactIn or out if isExactOut
+        uint256 amountSpecified;
         uint160 sqrtPriceLimitX96;
-        uint128 unspecifiedAmountLimit; // min amount out if isExactIn or max amount in if isExactOut
-        uint24 fee; // the lp fee that will be set before the swap
+        uint128 unspecifiedAmountLimit;
     }
 
-    uint8 internal constant CREATE_POOL = 0x00;
-    uint8 internal constant MODIFY_LIQUIDITY = 0x01;
-    uint8 internal constant SWAP = 0x02;
+    /// @notice Configuration parameters for donating currency1 in a Uniswap pool
+    /// @param poolKey The key of the pool to donate to
+    /// @param amount The amount of currency1 to donate
+    struct DonateConfig {
+        PoolKey poolKey;
+        uint256 amount;
+    }
 
-    function executeAction(
-        IPoolManager poolManager,
-        uint8 action,
-        bytes memory encodedParams
-    )
+    /* CONSTANTS */
+
+    /// @notice The action number that corresponds to creating a pool
+    uint8 constant CREATE_POOL = 0x00;
+    /// @notice The action number that corresponds to modifying liquidity in a pool
+    uint8 constant MODIFY_LIQUIDITY = 0x01;
+    /// @notice The action number that corresponds to swapping in a pool
+    uint8 constant SWAP = 0x02;
+    /// @notice The action number that corresponds to distributing currency1 to LPs in a pool
+    uint8 constant DONATE = 0x03;
+
+    /* ERRORS */
+
+    /// @notice Thrown when the amount sent in is greater than the maximum amount specified
+    error MaximumAmountExceeded(uint256 maximumAmount, uint256 amountRequested);
+    /// @notice Thrown when the amount received is less than the minimum amount specified
+    error MinimumAmountInsufficient(uint256 minimumAmount, uint256 amountReceived);
+
+    /* FUNCTIONS */
+
+    /// @notice Unlocks the pool manager, passing on a specified action and encoded params
+    /// @dev This function can take an invalid action but will revert when UnlockCallback is called
+    /// @param poolManager The pool manager to execute the action on
+    /// @param action The action number to execute
+    /// @param encodedParams The encoded parameters for the action
+    /// @return encodedActionResult The encoded data returned after the action was executed
+    function executeAction(IPoolManager poolManager, uint8 action, bytes memory encodedParams)
         internal
-        returns (bytes memory)
+        returns (bytes memory encodedActionResult)
     {
-        // encode action and encoded params into bytes that will eventually be passed to UnlockCallback
+        // encode action and encodedParams into bytes that are sent with an unlock call to the pool manager
+        // the pool manager will call UnlockCallback and pass this to data to it
         bytes memory unlockData = abi.encode(action, encodedParams);
         return poolManager.unlock(unlockData);
     }
 
-    function createPool(
-        IPoolManager poolManager,
-        CreatePoolConfig memory params
-    )
+    /// @notice Creates a new pool in Uniswap with the given parameters
+    /// @param poolManager The pool manager to create the pool in
+    /// @param params The parameters for creating the pool
+    /// @return encodedPoolKey The encoded pool key of the newly created pool
+    function createPool(IPoolManager poolManager, CreatePoolConfig memory params)
         internal
         returns (bytes memory encodedPoolKey)
     {
@@ -85,59 +129,48 @@ library UniV4Router {
         // assign smaller address to currency0 and larger address to currency1 to match Uniswap's expected format
         if (currency0 > currency1) (currency0, currency1) = (currency1, currency0);
 
-        // create pool key with a dynamic fee and this contract as the hook to allow updateDynamicLPFee calls
+        // create pool key with a zero fee and no hook address since this contract will use donate() for custom fees
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(currency0),
             currency1: Currency.wrap(currency1),
-            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
+            fee: 0,
             tickSpacing: params.tickSpacing,
-            hooks: IHooks(address(this))
+            hooks: IHooks(address(0))
         });
 
         poolManager.initialize(poolKey, params.startingSqrtPriceX96);
-
         return abi.encode(poolKey);
     }
 
-    // this should not be called with a zero liquidityToMove
-    function modifyLiquidity(
-        IPoolManager poolManager,
-        LiquidityConfig memory params
-    )
+    /// @notice Modifies liquidity in a Uniswap pool
+    /// @dev This function should not be called with a zero liquidityToMove
+    /// @param poolManager The pool manager to modify liquidity in
+    /// @param params The parameters for modifying liquidity
+    /// @return encodedDeltas The encoded deltas of the tokens sent in or out of the pool
+    function modifyLiquidity(IPoolManager poolManager, LiquidityConfig memory params)
         internal
         returns (bytes memory encodedDeltas)
     {
         // Uniswap expects positive liquidity when adding and negative when removing
         int256 liquidityChange = params.isAdd ? int256(params.liquidityToMove) : -int256(params.liquidityToMove);
 
-        BalanceDelta feesAccrued;
+        // create modifyLiquidityParams with the given parameters
+        ModifyLiquidityParams memory modifyLiquidityParams = ModifyLiquidityParams({
+            tickLower: params.tickLower,
+            tickUpper: params.tickUpper,
+            liquidityDelta: liquidityChange,
+            salt: bytes32(params.positionId) // using positionId as salt
+        });
+
+        // modifyLiquidity call into PoolManager with empty hook data
+        (BalanceDelta liquidityDelta,) = poolManager.modifyLiquidity(params.poolKey, modifyLiquidityParams, "");
+
+        // if removing liquidity, collect fees and account them into the overall delta
         if (!params.isAdd) {
-            (, feesAccrued) = poolManager.modifyLiquidity(
-                params.poolKey,
-                ModifyLiquidityParams({
-                    tickLower: params.tickLower,
-                    tickUpper: params.tickUpper,
-                    liquidityDelta: 0,
-                    salt: bytes32(params.positionId) // using positionId as salt
-                }),
-                "" // no hook data
-            );
+            modifyLiquidityParams.liquidityDelta = 0;
+            (, BalanceDelta feesAccrued) = poolManager.modifyLiquidity(params.poolKey, modifyLiquidityParams, "");
+            liquidityDelta = liquidityDelta + feesAccrued;
         }
-
-        // modifyLiquidity call into PoolManager which returns deltas with information on token movement
-        (BalanceDelta liquidityDelta,) = poolManager.modifyLiquidity(
-            params.poolKey,
-            ModifyLiquidityParams({
-                tickLower: params.tickLower,
-                tickUpper: params.tickUpper,
-                liquidityDelta: liquidityChange,
-                salt: bytes32(params.positionId) // using positionId as salt
-            }),
-            "" // no hook data
-        );
-
-        // if removing liquidity, account the fees accrued into the overall delta
-        if (!params.isAdd) liquidityDelta = liquidityDelta + feesAccrued;
 
         // currency0Delta and currency1Delta should be <= 0 when adding liquidity and >= 0 when removing
         int256 currency0Delta = liquidityDelta.amount0();
@@ -160,31 +193,24 @@ library UniV4Router {
         return abi.encode(currency0Delta, currency1Delta);
     }
 
+    /// @notice Swaps tokens in a Uniswap pool
+    /// @param poolManager The pool manager to swap in
+    /// @param params The parameters for swapping
+    /// @return encodedDeltas The encoded deltas of the tokens sent in or out of the pool
     function swap(IPoolManager poolManager, SwapConfig memory params) internal returns (bytes memory encodedDeltas) {
-        // update the dynamic lp fee before the swap
-        // fee in params should only be non-zero for swaps in opening taker positions
-        poolManager.updateDynamicLPFee(params.poolKey, params.fee);
-
         // Uniswap expects negative amountSpecified for exactIn and positive for exactOut
         int256 amountSpecified = params.isExactIn ? -int256(params.amountSpecified) : int256(params.amountSpecified);
 
-        // swap call into PoolManager which returns deltas with information on token movement
-        BalanceDelta swapDelta = poolManager.swap(
-            params.poolKey,
-            SwapParams({
-                zeroForOne: params.zeroForOne,
-                amountSpecified: amountSpecified,
-                sqrtPriceLimitX96: params.sqrtPriceLimitX96
-            }),
-            "" // no hook data
-        );
+        // create swapParams with the given parameters
+        SwapParams memory swapParams = SwapParams(params.zeroForOne, amountSpecified, params.sqrtPriceLimitX96);
 
-        // the currency moving into the pool should be < 0 and the currency moving out should be > 0
+        // swap call into PoolManager with empty hook data
+        BalanceDelta swapDelta = poolManager.swap(params.poolKey, swapParams, "");
+
+        // the currency delta moving into the pool should be < 0 and the currency delta moving out should be > 0
         int256 currency0Delta = swapDelta.amount0();
         int256 currency1Delta = swapDelta.amount1();
 
-        // TODO: only charge fee in amount 0 & calculate amount to return here
-        uint256 feeAmount = 0;
         if (params.isExactIn) {
             // for exact input, ensure the output amount is not less than the minimum specified
             int256 deltaToCheck = params.zeroForOne ? currency1Delta : currency0Delta;
@@ -199,9 +225,23 @@ library UniV4Router {
         clearBalance(poolManager, params.poolKey.currency0, currency0Delta);
         clearBalance(poolManager, params.poolKey.currency1, currency1Delta);
 
-        return abi.encode(currency0Delta, currency1Delta, feeAmount);
+        return abi.encode(currency0Delta, currency1Delta);
     }
 
+    /// @notice Distributes currency1 to LPs in a Uniswap pool
+    /// @param poolManager The pool manager to donate to
+    /// @param params The parameters for donating
+    function donate(IPoolManager poolManager, DonateConfig memory params) internal {
+        // donate call into PoolManager with empty hook data and clear the currency1 delta
+        BalanceDelta donationDelta = poolManager.donate(params.poolKey, 0, params.amount, "");
+        /// TODO: add back or remove
+        // clearBalance(poolManager, params.poolKey.currency1, donationDelta.amount1());
+    }
+
+    /// @notice Clears the credit or debt of a currency in the pool manager
+    /// @param poolManager The pool manager to clear the balance in
+    /// @param currency The currency to clear the balance of
+    /// @param delta The delta of the currency to clear
     function clearBalance(IPoolManager poolManager, Currency currency, int256 delta) internal {
         // return early if nothing is owed
         if (delta == 0) return;
@@ -218,15 +258,21 @@ library UniV4Router {
         }
     }
 
+    /// @notice Reverts if the amount received is less than the minimum specified
+    /// @param delta The delta of the currency to check
+    /// @param min The minimum amount
     function revertIfInsufficientAmount(int256 delta, uint256 min) internal pure {
         if (delta > 0 && uint256(delta) < min) revert MinimumAmountInsufficient(min, uint256(delta));
     }
 
+    /// @notice Reverts if the amount sent in is greater than the maximum specified
+    /// @param delta The delta of the currency to check
+    /// @param max The maximum amount
     function revertIfExcessiveAmount(int256 delta, uint256 max) internal pure {
         if (delta < 0 && uint256(-delta) > max) revert MaximumAmountExceeded(max, uint256(-delta));
     }
 
-    // CLEAN BELOW
+    /// TODO: clean below
 
     function isTickInitialized(IPoolManager poolManager, PoolId poolId, int24 tick) internal view returns (bool) {
         (uint128 tickLowerLiquidityGrossBefore,,,) = poolManager.getTickInfo(poolId, tick);
@@ -247,11 +293,7 @@ library UniV4Router {
         int24 tick,
         int24 tickSpacing,
         bool lte
-    )
-        internal
-        view
-        returns (int24 next, bool initialized)
-    {
+    ) internal view returns (int24 next, bool initialized) {
         unchecked {
             int24 compressed = compress(tick, tickSpacing);
 

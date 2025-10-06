@@ -1,309 +1,251 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {MAX_CARDINALITY} from "./Constants.sol";
+import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 
-/// @title TWA
-/// @notice Provides price data useful for a wide variety of system designs. Based on Uniswap's V3 Oracle
-/// @dev Instances of stored oracle data, "observations", are collected in the oracle array
-/// Every pool is initialized with an oracle array length of 1. Anyone can pay the SSTOREs to increase the
-/// maximum length of the oracle array. New slots will be added when the array is fully populated.
-/// Observations are overwritten when the full length of the oracle array is populated.
-/// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
+// The maximum usable length of the observations array is 2^16 - 1 so that max iterations in binary search is 16
+uint256 constant MAX_CARDINALITY_CAP = 65_535;
+
+/// @title TimeWeightedAvg
+/// @notice Provides utility to track a value and calculate time weighted averages on it
+/// @dev Instances of the value at a given timestamp are stored in an observations array. This array is initialized with
+/// a cap of usable slots at 1. Anyone can pay the SSTOREs needed to increase this cap. Observations are overwritten
+/// when the cap of usable slots is reached.
 library TimeWeightedAvg {
+    using SafeCastLib for uint256;
+
+    /* STRUCTS */
+
+    /// @notice State that must be stored by contracts using this library
+    /// @param index The index of the most recent observation
+    /// @param cardinality The number of usable slots in the observations array
+    /// @param cardinalityCap The max size cardinality can be increased to.
+    /// cardinalityCap itself can also be increased up to MAX_CARDINALITY_CAP
+    /// @param observations The array of observations
     struct State {
-        uint32 index;
-        uint32 cardinality;
-        uint32 cardinalityNext;
-        Observation[MAX_CARDINALITY] observations;
+        uint16 index;
+        uint16 cardinality;
+        uint16 cardinalityCap;
+        Observation[MAX_CARDINALITY_CAP] observations;
     }
 
+    /// @notice Observation stored each time the value being tracked changes
+    /// @param timestamp The timestamp of the observation
+    /// @param cumulativeVal The value accumulator, i.e. value * time elapsed since the first observation
+    /// @param initialized Whether the observation is initialized
     struct Observation {
-        // the block timestamp of the observation
-        uint32 blockTimestamp;
-        // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
-        uint216 cumulativeValue;
-        // whether or not the observation is initialized
+        uint32 timestamp;
+        uint216 cumulativeVal;
         bool initialized;
     }
 
-    /// @notice Transforms a previous observation into a new observation, given the passage of time and the current tick
-    /// value
-    /// @dev blockTimestamp _must_ be chronologically equal to or greater than last.blockTimestamp, safe for 0 or 1
-    /// overflows
-    /// @param last The specified observation to be transformed
-    /// @param blockTimestamp The timestamp of the new observation
-    /// @param value The active tick at the time of the new observation
-    /// @return Observation The newly populated observation
-    function transform(
-        Observation memory last,
-        uint32 blockTimestamp,
-        uint216 value
-    )
+    /* FUNCTIONS */
+
+    /// @notice Initialize the observations array by writing the first slot
+    /// @dev This should only be called once for the lifecycle of State
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param blockTimestamp The time of initialization, via block.timestamp truncated to uint32
+    function initialize(State storage state, uint32 blockTimestamp) internal {
+        state.observations[0] = Observation({timestamp: blockTimestamp, cumulativeVal: 0, initialized: true});
+        state.cardinality = state.cardinalityCap = 1;
+    }
+
+    /// @notice Allows cardinality to be increased to `newCap` when cardinality reaches old capacity
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param newCap The proposed new cardinality cap
+    function increaseCardinalityCap(State storage state, uint16 newCap) internal {
+        // no-op if the passed newCap value isn't greater than the current newCap value
+        if (newCap <= state.cardinalityCap) return;
+
+        // store non-zero values in each slot to prevent fresh SSTOREs when they are first used
+        // these observations will not be in calculations since they are not initialized
+        for (uint16 i = state.cardinalityCap; i < newCap; i++) {
+            state.observations[i].timestamp = 1;
+        }
+        state.cardinalityCap = newCap;
+    }
+
+    /// @notice Calculates a new observation given the most recent observation
+    /// @param recentObservation The most recent observation stored
+    /// @param blockTimestamp The timestamp of the new observation. This must be at or after recentObservation.timestamp
+    /// @param currentVal The value at the time of the new observation
+    /// @return newObservation The new observation to be stored
+    function calcObservation(Observation memory recentObservation, uint32 blockTimestamp, uint256 currentVal)
         private
         pure
-        returns (Observation memory)
+        returns (Observation memory newObservation)
     {
-        uint32 delta = blockTimestamp - last.blockTimestamp;
+        uint32 timePassed = blockTimestamp - recentObservation.timestamp;
         return Observation({
-            blockTimestamp: blockTimestamp,
-            cumulativeValue: last.cumulativeValue + value * uint216(delta),
+            timestamp: blockTimestamp,
+            cumulativeVal: (recentObservation.cumulativeVal + currentVal * timePassed).toUint216(),
             initialized: true
         });
     }
 
-    /// @notice Initialize the oracle array by writing the first slot. Called once for the lifecycle of the observations
-    /// array
-    /// @param state The stored oracle array
-    /// @param time The time of the oracle initialization, via block.timestamp truncated to uint32
-    function initialize(State storage state, uint32 time) internal {
-        state.observations[0] = Observation({blockTimestamp: time, cumulativeValue: 0, initialized: true});
-        state.cardinality = 1;
-        state.cardinalityNext = 1;
-    }
-
-    /// @notice Writes an oracle observation to the array
-    /// @dev Writable at most once per block. Index represents the most recently written element. cardinality and index
-    /// must be tracked externally.
-    /// If the index is at the end of the allowable array length (according to cardinality), and the next cardinality
-    /// is greater than the current one, cardinality may be increased. This restriction is created to preserve ordering.
-    /// @param state The stored oracle array
+    /// @notice Writes an observation to the array
+    /// @dev Writes at most once per block
+    /// @param state The caller's time weighted average helper data and observation history
     /// @param blockTimestamp The timestamp of the new observation
-    /// @param value The active tick at the time of the new observation
-    function write(State storage state, uint32 blockTimestamp, uint216 value) internal {
-        Observation[MAX_CARDINALITY] storage observations = state.observations;
-        uint32 index = state.index;
-        uint32 cardinality = state.cardinality;
-        uint32 cardinalityNext = state.cardinalityNext;
-        Observation memory last = observations[index];
+    /// @param currentVal The value at the time of the new observation
+    function write(State storage state, uint32 blockTimestamp, uint256 currentVal) internal {
+        uint16 cardinality = state.cardinality;
+        uint16 cardinalityCap = state.cardinalityCap;
+        Observation memory recentObservation = state.observations[state.index];
 
         // early return if we've already written an observation this block
-        if (last.blockTimestamp == blockTimestamp) return;
+        if (recentObservation.timestamp == blockTimestamp) return;
 
-        // if the conditions are right, we can bump the cardinality
-        if (cardinalityNext > cardinality && index == (cardinality - 1)) state.cardinality = cardinalityNext;
+        // if cardinality is below the cap, we can bump cardinality to cardinalityCap
+        // index has to be at the end of the array's usable slots to maintain ordering
+        if (cardinalityCap > cardinality && state.index == (cardinality - 1)) state.cardinality = cardinalityCap;
 
-        state.index = (index + 1) % state.cardinality;
-        observations[state.index] = transform(last, blockTimestamp, value);
+        // wrap index around to the beginning of the observations array if cardinality is at capacity
+        state.index = (state.index + 1) % state.cardinality;
+        // use the most recent observation to calculate the next observation and store it at the new index
+        state.observations[state.index] = calcObservation(recentObservation, blockTimestamp, currentVal);
     }
 
-    /// @notice Prepares the oracle array to store up to `next` observations
-    /// @param state The stored oracle array
-    /// @param next The proposed next cardinality which will be populated in the oracle array
-    function grow(State storage state, uint32 next) internal {
-        uint32 current = state.cardinalityNext;
-        require(current > 0, "I");
-        // no-op if the passed next value isn't greater than the current next value
-        if (next <= current) return;
-        // store in each slot to prevent fresh SSTOREs in swaps
-        // this data will not be used because the initialized boolean is still false
-        Observation[MAX_CARDINALITY] storage observations = state.observations;
-        for (uint32 i = current; i < next; i++) {
-            observations[i].blockTimestamp = 1;
-        }
-        state.cardinalityNext = next;
-    }
-
-    /// @notice comparator for 32-bit timestamps
-    /// @dev safe for 0 or 1 overflows, a and b _must_ be chronologically before or equal to time
-    /// @param time A timestamp truncated to 32 bits
-    /// @param a A comparison timestamp from which to determine the relative position of `time`
-    /// @param b From which to determine the relative position of `time`
-    /// @return bool Whether `a` is chronologically <= `b`
-    function lte(uint32 time, uint32 a, uint32 b) private pure returns (bool) {
-        // if there hasn't been overflow, no need to adjust
-        if (a <= time && b <= time) return a <= b;
-
-        uint256 aAdjusted = a > time ? a : a + 2 ** 32;
-        uint256 bAdjusted = b > time ? b : b + 2 ** 32;
-
-        return aAdjusted <= bAdjusted;
-    }
-
-    /// @notice Fetches the observations beforeOrAt and atOrAfter a target, i.e. where [beforeOrAt, atOrAfter] is
-    /// satisfied.
-    /// The result may be the same observation, or adjacent observations.
-    /// @dev The answer must be contained in the array, used when the target is located within the stored observation
-    /// boundaries: older than the most recent observation and younger, or the same age as, the oldest observation
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param target The timestamp at which the reserved observation should be for
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
+    /// @notice Fetches the observations beforeOrAt & atOrAfter a target such that target is in [beforeOrAt, atOrAfter]
+    /// @dev The results could be the same when cardinality = 1. The target must be older than the most recent
+    /// observation and newer (or the same age as) the oldest observation
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param oldestObservationIndex The index of the oldest observation
+    /// @param targetTimestamp The timestamp to bracket beforeOrAt & atOrAfter around
     /// @return beforeOrAt The observation recorded before, or at, the target
     /// @return atOrAfter The observation recorded at, or after, the target
-    function binarySearch(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 time,
-        uint32 target,
-        uint32 index,
-        uint32 cardinality
-    )
+    function binarySearch(State storage state, uint16 oldestObservationIndex, uint32 targetTimestamp)
         private
         view
         returns (Observation memory beforeOrAt, Observation memory atOrAfter)
     {
-        uint256 l = (index + 1) % cardinality; // oldest observation
-        uint256 r = l + cardinality - 1; // newest observation
+        uint256 cardinality = state.cardinality;
+        Observation[MAX_CARDINALITY_CAP] storage observations = state.observations;
+
+        uint256 l = oldestObservationIndex;
+        // if l is 0, then the most recent observation written to is the current index
+        // otherwise, we need to account for wrapping
+        uint256 r = l == 0 ? state.index : l + cardinality - 1;
         uint256 i;
+
         while (true) {
+            // calculate middle observation index
             i = (l + r) / 2;
 
-            beforeOrAt = self[i % cardinality];
+            // the actual index requires i % cardinality to wrap around if needed
+            beforeOrAt = observations[i % cardinality];
+            // set atOrAfter to the observation index after beforeOrAt
+            atOrAfter = observations[(i + 1) % cardinality];
 
-            // we've landed on an uninitialized tick, keep searching higher (more recently)
-            if (!beforeOrAt.initialized) {
+            if (beforeOrAt.timestamp <= targetTimestamp) {
+                // if beforeOrAt <= targetTimestamp <= atOrAfter, we've found the answer
+                if (targetTimestamp <= atOrAfter.timestamp) break;
+                // else, beforeOrAt <= targetTimestamp but targetTimestamp > atOrAfter, so we need to search higher
                 l = i + 1;
-                continue;
+            } else {
+                // beforeOrAt > targetTimestamp, so we need to search lower
+                r = i - 1;
             }
-
-            atOrAfter = self[(i + 1) % cardinality];
-
-            bool targetAtOrAfter = lte(time, beforeOrAt.blockTimestamp, target);
-
-            // check if we've found the answer!
-            if (targetAtOrAfter && lte(time, target, atOrAfter.blockTimestamp)) break;
-
-            if (!targetAtOrAfter) r = i - 1;
-            else l = i + 1;
         }
     }
 
-    /// @notice Fetches the observations beforeOrAt and atOrAfter a given target, i.e. where [beforeOrAt, atOrAfter] is
-    /// satisfied
-    /// @dev Assumes there is at least 1 initialized observation.
-    /// Used by observeSingle() to compute the counterfactual accumulator values as of a given block timestamp.
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param target The timestamp at which the reserved observation should be for
-    /// @param value The active tick at the time of the returned or simulated observation
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
+    /// @notice Fetches the observations beforeOrAt and atOrAfter a given target timestamp
+    /// @dev the oldest observation will be returned if target is before or at the oldest observation.
+    /// targetTimestamp must be older (or the same age as) block.timestamp
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param targetTimestamp The timestamp to bracket beforeOrAt & atOrAfter around
+    /// @param currentVal The current value
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
-    function getSurroundingObservations(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 time,
-        uint32 target,
-        uint216 value,
-        uint32 index,
-        uint32 cardinality
-    )
+    function surrounding(State storage state, uint32 targetTimestamp, uint256 currentVal)
         private
         view
         returns (Observation memory beforeOrAt, Observation memory atOrAfter)
     {
-        // optimistically set before to the newest observation
-        beforeOrAt = self[index];
+        Observation[MAX_CARDINALITY_CAP] storage observations = state.observations;
 
-        // if the target is chronologically at or after the newest observation, we can early return
-        if (lte(time, beforeOrAt.blockTimestamp, target)) {
-            if (beforeOrAt.blockTimestamp == target) {
-                // if newest observation equals target, we're in the same block, so we can ignore atOrAfter
-                return (beforeOrAt, atOrAfter);
-            } else {
-                // otherwise, we need to transform
-                return (beforeOrAt, transform(beforeOrAt, target, value));
-            }
-        }
+        // if the target is before the oldest observation, we use the oldest observation's timestamp as the target
+        uint16 oldestObservationIndex = (state.index + 1) % state.cardinality;
+        Observation memory oldest = observations[oldestObservationIndex];
+        // after a cardinality bump, oldest slot (slot to write to next) may be uninitialized, so use slot 0 instead
+        if (!oldest.initialized) oldest = observations[oldestObservationIndex = 0];
+        // use oldest observation as answer if target is before or at the oldest observation
+        if (targetTimestamp <= oldest.timestamp) return (oldest, oldest);
 
-        // now, set before to the oldest observation
-        beforeOrAt = self[(index + 1) % cardinality];
-        if (!beforeOrAt.initialized) beforeOrAt = self[0];
+        Observation memory newest = state.observations[state.index];
 
-        // ensure that the target is chronologically at or after the oldest observation
-        require(lte(time, beforeOrAt.blockTimestamp, target), "OLD");
+        // if the most recent observation's timestamp is the target, we know mostRecent = beforeOrAt = atOrAfter
+        if (targetTimestamp == newest.timestamp) return (newest, newest);
+        // if target timestamp is after the most recent observation, we know beforeOrAt = most recent observation
+        // and atOrAfter must be calculated based on the current value and time passed since most recent observation
+        if (targetTimestamp > newest.timestamp) return (newest, calcObservation(newest, targetTimestamp, currentVal));
 
         // if we've reached this point, we have to binary search
-        return binarySearch(self, time, target, index, cardinality);
+        return binarySearch(state, oldestObservationIndex, targetTimestamp);
     }
 
-    /// @dev Reverts if an observation at or before the desired observation timestamp does not exist.
-    /// 0 may be passed as `secondsAgo' to return the current cumulative values.
-    /// If called with a timestamp falling between two observations, returns the counterfactual accumulator values
-    /// at exactly the timestamp between the two observations.
-    /// @param self The stored oracle array
-    /// @param time The current block timestamp
-    /// @param secondsAgo The amount of time to look back, in seconds, at which point to return an observation
-    /// @param value The current value
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return cumulativeValue The tick * time elapsed since the pool was first initialized, as of `secondsAgo`
-    function observeSingle(
-        Observation[MAX_CARDINALITY] storage self,
-        uint32 time,
-        uint32 secondsAgo,
-        uint216 value,
-        uint32 index,
-        uint32 cardinality
-    )
-        internal
-        view
-        returns (uint216 cumulativeValue)
-    {
-        if (secondsAgo == 0) {
-            Observation memory last = self[index];
-            if (last.blockTimestamp != time) last = transform(last, time, value);
-            return (last.cumulativeValue);
-        }
-
-        uint32 target = time - secondsAgo;
-        (Observation memory beforeOrAt, Observation memory atOrAfter) =
-            getSurroundingObservations(self, time, target, value, index, cardinality);
-
-        if (target == beforeOrAt.blockTimestamp) {
-            // we're at the left boundary
-            return (beforeOrAt.cumulativeValue);
-        } else if (target == atOrAfter.blockTimestamp) {
-            // we're at the right boundary
-            return (atOrAfter.cumulativeValue);
-        } else {
-            // we're in the middle
-            uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
-            uint32 targetDelta = target - beforeOrAt.blockTimestamp;
-            return (
-                beforeOrAt.cumulativeValue
-                    + ((atOrAfter.cumulativeValue - beforeOrAt.cumulativeValue) / uint216(observationTimeDelta))
-                        * uint216(targetDelta)
-            );
-        }
-    }
-
-    /// @notice Returns the accumulator values as of each time seconds ago from the given time in the array of
-    /// `secondsAgos`
-    /// @dev Reverts if `secondsAgos` > oldest observation
-    /// @param state The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param secondsAgos Each amount of time to look back, in seconds, at which point to return an observation
-    /// @param value The current value
-    /// @return cumulativeValues The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
-    function observe(
+    /// @notice Returns the cumulative value at any timestamp from the oldest observation to block.timestamp.
+    /// If called with a timestamp falling between two observations, returns the counterfactual cumulativeVal
+    /// at exactly the timestamp between the two observations
+    /// @dev It a target timestamp older than the oldest observation is given, the oldest observation is used.
+    /// This funciton expects target timestamps equal to or older than block.timestamp
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param blockTimestamp The current block timestamp
+    /// @param targetTimestamp The timestamp of returned `cumulativeVal`
+    /// @param currentVal The current value
+    /// @return cumulativeVal The cumulative value at the target timestamp
+    function cumulativeValAtTimestamp(
         State storage state,
-        uint32 time,
-        uint32[] memory secondsAgos,
-        uint216 value
-    )
-        internal
-        view
-        returns (uint216[] memory cumulativeValues)
-    {
-        Observation[MAX_CARDINALITY] storage observations = state.observations;
-        uint32 index = state.index;
-        uint32 cardinality = state.cardinality;
+        uint32 blockTimestamp,
+        uint32 targetTimestamp,
+        uint256 currentVal
+    ) internal view returns (uint216 cumulativeVal) {
+        if (targetTimestamp == blockTimestamp) {
+            Observation memory newest = state.observations[state.index];
+            if (newest.timestamp != blockTimestamp) newest = calcObservation(newest, blockTimestamp, currentVal);
+            return newest.cumulativeVal;
+        }
 
-        require(cardinality > 0, "I");
+        (Observation memory beforeOrAt, Observation memory atOrAfter) = surrounding(state, targetTimestamp, currentVal);
 
-        cumulativeValues = new uint216[](secondsAgos.length);
-        for (uint256 i = 0; i < secondsAgos.length; i++) {
-            (cumulativeValues[i]) = observeSingle(observations, time, secondsAgos[i], value, index, cardinality);
+        // early return if one of the observations has a timestamp equal to the target
+        if (targetTimestamp == beforeOrAt.timestamp) {
+            return (beforeOrAt.cumulativeVal);
+        } else if (targetTimestamp == atOrAfter.timestamp) {
+            return (atOrAfter.cumulativeVal);
+        }
+        // otherwise, the target is in between the two observations
+        else {
+            uint216 totalSpan = atOrAfter.timestamp - beforeOrAt.timestamp; // time between beforeOrAt and atOrAfter
+            uint216 spanToTarget = targetTimestamp - beforeOrAt.timestamp; // time between beforeOrAt and target
+            uint216 cvDelta = atOrAfter.cumulativeVal - beforeOrAt.cumulativeVal; // Δ cumVal: beforeOrAt to atOrAfter
+
+            // calculate the delta in cumulativeVal from beforeOrAt to target and add it to beforeOrAt's cumulativeVal
+            return beforeOrAt.cumulativeVal + (cvDelta * spanToTarget / totalSpan);
         }
     }
 
-    function getOldestObservationTimestamp(State storage state) internal view returns (uint32) {
-        Observation[MAX_CARDINALITY] storage observations = state.observations;
+    /// @notice Returns the time weighted average of tracked value given a lookback window
+    /// @dev If the lookback window is 0, the current value is returned. If the lookback window points to a timestamp
+    /// older than the oldest observation, then the window is capped to the time since the oldest observation.
+    /// @param state The caller's time weighted average helper data and observation history
+    /// @param lookbackWindow The time window to calculate the average over
+    /// @param blockTimestamp The current block timestamp truncated to uint32
+    /// @param currentVal The current value
+    /// @return twAvg The calculated time weighted average
+    function timeWeightedAvg(State storage state, uint32 lookbackWindow, uint32 blockTimestamp, uint256 currentVal)
+        internal
+        view
+        returns (uint256 twAvg)
+    {
+        if (lookbackWindow == 0) return currentVal;
 
-        Observation memory beforeOrAt = observations[(state.index + 1) % state.cardinality];
-        if (!beforeOrAt.initialized) beforeOrAt = observations[0];
-        return beforeOrAt.blockTimestamp;
+        uint32 targetTimestamp = blockTimestamp - lookbackWindow;
+        uint256 cumulativeValStart = cumulativeValAtTimestamp(state, blockTimestamp, targetTimestamp, currentVal);
+        uint256 cumulativeValEnd = cumulativeValAtTimestamp(state, blockTimestamp, blockTimestamp, currentVal);
+
+        uint256 delta = cumulativeValEnd - cumulativeValStart;
+        // if cumVal hasn't changed, return the current value; else, calculate and return the average over the window
+        return delta == 0 ? currentVal : delta / lookbackWindow;
     }
 }

@@ -1,48 +1,48 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity 0.8.30;
+// // SPDX-License-Identifier: GPL-3.0-or-later
+// pragma solidity 0.8.30;
 
-import {PerpManager} from "../src/PerpManager.sol";
-import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-import {TradingFee} from "../src/libraries/TradingFee.sol";
-import {TestnetUSDC} from "../src/testnet/TestnetUSDC.sol";
-import {PerpHandler} from "./PerpHandler.sol";
-import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
-import {Test} from "forge-std/Test.sol";
-import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
+// import {PerpManager} from "../src/PerpManager.sol";
+// import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
+// import {TradingFee} from "../src/libraries/TradingFee.sol";
+// import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
+// import {PerpHandler} from "./PerpHandler.sol";
+// import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+// import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+// import {Test} from "forge-std/Test.sol";
+// import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 
-contract InvariantTest is Test, DeployPoolManager {
-    function setUp() public {
-        IPoolManager poolManager = deployPoolManager();
-        address usdc = address(new TestnetUSDC());
+// contract InvariantTest is Test, DeployPoolManager {
+//     function setUp() public {
+//         IPoolManager poolManager = deployPoolManager();
+//         address usdc = address(new TestnetUSDC());
 
-        // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
-        address perpManagerAddress = address(
-            uint160(0) ^ (0x5555 << 144) // Namespace the address to avoid collisions
-        );
+//         // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
+//         address perpManagerAddress = address(
+//             uint160(0) ^ (0x5555 << 144) // Namespace the address to avoid collisions
+//         );
 
-        // Add all necessary constructor arguments for PerpManager.sol
-        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), usdc);
+//         // Add all necessary constructor arguments for PerpManager.sol
+//         bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), usdc);
 
-        // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
-        deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, perpManagerAddress);
+//         // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
+//         deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, perpManagerAddress);
 
-        PerpHandler perpHandler = new PerpHandler(PerpManager(perpManagerAddress), usdc, 10);
+//         PerpHandler perpHandler = new PerpHandler(PerpManager(perpManagerAddress), usdc, 10);
 
-        targetContract(address(perpHandler));
+//         targetContract(address(perpHandler));
 
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = PerpHandler.createPerp.selector;
-        selectors[1] = PerpHandler.openMakerPosition.selector;
-        // selectors[2] = PerpHandler.addMakerMargin.selector;
-        // selectors[3] = PerpHandler.closeMakerPosition.selector;
-        // selectors[4] = PerpHandler.openTakerPosition.selector;
+//         bytes4[] memory selectors = new bytes4[](2);
+//         selectors[0] = PerpHandler.createPerp.selector;
+//         selectors[1] = PerpHandler.openMakerPosition.selector;
+//         // selectors[2] = PerpHandler.addMakerMargin.selector;
+//         // selectors[3] = PerpHandler.closeMakerPosition.selector;
+//         // selectors[4] = PerpHandler.openTakerPosition.selector;
 
-        targetSelector(FuzzSelector({addr: address(perpHandler), selectors: selectors}));
-    }
+//         targetSelector(FuzzSelector({addr: address(perpHandler), selectors: selectors}));
+//     }
 
-    // commented out to pass CI as tests are unfinished
-    // function invariant_no_reverts() public {
-    //     assert(true);
-    // }
-}
+//     // commented out to pass CI as tests are unfinished
+//     // function invariant_no_reverts() public {
+//     //     assert(true);
+//     // }
+// }

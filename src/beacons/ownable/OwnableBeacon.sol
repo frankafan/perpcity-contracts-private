@@ -1,61 +1,65 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity 0.8.26;
+pragma solidity 0.8.30;
 
-import {IBeacon} from "../../interfaces/IBeacon.sol";
+import {IBeacon} from "../../interfaces/beacons/IBeacon.sol";
 import {ITimeWeightedAvg} from "../../interfaces/ITimeWeightedAvg.sol";
 import {TimeWeightedAvg} from "../../libraries/TimeWeightedAvg.sol";
 import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 
+/// @title OwnableBeacon
+/// @notice A beacon that is owned by an address and can be updated to any value by the owner
 contract OwnableBeacon is IBeacon, ITimeWeightedAvg, Ownable {
     using TimeWeightedAvg for TimeWeightedAvg.State;
     using SafeCastLib for *;
 
-    uint256 public immutable creationTimestamp;
-    TimeWeightedAvg.State public twapState;
+    /* STORAGE */
 
-    uint216 private indexX96;
+    /// @notice The state used to track and calculate a time weighted average of `indexX96`
+    TimeWeightedAvg.State public twAvgState;
 
-    constructor(address owner, uint256 initialIndexX96, uint32 initialCardinalityNext) {
+    /// @notice The beacon's data
+    /// @dev This is scaled by 2^96
+    uint256 private indexX96;
+
+    /* CONSTRUCTOR */
+
+    /// @notice Instantiates the beacon
+    /// @param owner The owner of the beacon
+    /// @param initialIndexX96 The initial data of the beacon scaled by 2^96
+    /// @param initialCardinalityCap The initial cardinality cap set for the beacon's time weighted average
+    constructor(address owner, uint256 initialIndexX96, uint16 initialCardinalityCap) {
         _initializeOwner(owner);
-        indexX96 = initialIndexX96.toUint216();
+        indexX96 = initialIndexX96;
 
-        twapState.initialize(block.timestamp.toUint32());
-        twapState.grow(initialCardinalityNext);
-        twapState.write(block.timestamp.toUint32(), indexX96);
-
-        creationTimestamp = block.timestamp;
+        // initialize twavg state, grow list to specified cardinality, and write first observation
+        twAvgState.initialize(block.timestamp.toUint32());
+        twAvgState.increaseCardinalityCap(initialCardinalityCap);
+        twAvgState.write(block.timestamp.toUint32(), initialIndexX96);
     }
 
-    function getData() external view returns (uint256) {
+    /* FUNCTIONS */
+
+    /// @inheritdoc IBeacon
+    function data() external view returns (uint256 index) {
         return indexX96;
     }
 
-    function updateData(bytes calldata proof, bytes calldata publicSignals) external onlyOwner {
-        indexX96 = abi.decode(publicSignals, (uint256)).toUint216();
-
-        twapState.write(block.timestamp.toUint32(), indexX96);
-
+    /// @inheritdoc IBeacon
+    /// @dev only the owner can update data. Encoded public signals should be the encided uint256 value of the new index
+    function updateData(bytes calldata, bytes calldata encodedPublicSignals) external onlyOwner {
+        indexX96 = abi.decode(encodedPublicSignals, (uint256));
+        twAvgState.write(block.timestamp.toUint32(), indexX96);
         emit DataUpdated(indexX96);
     }
 
-    function increaseCardinalityNext(uint32 cardinalityNext) external {
-        twapState.grow(cardinalityNext);
+    /// @inheritdoc ITimeWeightedAvg
+    function increaseCardinalityCap(uint16 newCap) external {
+        twAvgState.increaseCardinalityCap(newCap);
     }
 
-    function getTimeWeightedAvg(uint32 twapSecondsAgo) external view returns (uint256 twapPrice) {
-        uint32 timeSinceLastObservation = (block.timestamp - twapState.getOldestObservationTimestamp()).toUint32();
-        if (twapSecondsAgo > timeSinceLastObservation) twapSecondsAgo = timeSinceLastObservation;
-
-        if (twapSecondsAgo == 0) return indexX96;
-
-        uint32 timeSinceCreation = (block.timestamp - creationTimestamp).toUint32();
-        if (timeSinceCreation < twapSecondsAgo) twapSecondsAgo = timeSinceCreation;
-
-        uint32[] memory secondsAgos = new uint32[](2);
-        secondsAgos[0] = twapSecondsAgo;
-        secondsAgos[1] = 0;
-        uint216[] memory priceCumulatives = twapState.observe(block.timestamp.toUint32(), secondsAgos, indexX96);
-        return (priceCumulatives[1] - priceCumulatives[0]) / twapSecondsAgo;
+    /// @inheritdoc ITimeWeightedAvg
+    function timeWeightedAvg(uint32 twapSecondsAgo) external view returns (uint256 twAvgIndexX96) {
+        return twAvgState.timeWeightedAvg(twapSecondsAgo, block.timestamp.toUint32(), indexX96);
     }
 }

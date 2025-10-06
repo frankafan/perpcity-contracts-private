@@ -2,14 +2,16 @@
 pragma solidity 0.8.30;
 
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
-import {INT_Q96, START_FEE, UINT_Q96} from "./Constants.sol";
-import {MoreSignedMath} from "./MoreSignedMath.sol";
+
+import {INT_Q96, UINT_Q96} from "./Constants.sol";
 import {PerpLogic} from "./PerpLogic.sol";
+import {SignedMath} from "./SignedMath.sol";
 import {FixedPointMathLib} from "@solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 
+/// TODO: add comments & turn into a module
 // a library with a function to calculate a dynamic fee based on liquidity and volatility
 // as liquidity grows, the fee decays from startFee, approaching targetFee asymptotically
 // at any point, high volatility will increase the fee, up to maxFeeMultiplier * baseFee
@@ -19,33 +21,38 @@ library TradingFee {
     using SafeCastLib for *;
 
     using PerpLogic for *;
-    using MoreSignedMath for int256;
+    using SignedMath for int256;
     // using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
-    struct Config {
-        uint128 baseFeeX96; // current percent fee if volatility is zero (e.g. 0.05 = 5%)
-        uint128 startFeeX96; // percent fee when liquidity is zero and volatility is zero (e.g. 0.05 = 5%)
-        uint128 targetFeeX96; // percent fee the curve approaches as liquidity is added and volatility is zero
-        uint128 decay; // controls decay rate from startFee to targetFee as liquidity grows; higher value = slower decay
-        uint128 volatilityScalerX96; // scales volatility's impact on fee (e.g. 0 = no impact, 0.05 = higher impact)
-        uint128 maxFeeMultiplierX96; // determines max percent fee when volatility is high (e.g. 1.5 = 150% of baseFee)
-    }
+    uint24 constant START_FEE = 0.01e6; // 1%
+    uint24 constant TARGET_FEE = 0.0001e6; // 0.01%
+    uint24 constant DECAY = 15000000;
+    uint24 constant VOLATILITY_SCALER = 0.2e6; // 0.2
+    uint24 constant MAX_FEE_MULTIPLIER = 2e6; // 200%
+
+    // struct Config {
+    //     uint128 baseFeeX96; // current percent fee if volatility is zero (e.g. 0.05 = 5%)
+    //     uint128 startFeeX96; // percent fee when liquidity is zero and volatility is zero (e.g. 0.05 = 5%)
+    //     uint128 targetFeeX96; // percent fee the curve approaches as liquidity is added and volatility is zero
+    //     uint128 decay; // controls decay rate from startFee to targetFee as liquidity grows; higher value = slower decay
+    //     uint128 volatilityScalerX96; // scales volatility's impact on fee (e.g. 0 = no impact, 0.05 = higher impact)
+    //     uint128 maxFeeMultiplierX96; // determines max percent fee when volatility is high (e.g. 1.5 = 150% of baseFee)
+    // }
 
     // updates the portion of the overall fee function that is based on liquidity (baseFeeX96)
-    function updateBaseFeeX96(IPerpManager.Perp storage perp, IPoolManager poolManager) internal {
-        Config storage config = perp.tradingFeeConfig;
+    // function updateBaseFeeX96(IPerpManager.Perp storage perp, IPoolManager poolManager) internal {
 
-        // calculate the weighted liquidity through dividing by the decay constant
-        uint128 liquidity = poolManager.getLiquidity(perp.key.toId());
-        uint256 weightedLiqX96 = liquidity.mulDiv(UINT_Q96, config.decay);
+    //     // calculate the weighted liquidity through dividing by the decay constant
+    //     uint128 liquidity = poolManager.getLiquidity(perp.key.toId());
+    //     uint256 weightedLiqX96 = liquidity.mulDiv(UINT_Q96, DECAY);
 
-        // baseFee = targetFee + (startFee - targetFee) / (weightedLiq + 1)
-        int256 targetFeeX96 = config.targetFeeX96.toInt256();
-        config.baseFeeX96 = (
-            targetFeeX96
-                + (config.startFeeX96.toInt256() - targetFeeX96).mulDivSigned(INT_Q96, weightedLiqX96 + UINT_Q96)
-        ).toUint256().toUint128();
-    }
+    //     // baseFee = targetFee + (startFee - targetFee) / (weightedLiq + 1)
+    //     int256 targetFeeX96 = TARGET_FEE.toInt256();
+    //     perp.baseFeeX96 = (
+    //         targetFeeX96
+    //             + (START_FEE.toInt256() - targetFeeX96).mulDivSigned(INT_Q96, weightedLiqX96 + UINT_Q96)
+    //     ).toUint256().toUint128();
+    // }
 
     // uses the current baseFee to calculate the current tradingFee based on volatility's impact
     // function calculateTradingFeeX96(
@@ -88,10 +95,7 @@ library TradingFee {
     //     return FixedPointMathLib.min(config.baseFeeX96 + volatilityFeeX96, maxFeeX96).toUint128();
     // }
 
-    function calculateTradingFee(
-        IPerpManager.Perp storage perp,
-        IPoolManager poolManager
-    )
+    function calculateTradingFee(IPerpManager.Perp storage perp, IPoolManager poolManager)
         internal
         view
         returns (uint24)

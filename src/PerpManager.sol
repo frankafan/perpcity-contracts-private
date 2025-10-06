@@ -3,75 +3,96 @@ pragma solidity 0.8.30;
 
 import {UnlockCallback} from "./UnlockCallback.sol";
 import {IPerpManager} from "./interfaces/IPerpManager.sol";
-import {LivePositionDetailsReverter} from "./libraries/LivePositionDetailsReverter.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
+import {QuoteReverter} from "./libraries/QuoteReverter.sol";
 import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
+import {TradingFee} from "./libraries/TradingFee.sol";
+import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import {IBeacon} from "./interfaces/IBeacon.sol";
-import {TradingFee} from "./libraries/TradingFee.sol";
-import {QuoteReverter} from "./libraries/QuoteReverter.sol";
 
-// manages state for all perps and contains hooks for uniswap pools
+/// @title PerpManager
+/// @notice Manages state for all perps
 contract PerpManager is IPerpManager, UnlockCallback {
+    /* IMMUTABLES */
+
+    /// @notice The address of the USDC token
     address public immutable USDC;
 
+    /* STORAGE */
+
+    /// @notice Mapping to store state of all perps
     mapping(PoolId => IPerpManager.Perp) public perps;
 
+    /* CONSTRUCTOR */
+
+    /// @notice Instantiates the PerpManager
+    /// @dev This inherits UnlockCallback so it can accept callbacks from Uniswap PoolManager
+    /// @param poolManager The address of the pool manager
+    /// @param usdc The address of the USDC token
     constructor(IPoolManager poolManager, address usdc) UnlockCallback(poolManager) {
         USDC = usdc;
     }
 
-    // ------------
-    // PERP ACTIONS
-    // ------------
+    /* FUNCTIONS */
 
+    /// @notice Creates a new perp
+    /// @param params The parameters for creating the perp
+    /// @return perpId The ID of the new perp
     function createPerp(CreatePerpParams calldata params) external returns (PoolId perpId) {
         perpId = PerpLogic.createPerp(perps, POOL_MANAGER, USDC, params);
     }
 
-    function openMakerPosition(
-        PoolId perpId,
-        OpenMakerPositionParams calldata params
-    )
+    /// @notice Opens a maker position
+    /// @param perpId The ID of the perp to open the position in
+    /// @param params The parameters for opening the position
+    /// @return makerPosId The ID of the new maker position
+    function openMakerPosition(PoolId perpId, OpenMakerPositionParams calldata params)
         external
         returns (uint128 makerPosId)
     {
         return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
-    function openTakerPosition(
-        PoolId perpId,
-        OpenTakerPositionParams calldata params
-    )
+    /// @notice Opens a taker position
+    /// @param perpId The ID of the perp to open the position in
+    /// @param params The parameters for opening the position
+    /// @return takerPosId The ID of the new taker position
+    function openTakerPosition(PoolId perpId, OpenTakerPositionParams calldata params)
         external
         returns (uint128 takerPosId)
     {
         return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
+    /// @notice Adds margin to an open position
+    /// @param perpId The ID of the perp to add margin to
+    /// @param params The parameters for adding margin
     function addMargin(PoolId perpId, AddMarginParams calldata params) external {
         PerpLogic.addMargin(perps[perpId], POOL_MANAGER, USDC, params);
     }
 
+    /// @notice Closes an open position
+    /// @param perpId The ID of the perp to close the position in
+    /// @param params The parameters for closing the position
+    /// @return posId The ID of the taker position created if the position closed was a maker. Otherwise, 0
     function closePosition(PoolId perpId, ClosePositionParams calldata params) external returns (uint128 posId) {
         return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
-    // -------------
-    // TWAP ACTIONS
-    // -------------
-
-    function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
-        TimeWeightedAvg.grow(perps[perpId].twapState, cardinalityNext);
+    /// @notice Increases the cardinality cap for a perp
+    /// @param perpId The ID of the perp to increase the cardinality cap for
+    /// @param cardinalityCap The new cardinality cap
+    function increaseCardinalityCap(PoolId perpId, uint16 cardinalityCap) external {
+        TimeWeightedAvg.increaseCardinalityCap(perps[perpId].twapState, cardinalityCap);
     }
 
-    // ----
-    // VIEW
-    // ----
+    /* VIEW FUNCTIONS */
+    /// TODO: remove as many read functions as possible. Ideally, we can remove quoter and integrate logic into base fns
+    ///       comment functions that must remain
 
     function tickSpacing(PoolId perpId) external view returns (int24) {
         return perps[perpId].key.tickSpacing;
@@ -81,14 +102,30 @@ contract PerpManager is IPerpManager, UnlockCallback {
         (sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
     }
 
-    function fees(PoolId perpId) external view returns (uint24 creatorFee, uint24 insurnaceFee, uint24 lpFee, uint24 liquidationFee) {
+    function fees(PoolId perpId)
+        external
+        view
+        returns (uint24 creatorFee, uint24 insurnaceFee, uint24 lpFee, uint24 liquidationFee)
+    {
         creatorFee = perps[perpId].creatorFee;
         insurnaceFee = perps[perpId].insuranceFee;
         lpFee = TradingFee.calculateTradingFee(perps[perpId], POOL_MANAGER);
         liquidationFee = perps[perpId].liquidationFee;
     }
 
-    function tradingBounds(PoolId perpId) external view returns (uint24 minOpeningMargin, uint24 minMakerMarginRatio, uint24 maxMakerMarginRatio, uint24 makerLiquidationMarginRatio, uint24 minTakerMarginRatio, uint24 maxTakerMarginRatio, uint24 takerLiquidationMarginRatio) {
+    function tradingBounds(PoolId perpId)
+        external
+        view
+        returns (
+            uint24 minOpeningMargin,
+            uint24 minMakerMarginRatio,
+            uint24 maxMakerMarginRatio,
+            uint24 makerLiquidationMarginRatio,
+            uint24 minTakerMarginRatio,
+            uint24 maxTakerMarginRatio,
+            uint24 takerLiquidationMarginRatio
+        )
+    {
         minOpeningMargin = perps[perpId].minOpeningMargin;
         minMakerMarginRatio = perps[perpId].minMakerOpeningMarginRatio;
         maxMakerMarginRatio = perps[perpId].maxMakerOpeningMarginRatio;
@@ -98,66 +135,60 @@ contract PerpManager is IPerpManager, UnlockCallback {
         takerLiquidationMarginRatio = perps[perpId].takerLiquidationMarginRatio;
     }
 
-    function estimateLiquidityForAmount1(int24 tickA, int24 tickB, uint256 amount1) external pure returns (uint128 liquidity) {
-        return LiquidityAmounts.getLiquidityForAmount1(TickMath.getSqrtPriceAtTick(tickA), TickMath.getSqrtPriceAtTick(tickB), amount1);
+    function estimateLiquidityForAmount1(int24 tickA, int24 tickB, uint256 amount1)
+        external
+        pure
+        returns (uint128 liquidity)
+    {
+        return LiquidityAmounts.getLiquidityForAmount1(
+            TickMath.getSqrtPriceAtTick(tickA), TickMath.getSqrtPriceAtTick(tickB), amount1
+        );
     }
 
-    function getTimeWeightedAvg(PoolId perpId, uint32 secondsAgo) public view returns (uint256) {
+    function timeWeightedAvgSqrtPriceX96(PoolId perpId, uint32 lookbackWindow) external view returns (uint256) {
         (uint160 sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
-        return PerpLogic.getTimeWeightedAvg(perps[perpId], secondsAgo, sqrtPrice);
+        return TimeWeightedAvg.timeWeightedAvg(
+            perps[perpId].twapState, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
+        );
     }
 
     function getPosition(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory) {
         return perps[perpId].positions[posId];
     }
-    
-    function quoteMakerPosition(
-        PoolId perpId,
-        OpenMakerPositionParams calldata params
-    )
+
+    function quoteOpenMakerPosition(PoolId perpId, OpenMakerPositionParams calldata params)
         external
-        returns (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt)
+        returns (bool success, QuoteReverter.OpenQuote memory quote)
     {
         // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, true) {}
         catch (bytes memory reason) {
-            (success, perpDelta, usdDelta, creatorFeeAmt, insuranceFeeAmt, lpFeeAmt) =
-                QuoteReverter.parseQuote(reason);
+            (success, quote) = QuoteReverter.parseOpenQuote(reason);
         }
     }
 
-    function quoteTakerPosition(
-        PoolId perpId,
-        OpenTakerPositionParams calldata params
-    )
+    function quoteOpenTakerPosition(PoolId perpId, OpenTakerPositionParams calldata params)
         external
-        returns (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt)
+        returns (bool success, QuoteReverter.OpenQuote memory quote)
     {
         // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, true) {}
         catch (bytes memory reason) {
-            (success, perpDelta, usdDelta, creatorFeeAmt, insuranceFeeAmt, lpFeeAmt) =
-                QuoteReverter.parseQuote(reason);
+            (success, quote) = QuoteReverter.parseOpenQuote(reason);
         }
     }
 
-    // isn't view since it calls a non-view function that reverts with live position details
-    function livePositionDetails(
-        PoolId perpId,
-        uint128 posId
-    )
+    function quoteClosePosition(PoolId perpId, uint128 posId)
         external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable, uint256 newPriceX96)
+        returns (bool success, QuoteReverter.CloseQuote memory quote)
     {
         // params are minimized / maximized where possible to ensure no reverts
-        ClosePositionParams memory params =
-            ClosePositionParams({posId: posId, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max});
+        ClosePositionParams memory params = ClosePositionParams(posId, 0, 0, type(uint128).max);
 
         // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, true) {}
         catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) =
-                LivePositionDetailsReverter.parseLivePositionDetails(reason);
+            (success, quote) = QuoteReverter.parseCloseQuote(reason);
         }
     }
 
