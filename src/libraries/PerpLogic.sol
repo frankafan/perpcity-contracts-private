@@ -397,7 +397,7 @@ library PerpLogic {
 
             bytes memory encodedDeltas = poolManager.executeAction(Router.SWAP, encodedConfig);
 
-            (, int256 usdDelta,) = abi.decode(encodedDeltas, (int256, int256, uint256));
+            (, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
 
             pnl = usdDelta + pos.usdDelta;
 

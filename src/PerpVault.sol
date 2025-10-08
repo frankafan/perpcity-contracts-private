@@ -10,7 +10,7 @@ contract PerpVault {
     /* CONSTRUCTOR */
 
     /// @notice Instantiates the PerpVault
-    /// @dev The perp manager provides it's address on perp creation
+    /// @dev The perp manager provides its address on perp creation
     /// @param perpManager The address of the perp manager
     /// @param usdc The address of the USDC token
     constructor(address perpManager, address usdc) {
