@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {GBMBeacon} from "../src/beacons/gbm/GBMBeacon.sol";
-import {IVerifierWrapper} from "../src/interfaces/IVerifierWrapper.sol";
+import {IVerifierWrapper} from "../src/interfaces/beacons/IVerifierWrapper.sol";
 import {UINT_Q96} from "../src/libraries/Constants.sol";
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
@@ -11,13 +11,12 @@ contract MockVerifierWrapper is IVerifierWrapper {
     function verify(
         bytes calldata, // proof
         bytes calldata publicSignals
-    )
-        external
-        pure
-        override
-        returns (bool success, uint256 data)
-    {
+    ) external pure override returns (bool success, uint256 data) {
         return (true, abi.decode(publicSignals, (uint256)));
+    }
+
+    function verifier() external view returns (address) {
+        return address(0);
     }
 }
 
@@ -26,7 +25,7 @@ contract GBMBeaconTest is Test {
     address public owner = makeAddr("owner");
 
     uint256 public initialIndexX96 = 7922816251426433759354395033600; // 100 * 2^96
-    uint32 public initialCardinalityNext = 100;
+    uint16 public initialCardinalityCap = 100;
     uint256 public thresholdX96 = 39614081257132168796771975168; // 0.5 * 2^96
     uint256 public sigmaBase = 0.001e18;
     uint256 public positiveRate = 0.5e18;
@@ -38,7 +37,7 @@ contract GBMBeaconTest is Test {
             new MockVerifierWrapper(),
             owner,
             initialIndexX96,
-            initialCardinalityNext,
+            initialCardinalityCap,
             thresholdX96,
             sigmaBase,
             positiveRate
@@ -58,7 +57,7 @@ contract GBMBeaconTest is Test {
             // log data and twap at timestamp
             console2.log("TIMESTAMP: ", block.timestamp);
 
-            uint256 data = beacon.getData();
+            uint256 data = beacon.data();
             uint256 scaledData = data * 1e6 / UINT_Q96;
             console2.log("MARK: %6e", scaledData);
 

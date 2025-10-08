@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
 import {PerpManager} from "../src/PerpManager.sol";
-import {IBeacon} from "../src/interfaces/IBeacon.sol";
+
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-import {FixedPoint96} from "../src/libraries/FixedPoint96.sol";
+import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
+
+import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
+import "../src/libraries/Constants.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
-import {TokenMath} from "../src/libraries/TokenMath.sol";
-import {TradingFee} from "../src/libraries/TradingFee.sol";
-import {TestnetBeacon} from "../src/testnet/TestnetBeacon.sol";
-import {MAX_CARDINALITY} from "../src/utils/Constants.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId, PoolKey} from "@uniswap/v4-core/src/types/PoolId.sol";
+
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
 import {Test} from "forge-std/Test.sol";
+import {console2} from "forge-std/console2.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 contract PerpHandler is Test {
     using SafeTransferLib for address;
-    using FixedPointMathLib for uint256;
-    using TokenMath for *;
+    using FixedPointMathLib for *;
     using StateLibrary for IPoolManager;
     using PerpLogic for *;
 
     PerpManager public immutable perpManager;
     address public immutable usdc;
+    address public liquidator = makeAddr("liquidator");
 
     PoolId[] public perps;
     IBeacon[] public beacons;
@@ -55,133 +55,74 @@ contract PerpHandler is Test {
         uint256 initialBeaconData,
         uint32 initialCardinalityNext_Beacon,
         uint160 startingSqrtPriceX96,
-        uint32 initialCardinalityNext_Perp,
-        uint32 makerLockupPeriod,
-        uint32 fundingInterval,
-        int24 tickSpacing,
-        uint32 twapWindow,
-        uint128 tradingFeeCreatorSplitX96,
-        uint128 tradingFeeInsuranceSplitX96,
-        uint128 priceImpactBandX96,
-        uint128 maxOpeningLevX96,
-        uint128 liquidationLevX96,
-        uint128 liquidationFeeX96,
-        uint128 liquidatorFeeSplitX96,
-        uint128 marketDeathThresholdX96,
-        uint128 baseFeeX96,
-        uint128 startFeeX96,
-        uint128 targetFeeX96,
-        uint128 decay,
-        uint128 volatilityScalerX96,
-        uint128 maxFeeMultiplierX96,
-        uint256 secondsToSkip
-    )
-        public
-    {
+        uint256 secondsToSkip,
+        uint256 makerActorIndex,
+        uint128 makerMargin,
+        uint128 makerLiquidity,
+        int24 makerTickLower,
+        bool makerIsTickLowerNegative,
+        uint256 makerTickRange,
+        uint128 makerLeverageX96,
+        uint256 makerSecondsToSkip
+    ) public {
         address actor = actors[bound(actorIndex, 0, actors.length - 1)];
 
         vm.startPrank(actor);
 
-        IBeacon beacon = new TestnetBeacon(
-            actor, initialBeaconData, uint32(bound(initialCardinalityNext_Beacon, 1, MAX_CARDINALITY))
-        );
+        initialBeaconData = uint256(bound(initialBeaconData, 1 * UINT_Q96, 1000000 * UINT_Q96));
+
+        IBeacon beacon =
+            new OwnableBeacon(actor, initialBeaconData, uint16(bound(initialCardinalityNext_Beacon, 1, 100)));
         beacons.push(beacon);
 
-        startingSqrtPriceX96 = uint160(bound(startingSqrtPriceX96, TickMath.MIN_SQRT_PRICE, TickMath.MAX_SQRT_PRICE));
-        initialCardinalityNext_Perp = uint32(bound(initialCardinalityNext_Perp, 1, MAX_CARDINALITY));
-        makerLockupPeriod = uint32(bound(makerLockupPeriod, 0, 30 days));
-        fundingInterval = uint32(bound(fundingInterval, 1, type(uint32).max));
-        tickSpacing = int24(bound(tickSpacing, TickMath.MIN_TICK_SPACING, TickMath.MAX_TICK_SPACING));
-        twapWindow = uint32(bound(twapWindow, 1, type(uint32).max));
-        uint128 boundedTradingFeeCreatorSplitX96 = uint128(bound(tradingFeeCreatorSplitX96, 0, FixedPoint96.UINT_Q96));
-        tradingFeeCreatorSplitX96 = boundedTradingFeeCreatorSplitX96;
-        tradingFeeInsuranceSplitX96 =
-            uint128(bound(tradingFeeInsuranceSplitX96, 0, FixedPoint96.UINT_Q96 - boundedTradingFeeCreatorSplitX96));
-        priceImpactBandX96 = uint128(bound(priceImpactBandX96, 1 * FixedPoint96.UINT_Q96 / 100, FixedPoint96.UINT_Q96));
-        maxOpeningLevX96 =
-            uint128(bound(maxOpeningLevX96, (1 * FixedPoint96.UINT_Q96 / 2) + 1, 100 * FixedPoint96.UINT_Q96));
-        liquidationLevX96 = uint128(bound(liquidationLevX96, maxOpeningLevX96 + 1, type(uint128).max));
-        liquidationFeeX96 = uint128(bound(liquidationFeeX96, 0, FixedPoint96.UINT_Q96));
-        liquidatorFeeSplitX96 = uint128(bound(liquidatorFeeSplitX96, 0, FixedPoint96.UINT_Q96));
-        marketDeathThresholdX96 = uint128(bound(marketDeathThresholdX96, 0, FixedPoint96.UINT_Q96 - 1));
-        uint128 boundedMaxFeeMultiplierX96 =
-            uint128(bound(maxFeeMultiplierX96, FixedPoint96.UINT_Q96, type(uint128).max));
-        startFeeX96 = uint128(
-            bound(startFeeX96, 0, FixedPoint96.UINT_Q96.mulDiv(FixedPoint96.UINT_Q96, boundedMaxFeeMultiplierX96))
-        );
-        targetFeeX96 = uint128(
-            bound(targetFeeX96, 0, FixedPoint96.UINT_Q96.mulDiv(FixedPoint96.UINT_Q96, boundedMaxFeeMultiplierX96))
-        );
-        decay = uint128(bound(decay, 1, type(uint128).max));
-        volatilityScalerX96 = volatilityScalerX96;
-        maxFeeMultiplierX96 = boundedMaxFeeMultiplierX96;
+        uint256 startingPriceX96Lower = initialBeaconData.mulDiv(9, 10);
+        uint256 startingPriceX96Upper = initialBeaconData.mulDiv(11, 10);
 
-        IPerpManager.CreatePerpParams memory params = IPerpManager.CreatePerpParams({
-            startingSqrtPriceX96: startingSqrtPriceX96,
-            initialCardinalityNext: initialCardinalityNext_Perp,
-            makerLockupPeriod: makerLockupPeriod,
-            fundingInterval: fundingInterval,
-            beacon: address(beacon),
-            tickSpacing: tickSpacing,
-            twapWindow: twapWindow,
-            tradingFeeCreatorSplitX96: tradingFeeCreatorSplitX96,
-            tradingFeeInsuranceSplitX96: tradingFeeInsuranceSplitX96,
-            priceImpactBandX96: priceImpactBandX96,
-            maxOpeningLevX96: maxOpeningLevX96,
-            liquidationLevX96: liquidationLevX96,
-            liquidationFeeX96: liquidationFeeX96,
-            liquidatorFeeSplitX96: liquidatorFeeSplitX96,
-            marketDeathThresholdX96: marketDeathThresholdX96,
-            tradingFeeConfig: TradingFee.Config({
-                baseFeeX96: baseFeeX96, // ignored
-                startFeeX96: startFeeX96,
-                targetFeeX96: targetFeeX96,
-                decay: decay,
-                volatilityScalerX96: volatilityScalerX96,
-                maxFeeMultiplierX96: maxFeeMultiplierX96
-            })
-        });
+        uint256 minStartingSqrtPriceX96 = startingPriceX96Lower.mulSqrt(UINT_Q96);
+        minStartingSqrtPriceX96 = FixedPointMathLib.max(minStartingSqrtPriceX96, TickMath.MIN_SQRT_PRICE);
+        minStartingSqrtPriceX96 = FixedPointMathLib.min(minStartingSqrtPriceX96, TickMath.MAX_SQRT_PRICE);
 
-        deal(usdc, actor, perpManager.CREATION_FEE_AMT());
-        usdc.safeApprove(address(perpManager), perpManager.CREATION_FEE_AMT());
+        uint256 maxStartingSqrtPriceX96 = startingPriceX96Upper.mulSqrt(UINT_Q96);
+        maxStartingSqrtPriceX96 = FixedPointMathLib.min(maxStartingSqrtPriceX96, TickMath.MAX_SQRT_PRICE);
+        maxStartingSqrtPriceX96 = FixedPointMathLib.max(maxStartingSqrtPriceX96, TickMath.MIN_SQRT_PRICE);
+
+        startingSqrtPriceX96 = uint160(bound(startingSqrtPriceX96, minStartingSqrtPriceX96, maxStartingSqrtPriceX96));
+
+        IPerpManager.CreatePerpParams memory params =
+            IPerpManager.CreatePerpParams({startingSqrtPriceX96: startingSqrtPriceX96, beacon: address(beacon)});
+
         PoolId perpId = perpManager.createPerp(params);
         perps.push(perpId);
 
         vm.stopPrank();
 
         skipTime(secondsToSkip);
+
+        // openMakerPosition(makerActorIndex, perps.length - 1, makerMargin, makerLiquidity, makerTickLower, makerIsTickLowerNegative, makerTickRange, makerLeverageX96, makerSecondsToSkip);
     }
 
     function openMakerPosition(
         uint256 actorIndex,
         uint256 perpIndex,
         uint128 margin,
-        uint128 liquidity,
         int24 tickLower,
-        bool isTickLowerNegative,
         uint256 tickRange,
-        uint128 leverageX96,
+        uint256 marginRatio,
+        uint256 notional,
         uint256 secondsToSkip
-    )
-        public
-    {
+    ) public {
         vm.assume(perps.length != 0);
 
         address actor = actors[bound(actorIndex, 0, actors.length - 1)];
         PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
 
-        (,,,,,,,,,,,,,,,, uint128 maxOpeningLevX96,,,,,,, PoolKey memory key,,) = perpManager.perps(perpId);
-
         vm.startPrank(actor);
 
-        int24 tickSpacing = key.tickSpacing;
+        int24 tickSpacing = perpManager.tickSpacing(perpId);
 
         int24 MAX_TICK = TickMath.maxUsableTick(tickSpacing);
 
-        tickLower = int24(bound(tickLower, 0, MAX_TICK));
-        tickLower = isTickLowerNegative ? -tickLower : tickLower;
-        if (tickLower + tickSpacing > MAX_TICK) tickLower -= tickSpacing;
-
+        tickLower = int24(bound(tickLower, 0, MAX_TICK - tickSpacing));
         tickLower = (tickLower / tickSpacing) * tickSpacing;
 
         uint256 maxTickRange = uint256(int256(MAX_TICK - tickLower));
@@ -189,22 +130,34 @@ contract PerpHandler is Test {
         int24 tickUpper = tickLower + int24(int256(tickRange));
         tickUpper = (tickUpper / tickSpacing) * tickSpacing;
 
-        uint256 maxLiquidityPerTick = type(uint64).max / 1774544 / 10;
-        uint256 maxLiquidity = maxLiquidityPerTick * tickRange;
-        liquidity = uint128(bound(liquidity, 1, maxLiquidity));
+        notional = bound(notional, 1e6, 1000000e6);
 
-        (IPoolManager poolManager,,,) = perpManager.c();
-        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpId);
-        (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            sqrtPriceX96, TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), liquidity
-        );
+        uint160 sqrtPriceAX96 = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceAX96, sqrtPriceBX96, notional);
+        vm.assume(liquidity != 0);
+        (uint160 sqrtPriceX96,,,) = perpManager.POOL_MANAGER().getSlot0(perpId);
+        (uint256 amount0, uint256 amount1) =
+            LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liquidity);
+        console2.log("perphandler amount0", amount0);
+        console2.log("perphandler amount1", amount1);
 
-        uint256 notional = amount0.mulDiv(sqrtPriceX96.toPriceX96(), FixedPoint96.UINT_Q96) + amount1;
+        vm.assume(amount0 > 10 || amount1 > 10);
 
-        leverageX96 = uint128(bound(leverageX96, 1 * FixedPoint96.UINT_Q96 / 2, maxOpeningLevX96));
+        uint256 perpsNotional = sqrtPriceX96.fullMulDiv(amount0 * sqrtPriceX96, UINT_Q192);
+        notional = perpsNotional + uint256(amount1);
 
-        uint256 targetScaledMargin18 = notional.fullMulDiv(FixedPoint96.UINT_Q96, leverageX96);
-        margin = uint128(targetScaledMargin18.scale18To6()) + 1;
+        // uint256 minMarginRatioAdjusted = FixedPointMathLib.max(minMarginRatio, 1e6.mulDiv(SCALE_1E6, notional));
+
+        // vm.assume(minMarginRatioAdjusted <= maxMarginRatio);
+
+        // marginRatio = bound(marginRatio, minMarginRatioAdjusted, maxMarginRatio);
+
+        margin = uint128(notional.fullMulDiv(marginRatio, SCALE_1E6));
+
+        console2.log("perphandler margin", margin);
+        console2.log("perphandler marginRatio", marginRatio);
+        console2.log("perphandler notional", notional);
 
         IPerpManager.OpenMakerPositionParams memory params = IPerpManager.OpenMakerPositionParams({
             margin: margin,
@@ -212,8 +165,7 @@ contract PerpHandler is Test {
             tickLower: tickLower,
             tickUpper: tickUpper,
             maxAmt0In: type(uint128).max,
-            maxAmt1In: type(uint128).max,
-            timeout: 1
+            maxAmt1In: type(uint128).max
         });
 
         deal(usdc, actor, margin);
@@ -221,120 +173,162 @@ contract PerpHandler is Test {
         uint128 makerPosId = perpManager.openMakerPosition(perpId, params);
         makerPositions[perpId].push(makerPosId);
 
-        vm.stopPrank();
-
-        skipTime(secondsToSkip);
-    }
-
-    function addMakerMargin(uint256 perpIndex, uint256 positionIndex, uint128 margin, uint256 secondsToSkip) public {
-        vm.assume(perps.length != 0);
-
-        PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
-        vm.assume(makerPositions[perpId].length != 0);
-
-        uint128 posId = makerPositions[perpId][bound(positionIndex, 0, makerPositions[perpId].length - 1)];
-
-        IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, posId);
-
-        address actor = makerPos.holder;
-
-        margin = uint128(bound(margin, 1, 1000000e6));
-
-        vm.startPrank(actor);
-
-        IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: margin});
-
-        deal(usdc, actor, margin);
-        usdc.safeApprove(address(perpManager), margin);
-        perpManager.addMakerMargin(perpId, params);
+        // IPerpManager.Position memory makerPos = perpManager.getMakerPosition(perpId, makerPosId);
+        // // TODO: also make this check in open maker ()
+        // vm.assume(makerPos.perpsBorrowed > 0 || makerPos.usdBorrowed > 0);
 
         vm.stopPrank();
 
         skipTime(secondsToSkip);
     }
 
-    function closeMakerPosition(uint256 perpIndex, uint256 positionIndex, uint256 secondsToSkip) public {
-        vm.assume(perps.length != 0);
+    // function addMakerMargin(uint256 perpIndex, uint256 positionIndex, uint128 margin, uint256 secondsToSkip) public {
+    //     vm.assume(perps.length != 0);
 
-        PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
-        vm.assume(makerPositions[perpId].length != 0);
+    //     PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
+    //     vm.assume(makerPositions[perpId].length != 0);
 
-        (,, uint32 makerLockupPeriod,,,,,,,,,,,,,,,,,,,,,,,) = perpManager.perps(perpId);
+    //     uint128 posId = makerPositions[perpId][bound(positionIndex, 0, makerPositions[perpId].length - 1)];
 
-        positionIndex = uint256(bound(positionIndex, 0, makerPositions[perpId].length - 1));
-        uint128 posId = makerPositions[perpId][positionIndex];
+    //     IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, posId);
 
-        IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, posId);
+    //     address actor = makerPos.holder;
 
-        address actor = makerPos.holder;
+    //     margin = uint128(bound(margin, 1, 1000000e6));
 
-        vm.assume(this.time() >= makerPos.entryTimestamp + makerLockupPeriod);
+    //     vm.startPrank(actor);
 
-        vm.startPrank(actor);
+    //     IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: margin});
 
-        IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
-            posId: posId,
-            minAmt0Out: 0,
-            minAmt1Out: 0,
-            maxAmt1In: type(uint128).max,
-            timeout: 1
-        });
+    //     deal(usdc, actor, margin);
+    //     usdc.safeApprove(address(perpManager), margin);
+    //     perpManager.addMakerMargin(perpId, params);
 
-        perpManager.closeMakerPosition(perpId, params);
+    //     vm.stopPrank();
 
-        // Swap-and-pop to maintain array integrity
-        uint256 lastIndex = makerPositions[perpId].length - 1;
+    //     skipTime(secondsToSkip);
+    // }
 
-        if (positionIndex != lastIndex) {
-            // Move the last element to the deleted position
-            makerPositions[perpId][positionIndex] = makerPositions[perpId][lastIndex];
-        }
+    // function closeMakerPosition(uint256 perpIndex, uint256 positionIndex, uint256 secondsToSkip) public {
+    //     vm.assume(perps.length != 0);
 
-        // Remove the last element
-        makerPositions[perpId].pop();
+    //     PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
+    //     vm.assume(makerPositions[perpId].length != 0);
 
-        vm.stopPrank();
+    //     (,, uint32 makerLockupPeriod,,,,,,,,,,,,,,,,,,,,) = perpManager.perps(perpId);
 
-        skipTime(secondsToSkip);
-    }
+    //     positionIndex = uint256(bound(positionIndex, 0, makerPositions[perpId].length - 1));
+    //     uint128 posId = makerPositions[perpId][positionIndex];
 
-    function openTakerPosition(
-        uint256 actorIndex,
-        uint256 perpIndex,
-        bool isLong,
-        uint128 margin,
-        uint128 levX96
-    )
-        public
-    {
-        vm.assume(perps.length != 0);
+    //     IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, posId);
 
-        address actor = actors[bound(actorIndex, 0, actors.length - 1)];
-        PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
+    //     address actor = makerPos.holder;
 
-        (,,,,,,,,,,,,,,,, uint128 maxOpeningLevX96,,,,,,,,,) = perpManager.perps(perpId);
+    //     vm.assume(this.time() >= makerPos.entryTimestamp + makerLockupPeriod);
 
-        margin = uint128(bound(margin, 1, 1000000e6));
-        levX96 = uint128(bound(levX96, 1 * FixedPoint96.UINT_Q96 / 2, maxOpeningLevX96));
+    //     vm.startPrank(actor);
 
-        vm.startPrank(actor);
+    //     IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
+    //         posId: posId,
+    //         minAmt0Out: 0,
+    //         minAmt1Out: 0,
+    //         maxAmt1In: type(uint128).max,
+    //         timeout: 1
+    //     });
 
-        IPerpManager.OpenTakerPositionParams memory params = IPerpManager.OpenTakerPositionParams({
-            isLong: isLong,
-            margin: margin,
-            levX96: levX96,
-            minAmt0Out: 0,
-            maxAmt0In: type(uint128).max,
-            timeout: 1
-        });
+    //     (,,,,uint256 newPriceX96) = perpManager.liveMakerDetails(perpId, posId);
 
-        deal(usdc, actor, margin);
-        usdc.safeApprove(address(perpManager), margin);
-        uint128 takerPosId = perpManager.openTakerPosition(perpId, params);
-        takerPositions[perpId].push(takerPosId);
+    //     // vm.assume(newPriceX96 );
 
-        vm.stopPrank();
-    }
+    //     perpManager.closeMakerPosition(perpId, params);
+
+    //     // Swap-and-pop to maintain array integrity
+    //     uint256 lastIndex = makerPositions[perpId].length - 1;
+
+    //     if (positionIndex != lastIndex) {
+    //         // Move the last element to the deleted position
+    //         makerPositions[perpId][positionIndex] = makerPositions[perpId][lastIndex];
+    //     }
+
+    //     // Remove the last element
+    //     makerPositions[perpId].pop();
+
+    //     vm.stopPrank();
+
+    //     skipTime(secondsToSkip);
+    // }
+
+    // function openTakerPosition(
+    //     uint256 actorIndex,
+    //     uint256 perpIndex,
+    //     bool isLong,
+    //     uint256 notionalValue,
+    //     uint128 margin,
+    //     uint128 levX96,
+    //     uint256 secondsToSkip
+    // )
+    //     public
+    // {
+    //     vm.assume(perps.length != 0);
+
+    //     address actor = actors[bound(actorIndex, 0, actors.length - 1)];
+    //     PoolId perpId = perps[bound(perpIndex, 0, perps.length - 1)];
+
+    //     (,,,,,,,,,,,,,,,uint128 priceImpactBandX96,uint128 maxOpeningLevX96,,,,,,) = perpManager.perps(perpId);
+
+    //     uint256 maxNotionalTakerValue = perpManager.maxNotionalTakerSize(perpId, isLong);
+    //     if (maxNotionalTakerValue == 0) {
+    //         isLong = !isLong;
+    //         maxNotionalTakerValue = perpManager.maxNotionalTakerSize(perpId, isLong);
+    //     }
+
+    //     vm.assume(maxNotionalTakerValue != 0);
+
+    //     (IPoolManager poolManager,,,) = perpManager.c();
+    //     (uint160 sqrtPriceX96,int24 currentTick,,) = poolManager.getSlot0(perpId);
+    //     uint256 priceX96 = sqrtPriceX96.toPriceX96();
+    //     uint256 minNotionalTakerValue = 1 * priceX96 / 1e18 / UINT_Q96;
+
+    //     notionalValue = bound(notionalValue, minNotionalTakerValue + 1, maxNotionalTakerValue - 1);
+
+    //     uint128 levX96For1Margin = uint128(FixedPointMathLib.min(notionalValue / 1e12, maxOpeningLevX96));
+
+    //     levX96 = uint128(bound(levX96, 1 * UINT_Q96 / 2, maxOpeningLevX96));
+    //     if (levX96 > levX96For1Margin) {
+    //         levX96 = levX96For1Margin;
+    //     }
+
+    //     margin = uint128(notionalValue.fullMulDiv(UINT_Q96, levX96));
+
+    //     for (uint256 i = 0; i < makerPositions[perpId].length; i++) {
+    //         uint128 makerPosId = makerPositions[perpId][i];
+    //         IPerpManager.MakerPos memory makerPos = perpManager.getMakerPosition(perpId, makerPosId);
+    //     }
+
+    //     vm.startPrank(actor);
+
+    //     IPerpManager.OpenTakerPositionParams memory params = IPerpManager.OpenTakerPositionParams({
+    //         isLong: isLong,
+    //         margin: margin,
+    //         levX96: levX96,
+    //         minAmt0Out: 0,
+    //         maxAmt0In: type(uint128).max,
+    //         timeout: 1
+    //     });
+
+    //     deal(usdc, actor, margin);
+    //     usdc.safeApprove(address(perpManager), margin);
+    //     uint128 takerPosId = perpManager.openTakerPosition(perpId, params);
+    //     takerPositions[perpId].push(takerPosId);
+
+    //     IPerpManager.TakerPos memory takerPos = perpManager.getTakerPosition(perpId, takerPosId);
+    //     // TODO: also make this check in open taker ()
+    //     vm.assume(takerPos.size > 1);
+
+    //     vm.stopPrank();
+
+    //     skipTime(secondsToSkip);
+    // }
 
     function addTakerMargin() public {}
 
@@ -351,12 +345,65 @@ contract PerpHandler is Test {
     // helpers
 
     function skipTime(uint256 secondsToSkip) public {
-        secondsToSkip = bound(secondsToSkip, 0, 1 days);
+        secondsToSkip = bound(secondsToSkip, 0, 7 days);
 
         uint256 start = this.time();
 
-        while (this.time() < start + secondsToSkip) skip(15 minutes);
-        // check for liquidations;
+        IPerpManager.ClosePositionParams memory params =
+            IPerpManager.ClosePositionParams({posId: 0, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max});
+
+        vm.startPrank(liquidator);
+
+        while (this.time() < start + secondsToSkip) skip(6 hours);
+
+        // check for liquidations across all perps
+        // for (uint256 i = 0; i < perps.length; i++) {
+        //     PoolId perpId = perps[i];
+        //     // check taker liquidations
+        //     if (takerPositions[perpId].length > 0) {
+        //         for (uint256 j = takerPositions[perpId].length - 1; j > 0; j--) {
+        //             (,,,bool isLiquidatable,) = perpManager.liveTakerDetails(perpId, takerPositions[perpId][j]);
+        //             if (isLiquidatable) {
+        //                 params.posId = takerPositions[perpId][j];
+        //                 perpManager.closeTakerPosition(perpId, params);
+
+        //                 // Swap-and-pop to maintain array integrity
+        //                 uint256 lastIndex = takerPositions[perpId].length - 1;
+
+        //                 if (j != lastIndex) {
+        //                     // Move the last element to the deleted position
+        //                     takerPositions[perpId][j] = takerPositions[perpId][lastIndex];
+        //                 }
+
+        //                 // Remove the last element
+        //                 takerPositions[perpId].pop();
+        //             }
+        //         }
+        //     }
+
+        //     if (makerPositions[perpId].length > 0) {
+        //         for (uint256 j = makerPositions[perpId].length - 1; j > 0; j--) {
+        //             (,,,bool isLiquidatable,) = perpManager.liveMakerDetails(perpId, makerPositions[perpId][j]);
+        //             if (isLiquidatable) {
+        //                 params.posId = makerPositions[perpId][j];
+        //                 perpManager.closeMakerPosition(perpId, params);
+
+        //                 // Swap-and-pop to maintain array integrity
+        //                 uint256 lastIndex = makerPositions[perpId].length - 1;
+
+        //                 if (j != lastIndex) {
+        //                     // Move the last element to the deleted position
+        //                     makerPositions[perpId][j] = makerPositions[perpId][lastIndex];
+        //                 }
+
+        //                 // Remove the last element
+        //                 makerPositions[perpId].pop();
+        //             }
+        //         }
+        //     }
+        // }
+
+        vm.stopPrank();
     }
 
     // this is a workaround via ir caching block.timestamp

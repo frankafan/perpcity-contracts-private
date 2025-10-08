@@ -1,316 +1,271 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
+import {UnlockCallback} from "./UnlockCallback.sol";
 import {IPerpManager} from "./interfaces/IPerpManager.sol";
-import {Hook} from "./libraries/Hook.sol";
-import {LivePositionDetailsReverter} from "./libraries/LivePositionDetailsReverter.sol";
-import {MakerActions} from "./libraries/MakerActions.sol";
-import {MarketDeath} from "./libraries/MarketDeath.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
-import {TakerActions} from "./libraries/TakerActions.sol";
-
-import {TickTWAP} from "./libraries/TickTWAP.sol";
-import {UniswapV4Utility} from "./libraries/UniswapV4Utility.sol";
-import {MAX_CARDINALITY} from "./utils/Constants.sol";
+import {QuoteReverter} from "./libraries/QuoteReverter.sol";
+import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
+import {TradingFee} from "./libraries/TradingFee.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-import {BaseHook} from "@uniswap/v4-periphery/src/utils/BaseHook.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
-// manages state for all perps and contains hooks for uniswap pools
-contract PerpManager is IPerpManager, BaseHook {
-    using PerpLogic for mapping(PoolId => IPerpManager.Perp);
-    using PerpLogic for IPerpManager.Perp;
-    using MakerActions for IPerpManager.Perp;
-    using TakerActions for IPerpManager.Perp;
-    using Hook for IPerpManager.Perp;
-    using StateLibrary for IPoolManager;
-    using SafeTransferLib for address;
-    using LivePositionDetailsReverter for bytes;
-    using UniswapV4Utility for IPoolManager;
-    using MarketDeath for IPerpManager.Perp;
-    using SafeCastLib for *;
-    using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
+/// @title PerpManager
+/// @notice Manages state for all perps
+contract PerpManager is IPerpManager, UnlockCallback {
+    /* IMMUTABLES */
 
-    IPerpManager.ExternalContracts public c;
+    /// @notice The address of the USDC token
+    address public immutable USDC;
 
-    uint256 public immutable CREATION_FEE_AMT;
-    address public immutable CREATION_FEE_RECIPIENT;
+    /* STORAGE */
 
+    /// @notice Mapping to store state of all perps
     mapping(PoolId => IPerpManager.Perp) public perps;
 
-    constructor(
-        ExternalContracts memory _c,
-        uint256 _creationFee,
-        address _creationFeeRecipient
-    )
-        BaseHook(_c.poolManager)
-    {
-        c = _c;
-        CREATION_FEE_AMT = _creationFee;
-        CREATION_FEE_RECIPIENT = _creationFeeRecipient;
+    /* CONSTRUCTOR */
+
+    /// @notice Instantiates the PerpManager
+    /// @dev This inherits UnlockCallback so it can accept callbacks from Uniswap PoolManager
+    /// @param poolManager The address of the pool manager
+    /// @param usdc The address of the USDC token
+    constructor(IPoolManager poolManager, address usdc) UnlockCallback(poolManager) {
+        USDC = usdc;
     }
 
-    // ------------
-    // PERP ACTIONS
-    // ------------
+    /* FUNCTIONS */
 
+    /// @notice Creates a new perp
+    /// @param params The parameters for creating the perp
+    /// @return perpId The ID of the new perp
     function createPerp(CreatePerpParams calldata params) external returns (PoolId perpId) {
-        perpId = perps.createPerp(c, params);
-        // transfer creation fee from sender to creation fee recipient
-        c.usdc.safeTransferFrom(msg.sender, CREATION_FEE_RECIPIENT, CREATION_FEE_AMT);
+        perpId = PerpLogic.createPerp(perps, POOL_MANAGER, USDC, params);
     }
 
-    function openMakerPosition(
-        PoolId perpId,
-        OpenMakerPositionParams calldata params
-    )
+    /// @notice Opens a maker position
+    /// @param perpId The ID of the perp to open the position in
+    /// @param params The parameters for opening the position
+    /// @return makerPosId The ID of the new maker position
+    function openMakerPosition(PoolId perpId, OpenMakerPositionParams calldata params)
         external
         returns (uint128 makerPosId)
     {
-        return perps[perpId].openMakerPosition(c, params); // in MakerActions library
+        (makerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
-    function addMakerMargin(PoolId perpId, AddMarginParams calldata params) external {
-        perps[perpId].addMakerMargin(c, params); // in MakerActions library
-    }
-
-    function closeMakerPosition(PoolId perpId, ClosePositionParams calldata params) external {
-        perps[perpId].closeMakerPosition(c, params, false, false); // in MakerActions library
-    }
-
-    function openTakerPosition(
-        PoolId perpId,
-        OpenTakerPositionParams calldata params
-    )
+    /// @notice Opens a taker position
+    /// @param perpId The ID of the perp to open the position in
+    /// @param params The parameters for opening the position
+    /// @return takerPosId The ID of the new taker position
+    function openTakerPosition(PoolId perpId, OpenTakerPositionParams calldata params)
         external
         returns (uint128 takerPosId)
     {
-        return perps[perpId].openTakerPosition(c, params); // in TakerActions library
+        (takerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
-    function addTakerMargin(PoolId perpId, AddMarginParams calldata params) external {
-        perps[perpId].addTakerMargin(c, params); // in TakerActions library
+    /// @notice Adds margin to an open position
+    /// @param perpId The ID of the perp to add margin to
+    /// @param params The parameters for adding margin
+    function addMargin(PoolId perpId, AddMarginParams calldata params) external {
+        PerpLogic.addMargin(perps[perpId], POOL_MANAGER, USDC, params);
     }
 
-    function closeTakerPosition(PoolId perpId, ClosePositionParams calldata params) external {
-        perps[perpId].closeTakerPosition(c, params, false, false); // in TakerActions library
+    /// @notice Closes an open position
+    /// @param perpId The ID of the perp to close the position in
+    /// @param params The parameters for closing the position
+    /// @return posId The ID of the taker position created if the position closed was a maker. Otherwise, 0
+    function closePosition(PoolId perpId, ClosePositionParams calldata params) external returns (uint128 posId) {
+        return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
-    function marketDeath(PoolId perpId) external {
-        perps[perpId].marketDeath(c);
+    /// @notice Increases the cardinality cap for a perp
+    /// @param perpId The ID of the perp to increase the cardinality cap for
+    /// @param cardinalityCap The new cardinality cap
+    function increaseCardinalityCap(PoolId perpId, uint16 cardinalityCap) external {
+        TimeWeightedAvg.increaseCardinalityCap(perps[perpId].twapState, cardinalityCap);
     }
 
-    // -------------
-    // TWAP ACTIONS
-    // -------------
+    /* VIEW FUNCTIONS */
+    /// TODO: remove as many read functions as possible. Ideally, we can remove quoter and integrate logic into base fns
+    ///       comment functions that must remain
 
-    function increaseCardinalityNext(PoolId perpId, uint32 cardinalityNext) external {
-        perps[perpId].increaseCardinalityNext(cardinalityNext);
+    function tickSpacing(PoolId perpId) external view returns (int24) {
+        return perps[perpId].key.tickSpacing;
     }
 
-    // ----
-    // VIEW / READ
-    // ----
-
-    function getTWAP(PoolId perpId) external view returns (uint256) {
-        uint32 oldestObservationTimestamp = perps[perpId].twapState.observations.getOldestObservationTimestamp(
-            perps[perpId].twapState.index, perps[perpId].twapState.cardinality
-        );
-        uint32 twapSecondsAgo = (block.timestamp - oldestObservationTimestamp).toUint32();
-        uint32 twapWindow = perps[perpId].twapWindow;
-        twapSecondsAgo = twapSecondsAgo > twapWindow ? twapWindow : twapSecondsAgo;
-
-        (, int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
-        return perps[perpId].getTWAP(twapSecondsAgo, currentTick);
+    function sqrtPriceX96(PoolId perpId) external view returns (uint160 sqrtPrice) {
+        (sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
     }
 
-    function getMakerPosition(PoolId perpId, uint128 makerPosId) external view returns (IPerpManager.MakerPos memory) {
-        return perps[perpId].makerPositions[makerPosId];
-    }
-
-    function getTakerPosition(PoolId perpId, uint128 takerPosId) external view returns (IPerpManager.TakerPos memory) {
-        return perps[perpId].takerPositions[takerPosId];
-    }
-
-    // isn't view since it calls a non-view function that reverts with live position details
-    function liveMakerDetails(
-        PoolId perpId,
-        uint128 makerPosId
-    )
+    function fees(PoolId perpId)
         external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
-    {
-        // params are minimized / maximized where possible to ensure no reverts
-        ClosePositionParams memory params = ClosePositionParams({
-            posId: makerPosId,
-            minAmt0Out: 0,
-            minAmt1Out: 0,
-            maxAmt1In: type(uint128).max,
-            timeout: type(uint32).max
-        });
-
-        // pass revert == true into close so we can parse live position details from the reason
-        try perps[perpId].closeMakerPosition(c, params, true, false) {}
-        catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
-        }
-    }
-
-    // isn't view since it calls a non-view function that reverts with live position details
-    function liveTakerDetails(
-        PoolId perpId,
-        uint128 takerPosId
-    )
-        external
-        returns (int256 pnl, int256 fundingPayment, int256 effectiveMargin, bool isLiquidatable)
-    {
-        // params are minimized / maximized where possible to ensure no reverts
-        ClosePositionParams memory params = ClosePositionParams({
-            posId: takerPosId,
-            minAmt0Out: 0,
-            minAmt1Out: 0,
-            maxAmt1In: type(uint128).max,
-            timeout: type(uint32).max
-        });
-
-        // pass revert == true into close so we can parse live position details from the reason
-        try perps[perpId].closeTakerPosition(c, params, true, false) {}
-        catch (bytes memory reason) {
-            (pnl, fundingPayment, effectiveMargin, isLiquidatable) = reason.parseLivePositionDetails();
-        }
-    }
-
-    function marketHealthX96(PoolId perpId) external view returns (uint256) {
-        return perps[perpId].marketHealthX96(c);
-    }
-
-    // -----
-    // HOOKS
-    // -----
-
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
-        return Hooks.Permissions({
-            beforeInitialize: false,
-            afterInitialize: false,
-            beforeAddLiquidity: true,
-            afterAddLiquidity: true,
-            beforeRemoveLiquidity: true,
-            afterRemoveLiquidity: true,
-            beforeSwap: true,
-            afterSwap: true,
-            beforeDonate: true,
-            afterDonate: false,
-            beforeSwapReturnDelta: true,
-            afterSwapReturnDelta: false,
-            afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: false
-        });
-    }
-
-    function _beforeAddLiquidity(
-        address sender,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        bytes calldata // hookData
-    )
-        internal
-        override
-        returns (bytes4)
-    {
-        return perps[key.toId()].beforeAddLiquidity(c, sender, key, params);
-    }
-
-    function _afterAddLiquidity(
-        address, // sender
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata, // params
-        BalanceDelta, // delta
-        BalanceDelta, // feesAccrued
-        bytes calldata // hookData
-    )
-        internal
-        override
-        returns (bytes4, BalanceDelta)
-    {
-        return perps[key.toId()].afterAddLiquidity(c, key);
-    }
-
-    function _beforeRemoveLiquidity(
-        address, // sender
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata, // params
-        bytes calldata // hookData
-    )
-        internal
-        override
-        returns (bytes4)
-    {
-        return perps[key.toId()].beforeRemoveLiquidity(c, key);
-    }
-
-    function _afterRemoveLiquidity(
-        address, // sender
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        BalanceDelta, // delta
-        BalanceDelta, // feesAccrued
-        bytes calldata // hookData
-    )
-        internal
-        override
-        returns (bytes4, BalanceDelta)
-    {
-        return perps[key.toId()].afterRemoveLiquidity(c, key, params);
-    }
-
-    // only set non-zero fee if the swap is for opening a position
-    function _beforeSwap(
-        address sender,
-        PoolKey calldata key,
-        SwapParams calldata params,
-        bytes calldata hookData
-    )
-        internal
-        override
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
-        return perps[key.toId()].beforeSwap(c, sender, key, params, hookData);
-    }
-
-    function _afterSwap(
-        address, // sender
-        PoolKey calldata key,
-        SwapParams calldata params,
-        BalanceDelta, // delta
-        bytes calldata // hookData
-    )
-        internal
-        override
-        returns (bytes4, int128)
-    {
-        return perps[key.toId()].afterSwap(c, key, params);
-    }
-
-    function _beforeDonate(
-        address sender,
-        PoolKey calldata, // key
-        uint256, // amount0
-        uint256, // amount1
-        bytes calldata // hookData
-    )
-        internal
         view
-        override
-        returns (bytes4)
+        returns (uint24 creatorFee, uint24 insurnaceFee, uint24 lpFee, uint24 liquidationFee)
     {
-        return Hook.beforeDonate(c, sender);
+        creatorFee = perps[perpId].creatorFee;
+        insurnaceFee = perps[perpId].insuranceFee;
+        lpFee = TradingFee.calculateTradingFee(perps[perpId], POOL_MANAGER);
+        liquidationFee = perps[perpId].liquidationFee;
     }
+
+    function tradingBounds(PoolId perpId)
+        external
+        view
+        returns (
+            uint24 minOpeningMargin,
+            uint24 minMakerMarginRatio,
+            uint24 maxMakerMarginRatio,
+            uint24 makerLiquidationMarginRatio,
+            uint24 minTakerMarginRatio,
+            uint24 maxTakerMarginRatio,
+            uint24 takerLiquidationMarginRatio
+        )
+    {
+        minOpeningMargin = perps[perpId].minOpeningMargin;
+        minMakerMarginRatio = perps[perpId].minMakerOpeningMarginRatio;
+        maxMakerMarginRatio = perps[perpId].maxMakerOpeningMarginRatio;
+        makerLiquidationMarginRatio = perps[perpId].makerLiquidationMarginRatio;
+        minTakerMarginRatio = perps[perpId].minTakerOpeningMarginRatio;
+        maxTakerMarginRatio = perps[perpId].maxTakerOpeningMarginRatio;
+        takerLiquidationMarginRatio = perps[perpId].takerLiquidationMarginRatio;
+    }
+
+    function estimateLiquidityForAmount1(int24 tickA, int24 tickB, uint256 amount1)
+        external
+        pure
+        returns (uint128 liquidity)
+    {
+        return LiquidityAmounts.getLiquidityForAmount1(
+            TickMath.getSqrtPriceAtTick(tickA), TickMath.getSqrtPriceAtTick(tickB), amount1
+        );
+    }
+
+    function timeWeightedAvgSqrtPriceX96(PoolId perpId, uint32 lookbackWindow) external view returns (uint256) {
+        (uint160 sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
+        return TimeWeightedAvg.timeWeightedAvg(
+            perps[perpId].twapState, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
+        );
+    }
+
+    function getPosition(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory) {
+        return perps[perpId].positions[posId];
+    }
+
+    function quoteOpenMakerPosition(PoolId perpId, OpenMakerPositionParams calldata params)
+        external
+        returns (bool success, QuoteReverter.OpenQuote memory quote)
+    {
+        // pass revert == true into close so we can parse live position details from the reason
+        try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, true) {}
+        catch (bytes memory reason) {
+            (success, quote) = QuoteReverter.parseOpenQuote(reason);
+        }
+    }
+
+    function quoteOpenTakerPosition(PoolId perpId, OpenTakerPositionParams calldata params)
+        external
+        returns (bool success, QuoteReverter.OpenQuote memory quote)
+    {
+        // pass revert == true into close so we can parse live position details from the reason
+        try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, true) {}
+        catch (bytes memory reason) {
+            (success, quote) = QuoteReverter.parseOpenQuote(reason);
+        }
+    }
+
+    function quoteClosePosition(PoolId perpId, uint128 posId)
+        external
+        returns (bool success, QuoteReverter.CloseQuote memory quote)
+    {
+        // params are minimized / maximized where possible to ensure no reverts
+        ClosePositionParams memory params = ClosePositionParams(posId, 0, 0, type(uint128).max);
+
+        // pass revert == true into close so we can parse live position details from the reason
+        try PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, true) {}
+        catch (bytes memory reason) {
+            (success, quote) = QuoteReverter.parseCloseQuote(reason);
+        }
+    }
+
+    // // returns max notional size scaled by WAD
+    // function maxNotionalTakerSize(PoolId perpId, bool isLong) external view returns (uint256 maxNotionalSize) {
+    //     (,int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
+
+    //     // get mark twap, and calculate price band around it
+    //     uint256 markTwapX96 = getTWAP(perpId);
+
+    //     int24 tickBound;
+    //     if (isLong) {
+    //         uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 + perps[perpId].priceImpactBandX96;
+    //         uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
+    //         uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
+    //         if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
+    //             tickBound = TickMath.MAX_TICK;
+    //         } else if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
+    //             tickBound = TickMath.MIN_TICK;
+    //         } else {
+    //             tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
+    //         }
+    //     } else {
+    //         uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 - perps[perpId].priceImpactBandX96;
+    //         uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
+    //         uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
+    //         if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
+    //             tickBound = TickMath.MIN_TICK;
+    //         } else if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
+    //             tickBound = TickMath.MAX_TICK;
+    //         } else {
+    //             tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
+    //         }
+    //     }
+
+    //     int24 tickSpacing = perps[perpId].key.tickSpacing;
+    //     int128 liquidity = int128(c.poolManager.getLiquidity(perpId));
+
+    //     int24 tickUpper = currentTick;
+    //     bool isInitialized;
+    //     if (isLong) {
+    //         while (tickUpper < tickBound) {
+    //             (tickUpper, isInitialized) =
+    //                 c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, false);
+
+    //             if (isInitialized || tickUpper > tickBound) {
+    //                 if (tickUpper > tickBound) tickUpper = tickBound;
+    //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(currentTick);
+    //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
+    //                        FixedPoint96.UINT_Q96);
+    //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
+    //                 liquidity += liquidityToAdd;
+    //                 currentTick = tickUpper;
+    //             }
+
+    //             // stop if we pass the ending tick
+    //         }
+    //     } else {
+    //         while (tickUpper > tickBound) {
+    //             (tickUpper, isInitialized) =
+    //                 c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, true);
+
+    //             if (isInitialized || tickUpper < tickBound) {
+    //                 if (tickUpper < tickBound) tickUpper = tickBound;
+    //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+    //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(currentTick);
+    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
+    //                        FixedPoint96.UINT_Q96);
+    //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
+    //                 liquidity -= liquidityToAdd;
+    //                 currentTick = tickUpper;
+    //             }
+    //             tickUpper--;
+
+    //             // stop if we pass the ending tick
+    //         }
+    //     }
+    // }
 }
