@@ -192,6 +192,8 @@ library PerpLogic {
             insFee = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
             lpFee = notionalValue.mulDiv(perp.calculateTradingFee(poolManager), SCALE_1E6);
 
+            perp.insurance += insFee.toUint128();
+
             pos.margin = params.margin - creatorFee - insFee - lpFee;
             notionalValue = pos.margin.mulDiv(params.levX96, UINT_Q96);
 
@@ -214,6 +216,7 @@ library PerpLogic {
             bytes memory encodedDeltas = poolManager.executeAction(Router.SWAP, encodedConfig);
 
             (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+            perp.takerOpenInterest += pos.perpDelta.abs().toUint128();
 
             int24 endingTick;
             (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
@@ -342,7 +345,7 @@ library PerpLogic {
 
             uint256 effectiveMargin;
             (effectiveMargin, isLiquidation) =
-                calcEffectiveMargin(perp, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
+                calcEffectiveMargin(perp, pos, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
 
             if (revertChanges) {
                 revert QuoteReverter.RevertCloseQuote(
@@ -374,8 +377,10 @@ library PerpLogic {
                 newPos.usdDelta = 0;
                 newPos.margin = effectiveMargin;
                 newPos.entryTwPremiumX96 = perp.twPremiumX96;
+                newPos.entryADLGrowth = perp.adlGrowth;
 
                 perp.positions[posId] = newPos;
+                perp.takerOpenInterest += takerPerpDelta.abs().toUint128();
 
                 // emit Mgr.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96);
             } else {
@@ -398,6 +403,7 @@ library PerpLogic {
             bytes memory encodedDeltas = poolManager.executeAction(Router.SWAP, encodedConfig);
 
             (, int256 usdDelta) = abi.decode(encodedDeltas, (int256, int256));
+            perp.takerOpenInterest -= pos.perpDelta.abs().toUint128();
 
             pnl = usdDelta + pos.usdDelta;
 
@@ -425,7 +431,7 @@ library PerpLogic {
 
             uint256 effectiveMargin;
             (effectiveMargin, isLiquidation) =
-                calcEffectiveMargin(perp, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
+                calcEffectiveMargin(perp, pos, usdc, pos.margin, pnl, funding, notional, true, pos.holder);
 
             if (revertChanges) {
                 revert QuoteReverter.RevertCloseQuote(
@@ -487,6 +493,7 @@ library PerpLogic {
 
     function calcEffectiveMargin(
         Mgr.Perp storage perp,
+        Mgr.Position memory pos,
         address usdc,
         uint256 margin,
         int256 pnl,
@@ -497,9 +504,25 @@ library PerpLogic {
     ) internal returns (uint256 effectiveMargin, bool isLiquidation) {
         int256 netMargin = int256(margin) + pnl - funding;
 
+        if (!isMaker) {
+            uint256 adlPayment = (perp.adlGrowth - pos.entryADLGrowth).mulDiv(pos.perpDelta.abs(), SCALE_1E6);
+            netMargin -= int256(adlPayment);
+        }
+
         uint256 liquidationFeeAmt = notional.mulDiv(perp.liquidationFee, SCALE_1E6);
 
         if (netMargin <= 0) {
+            uint256 badDebt = netMargin.abs();
+
+            if (perp.insurance >= badDebt) {
+                perp.insurance -= badDebt.toUint128();
+            } else {
+                badDebt -= perp.insurance;
+                perp.insurance = 0;
+            }
+
+            perp.adlGrowth += badDebt / perp.takerOpenInterest;
+
             return (0, true);
         } else if (uint256(netMargin) <= liquidationFeeAmt) {
             effectiveMargin = 0;
