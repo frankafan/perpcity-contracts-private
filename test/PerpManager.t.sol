@@ -1,184 +1,175 @@
-// // SPDX-License-Identifier: GPL-3.0-or-later
-// pragma solidity 0.8.30;
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity 0.8.30;
 
-// import {PerpManager} from "../src/PerpManager.sol";
-// import {IBeacon} from "../src/interfaces/IBeacon.sol";
-// import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-// import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-// import {PerpLogic} from "../src/libraries/PerpLogic.sol";
-// import {TradingFee} from "../src/libraries/TradingFee.sol";
-// import {TradingFee} from "../src/libraries/TradingFee.sol";
-// import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
-// import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
-// import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-// import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
-// import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-// import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-// import {PoolId, PoolKey} from "@uniswap/v4-core/src/types/PoolId.sol";
-// import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-// import {UINT_Q96} from "../src/libraries/Constants.sol";
-// import {console2} from "forge-std/console2.sol";
-// import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-// import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-// import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
+import {PerpManager} from "../src/PerpManager.sol";
 
-// contract TempTest is DeployPoolManager {
-//     using SafeTransferLib for address;
-//     using StateLibrary for IPoolManager;
+import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
+import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
+import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
 
-//     address public usdc;
+import {UINT_Q96} from "../src/libraries/Constants.sol";
+import {PerpLogic} from "../src/libraries/PerpLogic.sol";
+import {TradingFee} from "../src/libraries/TradingFee.sol";
 
-//     PerpManager public perpManager;
+import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
+import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {PoolId, PoolKey} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
-//     address public actor = makeAddr("actor");
+contract PerpManagerTest is DeployPoolManager {
+    using SafeTransferLib for address;
+    using StateLibrary for IPoolManager;
 
-//     function setUp() public {
-//         IPoolManager poolManager = deployPoolManager();
+    address public usdc;
 
-//         usdc = address(new TestnetUSDC());
+    PerpManager public perpManager;
 
-//         // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
-//         address flags = address(
-//             uint160(0) ^ (0x5555 << 144) // Namespace the address to avoid collisions
-//         );
+    address public actor = makeAddr("actor");
 
-//         // Add all necessary constructor arguments for PerpManager.sol
-//         bytes memory constructorArgs = abi.encode(poolManager, usdc);
+    function setUp() public {
+        IPoolManager poolManager = deployPoolManager();
 
-//         // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
-//         deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, flags);
+        usdc = address(new TestnetUSDC());
 
-//         perpManager = PerpManager(flags);
-//     }
+        // // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
+        // address flags = address(
+        //     uint160(0) ^ (0x5555 << 144) // Namespace the address to avoid collisions
+        // );
 
-//     function test_temp() public {
-//         // deploy a beacon
-//         IBeacon beacon = new OwnableBeacon(actor, 50 * UINT_Q96, 100);
+        // // Add all necessary constructor arguments for PerpManager.sol
+        // bytes memory constructorArgs = abi.encode(poolManager, usdc);
 
-//         // deploy a perp
-//         PoolId perpId = perpManager.createPerp(
-//             IPerpManager.CreatePerpParams({
-//                 startingSqrtPriceX96: 560227709747861399187319382275, // sqrt(50)
-//                 beacon: address(beacon)
-//             })
-//         );
+        // // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
+        // deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, flags);
 
-//         // open a maker position
-//         vm.startPrank(actor);
+        // perpManager = PerpManager(flags);
 
-//         uint160 sqrtPriceLowerX96 = uint160(FixedPointMathLib.mulSqrt(45, UINT_Q96 * UINT_Q96));
-//         uint160 sqrtPriceUpperX96 = uint160(FixedPointMathLib.mulSqrt(55, UINT_Q96 * UINT_Q96));
+        perpManager = new PerpManager(poolManager, usdc);
+    }
 
-//         (,,,,,,,,,,,,,,,,,,,,,,,, PoolKey memory key,,) = perpManager.perps(perpId);
-//         int24 tickSpacing = key.tickSpacing;
+    function test_informal() public {
+        // deploy a beacon
+        IBeacon beacon = new OwnableBeacon(actor, 50 * UINT_Q96, 100);
 
-//         int24 tickLower = TickMath.getTickAtSqrtPrice(sqrtPriceLowerX96);
-//         tickLower = (tickLower / tickSpacing) * tickSpacing;
-//         int24 tickUpper = TickMath.getTickAtSqrtPrice(sqrtPriceUpperX96);
-//         tickUpper = (tickUpper / tickSpacing) * tickSpacing;
+        // deploy a perp
+        PoolId perpId = perpManager.createPerp(
+            IPerpManager.CreatePerpParams({
+                startingSqrtPriceX96: 560227709747861399187319382275, // sqrt(50)
+                beacon: address(beacon)
+            })
+        );
 
-//         uint256 makerMargin = 100e6;
+        // open a maker position
+        vm.startPrank(actor);
 
-//         uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceLowerX96, sqrtPriceUpperX96, makerMargin);
+        uint160 sqrtPriceLowerX96 = uint160(FixedPointMathLib.mulSqrt(45, UINT_Q96 * UINT_Q96));
+        uint160 sqrtPriceUpperX96 = uint160(FixedPointMathLib.mulSqrt(55, UINT_Q96 * UINT_Q96));
 
-//         deal(usdc, actor, makerMargin);
-//         usdc.safeApprove(address(perpManager), makerMargin);
-//         uint128 makerPosId = perpManager.openMakerPosition(
-//             perpId,
-//             IPerpManager.OpenMakerPositionParams({
-//                 margin: makerMargin,
-//                 liquidity: liquidity,
-//                 tickLower: tickLower,
-//                 tickUpper: tickUpper,
-//                 maxAmt0In: type(uint128).max,
-//                 maxAmt1In: type(uint128).max
-//             })
-//         );
+        int24 tickSpacing = perpManager.tickSpacing(perpId);
 
-//         uint256 takerMargin = 20e6;
+        int24 tickLower = TickMath.getTickAtSqrtPrice(sqrtPriceLowerX96);
+        tickLower = (tickLower / tickSpacing) * tickSpacing;
+        int24 tickUpper = TickMath.getTickAtSqrtPrice(sqrtPriceUpperX96);
+        tickUpper = (tickUpper / tickSpacing) * tickSpacing;
 
-//         // open taker long
-//         deal(usdc, actor, takerMargin);
-//         usdc.safeApprove(address(perpManager), takerMargin);
+        uint256 makerMargin = 100e6;
 
-//         uint128 takerPos1Id = perpManager.openTakerPosition(
-//             perpId,
-//             IPerpManager.OpenTakerPositionParams({
-//                 isLong: true,
-//                 margin: takerMargin,
-//                 levX96: 2 * UINT_Q96,
-//                 unspecifiedAmountLimit: 0
-//             })
-//         );
+        uint128 liquidity = perpManager.estimateLiquidityForAmount1(tickLower, tickUpper, makerMargin);
 
-//         IPerpManager.Position memory takerPos1 = perpManager.getPosition(perpId, takerPos1Id);
+        deal(usdc, actor, makerMargin);
+        usdc.safeApprove(address(perpManager), makerMargin);
+        uint128 makerPosId = perpManager.openMakerPosition(
+            perpId,
+            IPerpManager.OpenMakerPositionParams({
+                margin: makerMargin,
+                liquidity: liquidity,
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                maxAmt0In: type(uint128).max,
+                maxAmt1In: type(uint128).max
+            })
+        );
 
-//         console2.log("takerPos1Id", takerPos1Id);
-//         console2.log("margin", takerPos1.margin);
-//         console2.log("perpDelta", takerPos1.perpDelta);
-//         console2.log("usdDelta", takerPos1.usdDelta);
-//         console2.log();
+        console2.log("maker position opened with posId ", makerPosId);
+        console2.log();
 
-//         (bool success, int256 perpDelta, int256 usdDelta, uint256 creatorFeeAmt, uint256 insuranceFeeAmt, uint256 lpFeeAmt) = perpManager.quoteTakerPosition(perpId, IPerpManager.OpenTakerPositionParams({
-//             isLong: true,
-//             margin: takerMargin,
-//             levX96: 2 * UINT_Q96,
-//             unspecifiedAmountLimit: 0
-//         }));
+        uint256 takerMargin = 20e6;
 
-//         console2.log("success", success);
-//         console2.log("perpDelta", perpDelta);
-//         console2.log("usdDelta", usdDelta);
-//         console2.log("creatorFeeAmt", creatorFeeAmt);
-//         console2.log("insuranceFeeAmt", insuranceFeeAmt);
-//         console2.log("lpFeeAmt", lpFeeAmt);
+        // open taker long
+        deal(usdc, actor, takerMargin);
+        usdc.safeApprove(address(perpManager), takerMargin);
 
-//         // // open taker short
-//         // deal(usdc, actor, takerMargin);
-//         // usdc.safeApprove(address(perpManager), takerMargin);
+        uint128 takerPos1Id = perpManager.openTakerPosition(
+            perpId,
+            IPerpManager.OpenTakerPositionParams({
+                isLong: true,
+                margin: takerMargin,
+                levX96: 2 * UINT_Q96,
+                unspecifiedAmountLimit: 0
+            })
+        );
 
-//         // uint128 takerPos2Id = perpManager.openTakerPosition(
-//         //     perpId,
-//         //     IPerpManager.OpenTakerPositionParams({
-//         //         isLong: false,
-//         //         margin: takerMargin,
-//         //         levX96: 2 * UINT_Q96,
-//         //         unspecifiedAmountLimit: type(uint128).max
-//         //     })
-//         // );
+        IPerpManager.Position memory takerPos1 = perpManager.getPosition(perpId, takerPos1Id);
 
-//         // skip(1 hours);
+        console2.log("taker position opened with posId ", takerPos1Id);
+        console2.log("margin %6e", takerPos1.margin);
+        console2.log("perpDelta %6e", takerPos1.perpDelta);
+        console2.log("usdDelta %6e", takerPos1.usdDelta);
+        console2.log();
 
-//         // int256 pnl;
-//         // int256 fundingPayment;
-//         // int256 effectiveMargin;
-//         // bool isLiquidatable;
-//         // uint256 newPriceX96;
+        // // open taker short
+        // deal(usdc, actor, takerMargin);
+        // usdc.safeApprove(address(perpManager), takerMargin);
 
-//         // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, makerPosId);
-//         // console2.log("makerPosId", makerPosId);
-//         // console2.log("pnl", pnl);
-//         // console2.log("fundingPayment", fundingPayment);
-//         // console2.log("effectiveMargin", effectiveMargin);
-//         // console2.log("isLiquidatable", isLiquidatable);
-//         // console2.log("newPriceX96", newPriceX96);
-//         // console2.log();
+        // uint128 takerPos2Id = perpManager.openTakerPosition(
+        //     perpId,
+        //     IPerpManager.OpenTakerPositionParams({
+        //         isLong: false,
+        //         margin: takerMargin,
+        //         levX96: 2 * UINT_Q96,
+        //         unspecifiedAmountLimit: type(uint128).max
+        //     })
+        // );
 
-//         // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos1Id);
-//         // console2.log("takerPos1Id", takerPos1Id);
-//         // console2.log("pnl", pnl);
-//         // console2.log("fundingPayment", fundingPayment);
-//         // console2.log("effectiveMargin", effectiveMargin);
-//         // console2.log("isLiquidatable", isLiquidatable);
-//         // console2.log("newPriceX96", newPriceX96);
-//         // console2.log();
+        // skip(1 hours);
 
-//         // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos2Id);
-//         // console2.log("takerPos2Id", takerPos2Id);
-//         // console2.log("pnl", pnl);
-//         // console2.log("fundingPayment", fundingPayment);
-//         // console2.log("effectiveMargin", effectiveMargin);
-//         // console2.log("isLiquidatable", isLiquidatable);
-//         // console2.log("newPriceX96", newPriceX96);
-//     }
-// }
+        // int256 pnl;
+        // int256 fundingPayment;
+        // int256 effectiveMargin;
+        // bool isLiquidatable;
+        // uint256 newPriceX96;
+
+        // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, makerPosId);
+        // console2.log("makerPosId", makerPosId);
+        // console2.log("pnl", pnl);
+        // console2.log("fundingPayment", fundingPayment);
+        // console2.log("effectiveMargin", effectiveMargin);
+        // console2.log("isLiquidatable", isLiquidatable);
+        // console2.log("newPriceX96", newPriceX96);
+        // console2.log();
+
+        // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos1Id);
+        // console2.log("takerPos1Id", takerPos1Id);
+        // console2.log("pnl", pnl);
+        // console2.log("fundingPayment", fundingPayment);
+        // console2.log("effectiveMargin", effectiveMargin);
+        // console2.log("isLiquidatable", isLiquidatable);
+        // console2.log("newPriceX96", newPriceX96);
+        // console2.log();
+
+        // (pnl, fundingPayment, effectiveMargin, isLiquidatable, newPriceX96) = perpManager.livePositionDetails(perpId, takerPos2Id);
+        // console2.log("takerPos2Id", takerPos2Id);
+        // console2.log("pnl", pnl);
+        // console2.log("fundingPayment", fundingPayment);
+        // console2.log("effectiveMargin", effectiveMargin);
+        // console2.log("isLiquidatable", isLiquidatable);
+        // console2.log("newPriceX96", newPriceX96);
+    }
+}

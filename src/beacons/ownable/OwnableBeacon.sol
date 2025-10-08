@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {IBeacon} from "../../interfaces/beacons/IBeacon.sol";
 import {ITimeWeightedAvg} from "../../interfaces/ITimeWeightedAvg.sol";
+import {IBeacon} from "../../interfaces/beacons/IBeacon.sol";
 import {TimeWeightedAvg} from "../../libraries/TimeWeightedAvg.sol";
 import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";

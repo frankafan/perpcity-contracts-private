@@ -54,7 +54,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 makerPosId)
     {
-        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
+        (makerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
     /// @notice Opens a taker position
@@ -65,7 +65,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 takerPosId)
     {
-        return PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
+        (takerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
     /// @notice Adds margin to an open position

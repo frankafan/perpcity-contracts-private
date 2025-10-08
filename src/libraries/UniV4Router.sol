@@ -234,8 +234,7 @@ library UniV4Router {
     function donate(IPoolManager poolManager, DonateConfig memory params) internal {
         // donate call into PoolManager with empty hook data and clear the currency1 delta
         BalanceDelta donationDelta = poolManager.donate(params.poolKey, 0, params.amount, "");
-        /// TODO: add back or remove
-        // clearBalance(poolManager, params.poolKey.currency1, donationDelta.amount1());
+        clearBalance(poolManager, params.poolKey.currency1, donationDelta.amount1());
     }
 
     /// @notice Clears the credit or debt of a currency in the pool manager

@@ -2,9 +2,10 @@
 pragma solidity 0.8.30;
 
 import {PerpVault} from "../PerpVault.sol";
-import {IBeacon} from "../interfaces/beacons/IBeacon.sol";
-import {IPerpManager} from "../interfaces/IPerpManager.sol";
+
+import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
 import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
+import {IBeacon} from "../interfaces/beacons/IBeacon.sol";
 import "./Constants.sol";
 import {Funding} from "./Funding.sol";
 import {QuoteReverter} from "./QuoteReverter.sol";
@@ -31,7 +32,7 @@ library PerpLogic {
     using StateLibrary for IPoolManager;
     using SafeCastLib for *;
     using SignedMath for int256;
-    using TradingFee for IPerpManager.Perp;
+    using TradingFee for Mgr.Perp;
     using Tick for mapping(int24 => Tick.GrowthInfo);
     using SafeTransferLib for address;
 
@@ -44,10 +45,10 @@ library PerpLogic {
     /// @param params The parameters for creating the perp
     /// @return perpId The ID of the newly created perp
     function createPerp(
-        mapping(PoolId => IPerpManager.Perp) storage perps,
+        mapping(PoolId => Mgr.Perp) storage perps,
         IPoolManager poolManager,
         address usdc,
-        IPerpManager.CreatePerpParams calldata params
+        Mgr.CreatePerpParams calldata params
     ) external returns (PoolId perpId) {
         // prepare the params for creating a pool in Uniswap
         Router.CreatePoolConfig memory config = Router.CreatePoolConfig(TICK_SPACING, params.startingSqrtPriceX96);
@@ -60,7 +61,7 @@ library PerpLogic {
         perpId = key.toId();
 
         // initialize the perp's state
-        IPerpManager.Perp storage perp = perps[perpId];
+        Mgr.Perp storage perp = perps[perpId];
 
         // TODO: clean up and reorder as needed
         perp.vault = address(new PerpVault(address(this), usdc));
@@ -85,51 +86,59 @@ library PerpLogic {
         perp.liquidatorFeeSplit = LIQUIDATOR_FEE_SPLIT;
         perp.key = key;
 
+        // initialize the perp's time weighted average state and increase the cardinality cap to its starting value
         perp.twapState.initialize(uint32(block.timestamp));
         perp.twapState.increaseCardinalityCap(INITIAL_CARDINALITY_CAP);
 
         uint256 indexPriceX96 = IBeacon(params.beacon).data();
-
-        emit IPerpManager.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96, indexPriceX96);
+        emit Mgr.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96, indexPriceX96);
     }
 
+    /// @notice Opens a new maker or taker position in a perp
+    /// @param perp The perp to open the position in
+    /// @param poolManager The Uniswap pool manager to call swapping and liquidity modification actions on
+    /// @param usdc The address of the USDC token
+    /// @param encodedParams The encoded parameters for opening the position
+    /// @param isMaker Whether the position is a maker position. If false, the position is a taker position
+    /// @param revertChanges Whether to revert the changes (and thus not change state)
+    /// @return posId The ID of the opened position
+    /// @return pos The details of the opened position
+    /// @return creatorFee The amount paid due to the creator fee
+    /// @return insFee The amount paid due to the insurance fee
+    /// @return lpFee The amount paid due to the lp fee
     function openPosition(
-        IPerpManager.Perp storage perp,
+        Mgr.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
         bytes memory encodedParams,
         bool isMaker,
         bool revertChanges
-    ) external returns (uint128 posId) {
+    ) external returns (uint128 posId, Mgr.Position memory pos, uint256 creatorFee, uint256 insFee, uint256 lpFee) {
         PoolId perpId = perp.key.toId();
         (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
 
+        // use the existing premium per second and sqrt price before they change to update funding accumulators to
+        // account for the time passed since the last update
         updateTwPremiums(perp, sqrtPriceX96);
 
+        // store the ID of the position about to be opened and increment the next position ID
         posId = perp.nextPosId;
         perp.nextPosId++;
 
-        IPerpManager.Position memory pos;
-
-        uint256 specifiedMargin;
-        uint256 creatorFeeAmount;
-        uint256 insuranceFeeAmount;
-        uint256 lpFeeAmount;
-
         if (isMaker) {
-            IPerpManager.OpenMakerPositionParams memory params =
-                abi.decode(encodedParams, (IPerpManager.OpenMakerPositionParams));
+            // Use the maker params struct to decode the parameters
+            Mgr.OpenMakerPositionParams memory params = abi.decode(encodedParams, (Mgr.OpenMakerPositionParams));
 
-            if (params.liquidity == 0) revert IPerpManager.InvalidLiquidity(params.liquidity);
+            // Don't allow zero liquidity to be specified
+            if (params.liquidity == 0) revert Mgr.InvalidLiquidity(params.liquidity);
 
-            specifiedMargin = params.margin;
-            pos.margin = specifiedMargin;
+            pos.margin = params.margin;
 
             Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo = perp.tickGrowthInfo.getAllFundingGrowth(
                 params.tickLower, params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
             );
 
-            pos.makerDetails = IPerpManager.MakerDetails({
+            pos.makerDetails = Mgr.MakerDetails({
                 entryTimestamp: uint32(block.timestamp),
                 tickLower: params.tickLower,
                 tickUpper: params.tickUpper,
@@ -174,30 +183,21 @@ library PerpLogic {
             if (marginRatio < perp.minMakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxMakerOpeningMarginRatio) revert("margin ratio is too high");
         } else {
-            IPerpManager.OpenTakerPositionParams memory params =
-                abi.decode(encodedParams, (IPerpManager.OpenTakerPositionParams));
+            Mgr.OpenTakerPositionParams memory params = abi.decode(encodedParams, (Mgr.OpenTakerPositionParams));
 
-            specifiedMargin = params.margin;
+            uint256 notionalValue = params.margin.mulDiv(params.levX96, UINT_Q96);
 
-            // clean up and maybe combine into one muldiv
-            uint256 notionalValue = specifiedMargin.mulDiv(params.levX96, UINT_Q96);
+            creatorFee = notionalValue.mulDiv(perp.creatorFee, SCALE_1E6);
+            insFee = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
+            lpFee = notionalValue.mulDiv(perp.calculateTradingFee(poolManager), SCALE_1E6);
 
-            creatorFeeAmount = notionalValue.mulDiv(perp.creatorFee, SCALE_1E6);
-            usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmount);
-
-            insuranceFeeAmount = notionalValue.mulDiv(perp.insuranceFee, SCALE_1E6);
-
-            lpFeeAmount = notionalValue.mulDiv(perp.calculateTradingFee(poolManager), SCALE_1E6);
-
-            pos.margin = specifiedMargin - creatorFeeAmount - insuranceFeeAmount - lpFeeAmount;
+            pos.margin = params.margin - creatorFee - insFee - lpFee;
             notionalValue = pos.margin.mulDiv(params.levX96, UINT_Q96);
 
             uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notionalValue);
 
             if (marginRatio < perp.minTakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxTakerOpeningMarginRatio) revert("margin ratio is too high");
-
-            (uint160 sqrtPriceX96Before, int24 endingTickBefore,,) = poolManager.getSlot0(perpId);
 
             bytes memory encodedConfig = abi.encode(
                 Router.SwapConfig({
@@ -212,7 +212,7 @@ library PerpLogic {
 
             bytes memory encodedDeltas = poolManager.executeAction(Router.SWAP, encodedConfig);
 
-            (pos.perpDelta, pos.usdDelta, lpFeeAmount) = abi.decode(encodedDeltas, (int256, int256, uint256));
+            (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
 
             int24 endingTick;
             (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
@@ -229,41 +229,42 @@ library PerpLogic {
             );
 
             poolManager.executeAction(
-                Router.DONATE, abi.encode(Router.DonateConfig({poolKey: perp.key, amount: lpFeeAmount}))
+                Router.DONATE, abi.encode(Router.DonateConfig({poolKey: perp.key, amount: lpFee}))
             );
         }
 
-        if (pos.perpDelta == 0 && pos.usdDelta == 0) revert IPerpManager.ZeroSizePosition(pos.perpDelta, pos.usdDelta);
+        if (pos.perpDelta == 0 && pos.usdDelta == 0) revert Mgr.ZeroSizePosition(pos.perpDelta, pos.usdDelta);
 
         pos.holder = msg.sender;
         pos.entryTwPremiumX96 = perp.twPremiumX96;
 
-        if (pos.margin < perp.minOpeningMargin) revert IPerpManager.InvalidMargin(pos.margin);
-
-        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
+        if (pos.margin < perp.minOpeningMargin) revert Mgr.InvalidMargin(pos.margin);
 
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
+
+        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
 
         perp.positions[posId] = pos;
 
         if (revertChanges) {
             revert QuoteReverter.RevertOpenQuote(
-                QuoteReverter.OpenQuote(pos.perpDelta, pos.usdDelta, creatorFeeAmount, insuranceFeeAmount, lpFeeAmount)
+                QuoteReverter.OpenQuote(pos.perpDelta, pos.usdDelta, creatorFee, insFee, lpFee)
             );
         }
 
-        usdc.safeTransferFrom(msg.sender, perp.vault, specifiedMargin);
+        usdc.safeTransferFrom(msg.sender, perp.vault, pos.margin + creatorFee + insFee + lpFee);
+        usdc.safeTransferFrom(perp.vault, perp.creator, creatorFee);
 
-        emit IPerpManager.PositionOpened(
+        emit Mgr.PositionOpened(
             perpId, posId, pos.holder, isMaker, pos.perpDelta, sqrtPriceX96, fundingPremiumPerSecX96
         );
     }
 
     function addMargin(
-        IPerpManager.Perp storage perp,
+        Mgr.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
-        IPerpManager.AddMarginParams calldata params
+        Mgr.AddMarginParams calldata params
     ) external {
         address holder = perp.positions[params.posId].holder;
         uint256 margin = params.margin;
@@ -278,8 +279,8 @@ library PerpLogic {
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
         // validate caller is holder and that margin is nonzero
-        if (msg.sender != holder) revert IPerpManager.InvalidCaller(msg.sender, holder);
-        if (margin == 0) revert IPerpManager.InvalidMargin(margin);
+        if (msg.sender != holder) revert Mgr.InvalidCaller(msg.sender, holder);
+        if (margin == 0) revert Mgr.InvalidMargin(margin);
 
         // TODO: add margin ratio check
 
@@ -289,20 +290,20 @@ library PerpLogic {
         // update maker position state
         perp.positions[params.posId].margin += margin;
 
-        emit IPerpManager.MarginAdded(perp.key.toId(), params.posId, perp.positions[params.posId].margin);
+        emit Mgr.MarginAdded(perp.key.toId(), params.posId, perp.positions[params.posId].margin);
     }
 
     function closePosition(
-        IPerpManager.Perp storage perp,
+        Mgr.Perp storage perp,
         IPoolManager poolManager,
         address usdc,
-        IPerpManager.ClosePositionParams calldata params,
+        Mgr.ClosePositionParams calldata params,
         bool revertChanges
     ) external returns (uint128 posId) {
         PoolId perpId = perp.key.toId();
-        IPerpManager.Position memory pos = perp.positions[params.posId];
+        Mgr.Position memory pos = perp.positions[params.posId];
 
-        if (pos.holder == address(0)) revert IPerpManager.InvalidClose(msg.sender, address(0), false);
+        if (pos.holder == address(0)) revert Mgr.InvalidClose(msg.sender, address(0), false);
 
         (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
         updateTwPremiums(perp, sqrtPriceX96);
@@ -311,7 +312,7 @@ library PerpLogic {
         bool isMaker = pos.makerDetails.liquidity > 0;
         int256 pnl;
         if (isMaker) {
-            IPerpManager.MakerDetails memory makerDetails = pos.makerDetails;
+            Mgr.MakerDetails memory makerDetails = pos.makerDetails;
 
             bytes memory encodedConfig = abi.encode(
                 Router.LiquidityConfig({
@@ -351,11 +352,7 @@ library PerpLogic {
             if (
                 !revertChanges && !isLiquidation
                     && block.timestamp <= makerDetails.entryTimestamp + perp.makerLockupPeriod
-            ) {
-                revert IPerpManager.MakerPositionLocked(
-                    block.timestamp, makerDetails.entryTimestamp + perp.makerLockupPeriod
-                );
-            }
+            ) revert Mgr.MakerPositionLocked(block.timestamp, makerDetails.entryTimestamp + perp.makerLockupPeriod);
 
             // clear tick mapping to mimick uniswap pool ticks cleared
             if (!poolManager.isTickInitialized(perpId, makerDetails.tickLower)) {
@@ -369,7 +366,7 @@ library PerpLogic {
                 posId = perp.nextPosId;
                 perp.nextPosId++;
 
-                IPerpManager.Position memory newPos;
+                Mgr.Position memory newPos;
 
                 newPos.holder = pos.holder;
                 newPos.perpDelta = takerPerpDelta;
@@ -379,7 +376,7 @@ library PerpLogic {
 
                 perp.positions[posId] = newPos;
 
-                // emit IPerpManager.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96);
+                // emit Mgr.TakerPositionOpened(perpId, takerPosId, perp.takerPositions[takerPosId], sqrtPriceX96);
             } else {
                 usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
             }
@@ -443,7 +440,7 @@ library PerpLogic {
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        emit IPerpManager.PositionClosed(
+        emit Mgr.PositionClosed(
             perpId,
             params.posId,
             pos.holder,
@@ -457,7 +454,7 @@ library PerpLogic {
         delete perp.positions[params.posId];
     }
 
-    function makerFunding(IPerpManager.Perp storage perp, IPerpManager.Position memory pos, int24 currentTick)
+    function makerFunding(Mgr.Perp storage perp, Mgr.Position memory pos, int24 currentTick)
         internal
         view
         returns (int256)
@@ -488,7 +485,7 @@ library PerpLogic {
     }
 
     function calcEffectiveMargin(
-        IPerpManager.Perp storage perp,
+        Mgr.Perp storage perp,
         address usdc,
         uint256 margin,
         int256 pnl,
@@ -520,7 +517,7 @@ library PerpLogic {
         }
 
         isLiquidation = effectiveMargin == 0;
-        if (!isLiquidation && msg.sender != holder) revert IPerpManager.InvalidClose(msg.sender, holder, false);
+        if (!isLiquidation && msg.sender != holder) revert Mgr.InvalidClose(msg.sender, holder, false);
         if (isLiquidation) usdc.safeTransferFrom(perp.vault, msg.sender, liquidationFeeAmt);
     }
 
@@ -539,7 +536,7 @@ library PerpLogic {
         notional = perpsNotional + usd;
     }
 
-    function updateTwPremiums(IPerpManager.Perp storage perp, uint160 sqrtPriceX96) internal {
+    function updateTwPremiums(Mgr.Perp storage perp, uint160 sqrtPriceX96) internal {
         int256 timeSinceLastUpdate = int256(block.timestamp - perp.lastTwPremiumsUpdate);
 
         perp.twPremiumX96 += perp.premiumPerSecondX96 * timeSinceLastUpdate;
@@ -551,7 +548,7 @@ library PerpLogic {
     }
 
     // expects updateTwPremiums() to have been called before to account for time during old premiumPerSecondX96
-    function updatePremiumPerSecond(IPerpManager.Perp storage perp, uint160 sqrtPriceX96)
+    function updatePremiumPerSecond(Mgr.Perp storage perp, uint160 sqrtPriceX96)
         internal
         returns (int256 premiumPerSecondX96)
     {
@@ -567,7 +564,7 @@ library PerpLogic {
         perp.premiumPerSecondX96 = premiumPerSecondX96;
     }
 
-    function getSqrtPriceLimitX96(IPerpManager.Perp storage perp, uint160 sqrtPriceX96, bool isBuy)
+    function getSqrtPriceLimitX96(Mgr.Perp storage perp, uint160 sqrtPriceX96, bool isBuy)
         internal
         view
         returns (uint160 sqrtPriceLimitX96)

@@ -194,25 +194,27 @@ library TimeWeightedAvg {
     /// @param targetTimestamp The timestamp of returned `cumulativeVal`
     /// @param currentVal The current value
     /// @return cumulativeVal The cumulative value at the target timestamp
+    /// @return targetUsed The timestamp used for the cumulativeVal calculation. This will either be the targetTimestamp
+    /// or the timestamp of the observation used if the targetTimestamp is older than the oldest observation
     function cumulativeValAtTimestamp(
         State storage state,
         uint32 blockTimestamp,
         uint32 targetTimestamp,
         uint256 currentVal
-    ) internal view returns (uint216 cumulativeVal) {
+    ) internal view returns (uint216 cumulativeVal, uint32 targetUsed) {
         if (targetTimestamp == blockTimestamp) {
             Observation memory newest = state.observations[state.index];
             if (newest.timestamp != blockTimestamp) newest = calcObservation(newest, blockTimestamp, currentVal);
-            return newest.cumulativeVal;
+            return (newest.cumulativeVal, targetTimestamp);
         }
 
         (Observation memory beforeOrAt, Observation memory atOrAfter) = surrounding(state, targetTimestamp, currentVal);
 
-        // early return if one of the observations has a timestamp equal to the target
-        if (targetTimestamp == beforeOrAt.timestamp) {
-            return (beforeOrAt.cumulativeVal);
+        // early return if one of the observations has a timestamp equal to the target (or target is before the oldest)
+        if (targetTimestamp <= beforeOrAt.timestamp) {
+            return (beforeOrAt.cumulativeVal, beforeOrAt.timestamp);
         } else if (targetTimestamp == atOrAfter.timestamp) {
-            return (atOrAfter.cumulativeVal);
+            return (atOrAfter.cumulativeVal, atOrAfter.timestamp);
         }
         // otherwise, the target is in between the two observations
         else {
@@ -221,7 +223,7 @@ library TimeWeightedAvg {
             uint216 cvDelta = atOrAfter.cumulativeVal - beforeOrAt.cumulativeVal; // Δ cumVal: beforeOrAt to atOrAfter
 
             // calculate the delta in cumulativeVal from beforeOrAt to target and add it to beforeOrAt's cumulativeVal
-            return beforeOrAt.cumulativeVal + (cvDelta * spanToTarget / totalSpan);
+            return (beforeOrAt.cumulativeVal + (cvDelta * spanToTarget / totalSpan), targetTimestamp);
         }
     }
 
@@ -239,13 +241,16 @@ library TimeWeightedAvg {
         returns (uint256 twAvg)
     {
         if (lookbackWindow == 0) return currentVal;
+        if (lookbackWindow > blockTimestamp) lookbackWindow = blockTimestamp;
 
         uint32 targetTimestamp = blockTimestamp - lookbackWindow;
-        uint256 cumulativeValStart = cumulativeValAtTimestamp(state, blockTimestamp, targetTimestamp, currentVal);
-        uint256 cumulativeValEnd = cumulativeValAtTimestamp(state, blockTimestamp, blockTimestamp, currentVal);
+        (uint256 cumulativeValStart, uint256 startTimestamp) =
+            cumulativeValAtTimestamp(state, blockTimestamp, targetTimestamp, currentVal);
+        (uint256 cumulativeValEnd, uint256 endTimestamp) =
+            cumulativeValAtTimestamp(state, blockTimestamp, blockTimestamp, currentVal);
 
         uint256 delta = cumulativeValEnd - cumulativeValStart;
         // if cumVal hasn't changed, return the current value; else, calculate and return the average over the window
-        return delta == 0 ? currentVal : delta / lookbackWindow;
+        return delta == 0 ? currentVal : delta / (endTimestamp - startTimestamp);
     }
 }
