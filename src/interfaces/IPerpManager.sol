@@ -38,6 +38,9 @@ interface IPerpManager {
         int256 twPremiumX96;
         int256 twPremiumDivBySqrtPriceX96;
         int256 premiumPerSecondX96;
+        uint256 adlGrowth;
+        uint128 insurance;
+        uint128 takerOpenInterest;
         PoolKey key;
         TimeWeightedAvg.State twapState;
         mapping(uint128 => Position) positions;
@@ -50,6 +53,7 @@ interface IPerpManager {
         int256 perpDelta;
         int256 usdDelta;
         int256 entryTwPremiumX96;
+        uint256 entryADLGrowth;
         MakerDetails makerDetails;
     }
 
