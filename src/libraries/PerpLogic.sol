@@ -138,13 +138,14 @@ library PerpLogic {
                 params.tickLower, params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
             );
 
+            int256 e = fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96;
             pos.makerDetails = Mgr.MakerDetails({
                 entryTimestamp: uint32(block.timestamp),
                 tickLower: params.tickLower,
                 tickUpper: params.tickUpper,
                 liquidity: params.liquidity,
                 entryTwPremiumGrowthInsideX96: fundingGrowthRangeInfo.twPremiumGrowthInsideX96,
-                entryTwPremiumDivBySqrtPriceGrowthInsideX96: fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96,
+                entryTwPremiumDivBySqrtPriceGrowthInsideX96: e,
                 entryTwPremiumGrowthBelowX96: fundingGrowthRangeInfo.twPremiumGrowthBelowX96
             });
 

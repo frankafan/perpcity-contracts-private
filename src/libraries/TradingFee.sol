@@ -34,9 +34,9 @@ library TradingFee {
     //     uint128 baseFeeX96; // current percent fee if volatility is zero (e.g. 0.05 = 5%)
     //     uint128 startFeeX96; // percent fee when liquidity is zero and volatility is zero (e.g. 0.05 = 5%)
     //     uint128 targetFeeX96; // percent fee the curve approaches as liquidity is added and volatility is zero
-    //     uint128 decay; // controls decay rate from startFee to targetFee as liquidity grows; higher value = slower decay
+    //     uint128 decay; // controls decay rate from startFee to targetFee as liquidity grows; higher value = slower)
     //     uint128 volatilityScalerX96; // scales volatility's impact on fee (e.g. 0 = no impact, 0.05 = higher impact)
-    //     uint128 maxFeeMultiplierX96; // determines max percent fee when volatility is high (e.g. 1.5 = 150% of baseFee)
+    //     uint128 maxFeeMultiplierX96; // determines max percent fee when volatility is high (e.g. 1.5 = 150% of base)
     // }
 
     // updates the portion of the overall fee function that is based on liquidity (baseFeeX96)

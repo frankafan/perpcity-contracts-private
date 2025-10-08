@@ -238,7 +238,8 @@ contract PerpManager is IPerpManager, UnlockCallback {
     //                 if (tickUpper > tickBound) tickUpper = tickBound;
     //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(currentTick);
     //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(tickUpper);
-    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96, FixedPoint96.UINT_Q96);
+    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
+    //                        FixedPoint96.UINT_Q96);
     //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
     //                 liquidity += liquidityToAdd;
     //                 currentTick = tickUpper;
@@ -255,7 +256,8 @@ contract PerpManager is IPerpManager, UnlockCallback {
     //                 if (tickUpper < tickBound) tickUpper = tickBound;
     //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickUpper);
     //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(currentTick);
-    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96, FixedPoint96.UINT_Q96);
+    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
+    //                        FixedPoint96.UINT_Q96);
     //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
     //                 liquidity -= liquidityToAdd;
     //                 currentTick = tickUpper;
