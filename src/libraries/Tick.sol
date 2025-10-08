@@ -114,7 +114,7 @@ library Tick {
 
             if (isInitialized) self.cross(currentTick, twPremiumX96, twPremiumDivBySqrtPriceX96);
 
-            // if going down, decrement tick so it doesnlt get caught by lte in nextInitializedTickWithinOneWord
+            // if going down, decrement tick so it doesn't get caught by lte in nextInitializedTickWithinOneWord
             if (zeroForOne) currentTick--;
 
             // stop if we pass the ending tick
