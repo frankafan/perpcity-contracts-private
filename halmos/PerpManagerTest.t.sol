@@ -9,16 +9,17 @@ import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
+// Mocks
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
+
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
 
-    // Mock PoolManager using inheritance
-    IPoolManager internal poolManager;
-
-    // Mock USDC using inheritance
-    address internal usdc;
-
+    // Contracts
+    PoolManagerMock internal poolManagerMock;
+    ERC20Mock internal usdcMock;
     PerpManager internal perpManager;
 
     function setUp() public virtual {
