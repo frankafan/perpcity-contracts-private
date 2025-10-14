@@ -19,6 +19,7 @@
     "prettier:write": "prettier --write \"**/*.{json,md,yml}\" --ignore-path \".prettierignore\"",
     "test": "forge test",
     "test:coverage": "forge coverage",
+    "test:halmos": "FOUNDRY_PROFILE=halmos halmos",
     "test:coverage:report": "forge coverage --report lcov && genhtml lcov.info --branch-coverage --output-dir coverage",
     "deploy:testnet-usdc:base-sepolia": "source .env && forge script --chain 84532 script/DeployTestnetUSDC.s.sol:DeployTestnetUSDC --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify -vv --sender $SENDER_ADDRESS --account devKey",
     "deploy:beacon-registry:base-sepolia": "source .env && forge script --chain 84532 script/DeployBeaconRegistry.s.sol:DeployBeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify -vv --sender $SENDER_ADDRESS --account devKey",
