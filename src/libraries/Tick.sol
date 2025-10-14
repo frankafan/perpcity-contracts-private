@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
+import {UniV4Router} from "./UniV4Router.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 
-// modified from https://github.com/perpetual-protocol/perp-curie-contract/blob/main/contracts/lib/Tick.sol
+/// TODO: add comments
 library Tick {
     using StateLibrary for IPoolManager;
     using Tick for mapping(int24 => Tick.GrowthInfo);
@@ -29,9 +31,7 @@ library Tick {
         int24 currentTick,
         int256 twPremiumX96,
         int256 twPremiumDivBySqrtPriceX96
-    )
-        internal
-    {
+    ) internal {
         if (tick <= currentTick) {
             GrowthInfo storage growthInfo = self[tick];
             growthInfo.twPremiumX96 = twPremiumX96;
@@ -44,9 +44,7 @@ library Tick {
         int24 tick,
         int256 twPremiumX96,
         int256 twPremiumDivBySqrtPriceX96
-    )
-        internal
-    {
+    ) internal {
         GrowthInfo storage growthInfo = self[tick];
         growthInfo.twPremiumX96 = twPremiumX96 - growthInfo.twPremiumX96;
         growthInfo.twPremiumDivBySqrtPriceX96 = twPremiumDivBySqrtPriceX96 - growthInfo.twPremiumDivBySqrtPriceX96;
@@ -65,11 +63,7 @@ library Tick {
         int24 currentTick,
         int256 twPremiumGrowthGlobalX96,
         int256 twPremiumDivBySqrtPriceGrowthGlobalX96
-    )
-        internal
-        view
-        returns (FundingGrowthRangeInfo memory)
-    {
+    ) internal view returns (FundingGrowthRangeInfo memory) {
         GrowthInfo storage lowerTickGrowthInfo = self[lowerTick];
         GrowthInfo storage upperTickGrowthInfo = self[upperTick];
 
@@ -100,5 +94,30 @@ library Tick {
             - twPremiumDivBySqrtPriceGrowthBelowX96 - twPremiumDivBySqrtPriceGrowthAboveX96;
 
         return fundingGrowthRangeInfo;
+    }
+
+    function crossTicks(
+        mapping(int24 => GrowthInfo) storage self,
+        IPoolManager poolManager,
+        PoolId poolId,
+        int24 currentTick,
+        int24 tickSpacing,
+        bool zeroForOne,
+        int24 endingTick,
+        int256 twPremiumX96,
+        int256 twPremiumDivBySqrtPriceX96
+    ) internal {
+        bool isInitialized;
+        do {
+            (currentTick, isInitialized) =
+                UniV4Router.nextInitializedTickWithinOneWord(poolManager, poolId, currentTick, tickSpacing, zeroForOne);
+
+            if (isInitialized) self.cross(currentTick, twPremiumX96, twPremiumDivBySqrtPriceX96);
+
+            // if going down, decrement tick so it doesn't get caught by lte in nextInitializedTickWithinOneWord
+            if (zeroForOne) currentTick--;
+
+            // stop if we pass the ending tick
+        } while (zeroForOne ? (currentTick > endingTick) : (currentTick < endingTick));
     }
 }

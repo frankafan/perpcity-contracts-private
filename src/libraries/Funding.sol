@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.26;
+pragma solidity 0.8.30;
 
-import {FixedPoint96} from "./FixedPoint96.sol";
-import {MoreSignedMath} from "./MoreSignedMath.sol";
+import {INT_Q96, UINT_Q96} from "./Constants.sol";
+import {SignedMath} from "./SignedMath.sol";
 import {Tick} from "./Tick.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
-// modified from https://github.com/perpetual-protocol/perp-curie-contract/blob/main/contracts/lib/Funding.sol
+/// TODO: add comments
 library Funding {
     using SafeCastLib for *;
-    using MoreSignedMath for *;
+    using SignedMath for *;
 
     //
     // STRUCT
@@ -29,16 +29,11 @@ library Funding {
         int256 twPremiumGrowthGlobalX96,
         Growth memory fundingGrowthGlobal,
         int256 liquidityCoefficientInFundingPayment
-    )
-        internal
-        pure
-        returns (int256)
-    {
-        int256 balanceCoefficientInFundingPayment = MoreSignedMath.mulDivSigned(
-            baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, FixedPoint96.UINT_Q96
-        );
+    ) internal pure returns (int256) {
+        int256 balanceCoefficientInFundingPayment =
+            SignedMath.mulDivSigned(baseBalance, fundingGrowthGlobal.twPremiumX96 - twPremiumGrowthGlobalX96, UINT_Q96);
 
-        return (liquidityCoefficientInFundingPayment - balanceCoefficientInFundingPayment);
+        return liquidityCoefficientInFundingPayment + balanceCoefficientInFundingPayment;
     }
 
     /// @dev the funding payment of an order/liquidity is composed of
@@ -53,11 +48,7 @@ library Funding {
         int256 lastTwPremiumGrowthInsideX96,
         int256 lastTwPremiumDivBySqrtPriceGrowthInsideX96,
         int256 lastTwPremiumGrowthBelowX96
-    )
-        internal
-        pure
-        returns (int256)
-    {
+    ) internal pure returns (int256) {
         uint160 sqrtPriceX96AtUpperTick = TickMath.getSqrtPriceAtTick(upperTick);
 
         // base amount below the range
@@ -67,19 +58,19 @@ library Funding {
 
         // funding below the range
         int256 fundingBelow = baseAmountBelow.toInt256().fullMulDivSigned(
-            fundingGrowthRangeInfo.twPremiumGrowthBelowX96 - lastTwPremiumGrowthBelowX96, FixedPoint96.UINT_Q96
+            fundingGrowthRangeInfo.twPremiumGrowthBelowX96 - lastTwPremiumGrowthBelowX96, UINT_Q96
         );
 
         // funding inside the range =
         // liquidity * (ΔtwPremiumDivBySqrtPriceGrowthInsideX96 - ΔtwPremiumGrowthInsideX96 / sqrtPriceAtUpperTick)
         int256 fundingInside = liquidity.toInt256().fullMulDivSigned(
             fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96 - lastTwPremiumDivBySqrtPriceGrowthInsideX96
-                - MoreSignedMath.fullMulDivSigned(
+                - SignedMath.fullMulDivSigned(
                     (fundingGrowthRangeInfo.twPremiumGrowthInsideX96 - lastTwPremiumGrowthInsideX96),
-                    FixedPoint96.INT_Q96,
+                    INT_Q96,
                     sqrtPriceX96AtUpperTick
                 ),
-            FixedPoint96.UINT_Q96
+            UINT_Q96
         );
 
         return fundingBelow + fundingInside;
