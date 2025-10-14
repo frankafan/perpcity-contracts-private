@@ -136,6 +136,9 @@ library PerpLogic {
             // Don't allow zero liquidity to be specified
             if (liquidity == 0) revert Mgr.InvalidLiquidity(liquidity);
 
+            if (!poolManager.isTickInitialized(perpId, tickLower)) perp.fundingState.initTick(tickLower, startTick);
+            if (!poolManager.isTickInitialized(perpId, tickUpper)) perp.fundingState.initTick(tickUpper, startTick);
+
             (int256 cumlFundingBelowX96, int256 cumlFundingWithinX96, int256 cumlFundingDivSqrtPWithinX96) =
                 perp.fundingState.cumlFundingRanges(tickLower, tickUpper, startTick);
 
@@ -148,9 +151,6 @@ library PerpLogic {
                 entryCumlFundingWithinX96: cumlFundingWithinX96,
                 entryCumlFundingDivSqrtPWithinX96: cumlFundingDivSqrtPWithinX96
             });
-
-            if (!poolManager.isTickInitialized(perpId, tickLower)) perp.fundingState.initTick(tickLower, startTick);
-            if (!poolManager.isTickInitialized(perpId, tickUpper)) perp.fundingState.initTick(tickUpper, startTick);
 
             bytes memory encodedConfig = abi.encode(
                 Router.LiquidityConfig({
