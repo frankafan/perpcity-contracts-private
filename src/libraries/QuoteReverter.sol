@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
+import {console2} from "forge-std/console2.sol";
+
 /// @title QuoteReverter
 /// @notice Library for parsing data from revert reasons so that accurate data about transaction outcomes can be
 /// obtained without changing state
@@ -52,9 +54,30 @@ library QuoteReverter {
     /// @return quote The data about the outcome of the open
     function parseOpenQuote(bytes memory reason) internal pure returns (bool success, OpenQuote memory quote) {
         if (parseSelector(reason) != RevertOpenQuote.selector) return (false, OpenQuote(0, 0, 0, 0, 0));
-
         success = true;
-        (, quote) = abi.decode(reason, (bytes4, OpenQuote));
+
+        int256 perpDelta;
+        int256 usdDelta;
+        uint256 creatorFee;
+        uint256 insuranceFee;
+        uint256 lpFee;
+
+        // reason -> reason+0x1f is the length of the reason string
+        // reason+0x20 -> reason+0x23 is the selector
+        // reason+0x24 -> reason+0x43 is perpDelta
+        // reason+0x44 -> reason+0x63 is usdDelta
+        // reason+0x64 -> reason+0x83 is creatorFee
+        // reason+0x84 -> reason+0xa3 is insuranceFee
+        // reason+0xa4 -> reason+0xc3 is lpFee
+        assembly ("memory-safe") {
+            perpDelta := mload(add(reason, 0x24))
+            usdDelta := mload(add(reason, 0x44))
+            creatorFee := mload(add(reason, 0x64))
+            insuranceFee := mload(add(reason, 0x84))
+            lpFee := mload(add(reason, 0xa4))
+        }
+
+        quote = OpenQuote(perpDelta, usdDelta, creatorFee, insuranceFee, lpFee);
     }
 
     /// @notice Parses the reason for a revert and returns the data in it
@@ -64,16 +87,35 @@ library QuoteReverter {
     /// @return quote The data about the outcome of the close
     function parseCloseQuote(bytes memory reason) internal pure returns (bool success, CloseQuote memory quote) {
         if (parseSelector(reason) != RevertCloseQuote.selector) return (false, CloseQuote(0, 0, 0, false));
-
         success = true;
-        (, quote) = abi.decode(reason, (bytes4, CloseQuote));
+
+        int256 pnl;
+        int256 funding;
+        uint256 effectiveMargin;
+        bool wasLiquidated;
+
+        // reason -> reason+0x1f is the length of the reason string
+        // reason+0x20 -> reason+0x23 is the selector
+        // reason+0x24 -> reason+0x43 is pnl
+        // reason+0x44 -> reason+0x63 is funding
+        // reason+0x64 -> reason+0x83 is effectiveMargin
+        // reason+0x84 -> reason+0xa3 is wasLiquidated
+        assembly ("memory-safe") {
+            pnl := mload(add(reason, 0x24))
+            funding := mload(add(reason, 0x44))
+            effectiveMargin := mload(add(reason, 0x64))
+            wasLiquidated := mload(add(reason, 0x84))
+        }
+
+        quote = CloseQuote(pnl, funding, effectiveMargin, wasLiquidated);
     }
 
     /// @notice Parses the selector from the reason for a revert
     /// @param reason The reason for the revert
     /// @return selector The selector from the reason
     function parseSelector(bytes memory reason) internal pure returns (bytes4 selector) {
-        // equivalent: (selector,) = abi.decode(reason, (bytes4, ...));
+        // reason -> reason+0x1f is the length of the reason string
+        // reason+0x20 -> reason+0x23 is the selector
         assembly ("memory-safe") {
             selector := mload(add(reason, 0x20))
         }

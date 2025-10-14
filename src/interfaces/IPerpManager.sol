@@ -60,7 +60,7 @@ interface IPerpManager {
         uint128 liquidity;
         int256 entryCumlFundingBelowX96;
         int256 entryCumlFundingWithinX96;
-        int256 entryCumlScaledFundingWithinX96;
+        int256 entryCumlFundingDivSqrtPWithinX96;
     }
 
     struct CreatePerpParams {

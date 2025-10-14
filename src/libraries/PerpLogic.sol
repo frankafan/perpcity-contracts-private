@@ -4,14 +4,12 @@ pragma solidity 0.8.30;
 import {PerpVault} from "../PerpVault.sol";
 
 import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
-import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
 import {IBeacon} from "../interfaces/beacons/IBeacon.sol";
 import "./Constants.sol";
-// import {Funding} from "./Funding.sol";
+
+import {Funding} from "./Funding.sol";
 import {QuoteReverter} from "./QuoteReverter.sol";
 import {SignedMath} from "./SignedMath.sol";
-// import {Tick} from "./Tick.sol";
-import {Funding} from "./Funding.sol";
 import {TimeWeightedAvg} from "./TimeWeightedAvg.sol";
 import {TradingFee} from "./TradingFee.sol";
 import {UniV4Router as Router} from "./UniV4Router.sol";
@@ -138,8 +136,8 @@ library PerpLogic {
             // Don't allow zero liquidity to be specified
             if (liquidity == 0) revert Mgr.InvalidLiquidity(liquidity);
 
-            (int256 cumlFundingBelowX96, int256 cumlFundingWithinX96, int256 cumlScaledFundingWithinX96) =
-                perp.fundingState.getAllFundingGrowth(tickLower, tickUpper, startTick);
+            (int256 cumlFundingBelowX96, int256 cumlFundingWithinX96, int256 cumlFundingDivSqrtPWithinX96) =
+                perp.fundingState.cumlFundingRanges(tickLower, tickUpper, startTick);
 
             pos.makerDetails = Mgr.MakerDetails({
                 entryTimestamp: uint32(block.timestamp),
@@ -148,7 +146,7 @@ library PerpLogic {
                 liquidity: liquidity,
                 entryCumlFundingBelowX96: cumlFundingBelowX96,
                 entryCumlFundingWithinX96: cumlFundingWithinX96,
-                entryCumlScaledFundingWithinX96: cumlScaledFundingWithinX96
+                entryCumlFundingDivSqrtPWithinX96: cumlFundingDivSqrtPWithinX96
             });
 
             if (!poolManager.isTickInitialized(perpId, tickLower)) perp.fundingState.initTick(tickLower, startTick);
@@ -230,7 +228,7 @@ library PerpLogic {
 
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
         perp.positions[posId] = pos;
 
@@ -261,7 +259,7 @@ library PerpLogic {
 
         // update funding accounting
         perp.fundingState.updateCumlFunding(sqrtPriceX96);
-        perp.updateFundingPerSecond(sqrtPriceX96);
+        perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
@@ -325,7 +323,7 @@ library PerpLogic {
 
             int256 takerPerpDelta = perpDelta + pos.perpDelta;
 
-            int256 funding = perp.fundingState.calcFunding(pos, startTick);
+            int256 funding = perp.fundingState.funding(pos, startTick);
 
             uint256 notional = liquidityNotional(takerPerpDelta, usdDelta, sqrtPriceX96);
 
@@ -401,7 +399,7 @@ library PerpLogic {
             // update mark twap
             perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-            int256 funding = perp.fundingState.calcFunding(pos, endTick);
+            int256 funding = perp.fundingState.funding(pos, endTick);
 
             uint256 notional = usdDelta < 0 ? uint256(-usdDelta) : uint256(usdDelta);
 
@@ -418,7 +416,7 @@ library PerpLogic {
             usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
         }
 
-        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);

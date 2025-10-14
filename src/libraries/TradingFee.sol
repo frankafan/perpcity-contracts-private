@@ -24,7 +24,8 @@ library TradingFee {
     using SignedMath for int256;
     // using TickTWAP for TickTWAP.Observation[MAX_CARDINALITY];
 
-    uint24 constant START_FEE = 0.01e6; // 1%
+    // uint24 constant START_FEE = 0.01e6; // 1%
+    uint24 constant START_FEE = 0;
     uint24 constant TARGET_FEE = 0.0001e6; // 0.01%
     uint24 constant DECAY = 15000000;
     uint24 constant VOLATILITY_SCALER = 0.2e6; // 0.2

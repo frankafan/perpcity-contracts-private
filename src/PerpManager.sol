@@ -91,8 +91,6 @@ contract PerpManager is IPerpManager, UnlockCallback {
     }
 
     /* VIEW FUNCTIONS */
-    /// TODO: remove as many read functions as possible. Ideally, we can remove quoter and integrate logic into base fns
-    ///       comment functions that must remain
 
     function tickSpacing(PoolId perpId) external view returns (int24) {
         return perps[perpId].key.tickSpacing;
