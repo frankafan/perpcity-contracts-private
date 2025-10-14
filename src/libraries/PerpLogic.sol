@@ -230,6 +230,8 @@ library PerpLogic {
 
         int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
+        pos.entryADLGrowth = perp.adlGrowth;
+
         perp.positions[posId] = pos;
 
         if (revertChanges) {
