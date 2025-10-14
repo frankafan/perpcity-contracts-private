@@ -26,29 +26,63 @@ contract PerpManagerHalmosTest is SymTest, Test {
     ERC20Mock internal usdcMock;
     PerpManager internal perpManager;
 
-    function setUp() public virtual {
-        // Create simple mock addresses
-        poolManager = IPoolManager(address(0x1234567890123456789012345678901234567890));
-        usdc = address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48); // Mainnet USDC address
+    // Test actors
+    address internal creator;
+    address internal maker;
+    address internal taker;
+    address internal liquidator;
 
-        perpManager = new PerpManager(poolManager, usdc);
+    function setUp() public virtual {
+        // Initialize mock contracts
+        poolManagerMock = new PoolManagerMock();
+        usdcMock = new ERC20Mock("USD Coin", "USDC", 6);
+
+        perpManager = new PerpManager(IPoolManager(address(poolManagerMock)), address(usdcMock));
+
+        // Create symbolic addresses for test actors
+        creator = svm.createAddress("creator");
+        maker = svm.createAddress("maker");
+        taker = svm.createAddress("taker");
+        liquidator = svm.createAddress("liquidator");
+
+        // Assumptions for actors
+        vm.assume(creator != address(0));
+        vm.assume(maker != address(0));
+        vm.assume(taker != address(0));
+        vm.assume(liquidator != address(0));
+        vm.assume(creator != address(perpManager));
+        vm.assume(maker != address(perpManager));
+        vm.assume(taker != address(perpManager));
+        vm.assume(creator != maker);
+        vm.assume(creator != taker);
+        vm.assume(creator != liquidator);
+        vm.assume(maker != taker);
+        vm.assume(maker != liquidator);
+        vm.assume(taker != liquidator);
 
         // Enable symbolic storage for key contracts
         svm.enableSymbolicStorage(address(this));
         svm.enableSymbolicStorage(address(perpManager));
+        svm.enableSymbolicStorage(address(poolManagerMock));
+        svm.enableSymbolicStorage(address(usdcMock));
 
         // Set symbolic block number and timestamp
-        vm.roll(svm.createUint(64, "block.number"));
-        vm.warp(svm.createUint(64, "block.timestamp"));
+        uint256 blockNumber = svm.createUint(32, "block.number");
+        uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
+
+        // Assumptions for block values
+        vm.assume(blockNumber > 0 && blockNumber < type(uint32).max);
+        vm.assume(blockTimestamp > 1700000000 && blockTimestamp < type(uint32).max); // After Nov 2023
+
+        vm.roll(blockNumber);
+        vm.warp(blockTimestamp);
     }
 
-    // PoolManager address is always the one set in constructor
+    /// PoolManager address is always the one set in constructor
     function check_poolManager_immutable() public view {
         address poolManagerAddress = address(perpManager.POOL_MANAGER());
 
-        assert(poolManagerAddress == address(poolManager));
+        assert(poolManagerAddress == address(poolManagerMock));
         assert(poolManagerAddress != address(0));
     }
-    }
-
 }
