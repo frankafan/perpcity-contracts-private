@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {console2} from "forge-std/console2.sol";
-
 /// @title QuoteReverter
 /// @notice Library for parsing data from revert reasons so that accurate data about transaction outcomes can be
 /// obtained without changing state
