@@ -13,8 +13,12 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
 
+// Helper functions
+import {HelperFunctions} from "./HelperFunctions.sol";
+
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
+    using HelperFunctions for *;
     using PoolIdLibrary for PoolId;
 
     // Contracts
@@ -45,4 +49,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         assert(poolManagerAddress == address(poolManager));
         assert(poolManagerAddress != address(0));
     }
+    }
+
 }
