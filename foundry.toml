@@ -10,7 +10,8 @@
 remappings = [
   "@forge-std/=lib/forge-std/",
   "@solady/=lib/solady/",
-  "@uniswap/v4-core/=lib/v4-core/"
+  "@uniswap/v4-core/=lib/v4-core/",
+  "@halmos-cheatcodes/=lib/halmos-cheatcodes/"
 ]
 
 [fmt]
@@ -48,3 +49,14 @@ ignored_error_codes = [
   balance = 10_000          # 10k ETH per account instead of 100k
   state_interval = 0        # Disable periodic state dumps
   no_storage_caching = true # Disable storage caching
+
+# Halmos configuration for symbolic execution
+[profile.halmos]
+  src = "src"
+  test = "halmos"
+  via_ir = true  # Keep viaIR enabled for complex contracts
+  optimizer_runs = 1000  # Reduce optimizer runs to help with compilation
+  solver_timeout_ms = 0
+  solver_max_memory = 0
+  loop_bound = 2
+  unroll_bound = 3
