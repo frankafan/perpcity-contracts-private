@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {Tick} from "../libraries/Tick.sol";
+import {Funding} from "../libraries/Funding.sol";
 import {TimeWeightedAvg} from "../libraries/TimeWeightedAvg.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
@@ -32,19 +32,15 @@ interface IPerpManager {
         uint32 creationTimestamp;
         uint32 makerLockupPeriod;
         uint32 twapWindow;
-        uint32 lastTwPremiumsUpdate;
         uint256 sqrtPriceLowerMultiX96;
         uint256 sqrtPriceUpperMultiX96;
-        int256 twPremiumX96;
-        int256 twPremiumDivBySqrtPriceX96;
-        int256 premiumPerSecondX96;
         uint256 adlGrowth;
         uint128 insurance;
         uint128 takerOpenInterest;
         PoolKey key;
         TimeWeightedAvg.State twapState;
+        Funding.State fundingState;
         mapping(uint128 => Position) positions;
-        mapping(int24 => Tick.GrowthInfo) tickGrowthInfo;
     }
 
     struct Position {
@@ -52,7 +48,7 @@ interface IPerpManager {
         uint256 margin;
         int256 perpDelta;
         int256 usdDelta;
-        int256 entryTwPremiumX96;
+        int256 entryCumlFundingX96;
         uint256 entryADLGrowth;
         MakerDetails makerDetails;
     }
@@ -62,9 +58,9 @@ interface IPerpManager {
         int24 tickLower;
         int24 tickUpper;
         uint128 liquidity;
-        int256 entryTwPremiumGrowthInsideX96;
-        int256 entryTwPremiumDivBySqrtPriceGrowthInsideX96;
-        int256 entryTwPremiumGrowthBelowX96;
+        int256 entryCumlFundingBelowX96;
+        int256 entryCumlFundingWithinX96;
+        int256 entryCumlFundingDivSqrtPWithinX96;
     }
 
     struct CreatePerpParams {
