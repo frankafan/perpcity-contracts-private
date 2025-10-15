@@ -158,19 +158,19 @@ library UniV4Router {
         ModifyLiquidityParams memory modifyLiquidityParams = ModifyLiquidityParams({
             tickLower: params.tickLower,
             tickUpper: params.tickUpper,
-            liquidityDelta: liquidityChange,
+            liquidityDelta: 0, // liquidityDelta is set to 0 to collect fees, then set to liquidityChange
             salt: bytes32(params.positionId) // using positionId as salt
         });
 
-        // modifyLiquidity call into PoolManager with empty hook data
+        // if removing liquidity, collect fees to account into the overall delta
+        BalanceDelta feesAccrued;
+        if (!params.isAdd) (, feesAccrued) = poolManager.modifyLiquidity(params.poolKey, modifyLiquidityParams, "");
+
+        // set liquidityDelta to liquidityChange and call modifyLiquidity into PoolManager
+        modifyLiquidityParams.liquidityDelta = liquidityChange;
         (BalanceDelta liquidityDelta,) = poolManager.modifyLiquidity(params.poolKey, modifyLiquidityParams, "");
 
-        // if removing liquidity, collect fees and account them into the overall delta
-        if (!params.isAdd) {
-            modifyLiquidityParams.liquidityDelta = 0;
-            (, BalanceDelta feesAccrued) = poolManager.modifyLiquidity(params.poolKey, modifyLiquidityParams, "");
-            liquidityDelta = liquidityDelta + feesAccrued;
-        }
+        liquidityDelta = liquidityDelta + feesAccrued;
 
         // currency0Delta and currency1Delta should be <= 0 when adding liquidity and >= 0 when removing
         int256 currency0Delta = liquidityDelta.amount0();
