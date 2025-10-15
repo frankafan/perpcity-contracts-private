@@ -1,4 +1,9 @@
 FROM ghcr.io/a16z/halmos:latest
 
+# install flamegraph
+RUN apt-get update && apt-get install -y git perl
+RUN git clone https://github.com/brendangregg/FlameGraph.git /opt/FlameGraph
+RUN export PATH=$PATH:/opt/FlameGraph
+
 # set default working directory
 WORKDIR /app
