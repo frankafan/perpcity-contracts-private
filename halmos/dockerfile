@@ -1,0 +1,4 @@
+FROM ghcr.io/a16z/halmos:latest
+
+# set default working directory
+WORKDIR /app
