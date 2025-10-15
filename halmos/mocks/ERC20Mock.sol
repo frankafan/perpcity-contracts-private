@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity 0.8.30;
+
 /// @title Mock ERC20 Token for Halmos Testing
 /// @notice Minimal implementation focusing on functions used by PerpManager
 contract ERC20Mock {
