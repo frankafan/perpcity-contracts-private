@@ -20,10 +20,10 @@
     "test": "forge test",
     "test:coverage": "forge coverage",
     "test:coverage:report": "forge coverage --report lcov && genhtml lcov.info --branch-coverage --output-dir coverage",
-    "deploy:perp-manager:base-sepolia": "source .env && forge script script/DeployPerpManager.s.sol:DeployPerpManager --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv",
-    "deploy:beacon-registry:base-sepolia": "source .env && forge create src/beacons/BeaconRegistry.sol:BeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv --constructor-args $REGISTRY_OWNER",
-    "deploy:gbm-factory:base-sepolia": "source .env && forge create src/beacons/gbm/EZKLHalo2GBMFactory.sol:EZKLHalo2GBMFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv",
-    "deploy:ownable-factory:base-sepolia": "source .env && forge create src/beacons/ownable/OwnableFactory.sol:OwnableFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv"
+    "deploy:perp-manager:base-sepolia": ". .env && forge script script/DeployPerpManager.s.sol:DeployPerpManager --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv",
+    "deploy:beacon-registry:base-sepolia": ". .env && forge create src/beacons/BeaconRegistry.sol:BeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv --constructor-args $REGISTRY_OWNER",
+    "deploy:gbm-factory:base-sepolia": ". .env && forge create src/beacons/gbm/EZKLHalo2GBMFactory.sol:EZKLHalo2GBMFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv",
+    "deploy:ownable-factory:base-sepolia": ". .env && forge create src/beacons/ownable/OwnableFactory.sol:OwnableFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain 84532 --account devKey --broadcast --verify -vv"
   },
   "packageManager": "pnpm@9.5.0+sha512.140036830124618d624a2187b50d04289d5a087f326c9edfc0ccd733d76c4f52c3a313d4fc148794a2a9d81553016004e6742e8cf850670268a7387fc220c903"
 }
