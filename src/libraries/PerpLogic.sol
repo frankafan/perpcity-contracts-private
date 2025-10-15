@@ -4,13 +4,12 @@ pragma solidity 0.8.30;
 import {PerpVault} from "../PerpVault.sol";
 
 import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
-import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
 import {IBeacon} from "../interfaces/beacons/IBeacon.sol";
 import "./Constants.sol";
+
 import {Funding} from "./Funding.sol";
 import {QuoteReverter} from "./QuoteReverter.sol";
 import {SignedMath} from "./SignedMath.sol";
-import {Tick} from "./Tick.sol";
 import {TimeWeightedAvg} from "./TimeWeightedAvg.sol";
 import {TradingFee} from "./TradingFee.sol";
 import {UniV4Router as Router} from "./UniV4Router.sol";
@@ -33,8 +32,8 @@ library PerpLogic {
     using SafeCastLib for *;
     using SignedMath for int256;
     using TradingFee for Mgr.Perp;
-    using Tick for mapping(int24 => Tick.GrowthInfo);
     using SafeTransferLib for address;
+    using Funding for *;
 
     /* FUNCTIONS */
 
@@ -115,11 +114,11 @@ library PerpLogic {
         bool revertChanges
     ) external returns (uint128 posId, Mgr.Position memory pos, uint256 creatorFee, uint256 insFee, uint256 lpFee) {
         PoolId perpId = perp.key.toId();
-        (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
+        (uint160 sqrtPriceX96, int24 startTick,,) = poolManager.getSlot0(perpId);
 
         // use the existing premium per second and sqrt price before they change to update funding accumulators to
         // account for the time passed since the last update
-        updateTwPremiums(perp, sqrtPriceX96);
+        perp.fundingState.updateCumlFunding(sqrtPriceX96);
 
         // store the ID of the position about to be opened and increment the next position ID
         posId = perp.nextPosId;
@@ -129,45 +128,38 @@ library PerpLogic {
             // Use the maker params struct to decode the parameters
             Mgr.OpenMakerPositionParams memory params = abi.decode(encodedParams, (Mgr.OpenMakerPositionParams));
 
-            // Don't allow zero liquidity to be specified
-            if (params.liquidity == 0) revert Mgr.InvalidLiquidity(params.liquidity);
-
             pos.margin = params.margin;
+            uint128 liquidity = params.liquidity;
+            int24 tickLower = params.tickLower;
+            int24 tickUpper = params.tickUpper;
 
-            Tick.FundingGrowthRangeInfo memory fundingGrowthRangeInfo = perp.tickGrowthInfo.getAllFundingGrowth(
-                params.tickLower, params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-            );
+            // Don't allow zero liquidity to be specified
+            if (liquidity == 0) revert Mgr.InvalidLiquidity(liquidity);
 
-            int256 e = fundingGrowthRangeInfo.twPremiumDivBySqrtPriceGrowthInsideX96;
+            if (!poolManager.isTickInitialized(perpId, tickLower)) perp.fundingState.initTick(tickLower, startTick);
+            if (!poolManager.isTickInitialized(perpId, tickUpper)) perp.fundingState.initTick(tickUpper, startTick);
+
+            (int256 cumlFundingBelowX96, int256 cumlFundingWithinX96, int256 cumlFundingDivSqrtPWithinX96) =
+                perp.fundingState.cumlFundingRanges(tickLower, tickUpper, startTick);
+
             pos.makerDetails = Mgr.MakerDetails({
                 entryTimestamp: uint32(block.timestamp),
-                tickLower: params.tickLower,
-                tickUpper: params.tickUpper,
-                liquidity: params.liquidity,
-                entryTwPremiumGrowthInsideX96: fundingGrowthRangeInfo.twPremiumGrowthInsideX96,
-                entryTwPremiumDivBySqrtPriceGrowthInsideX96: e,
-                entryTwPremiumGrowthBelowX96: fundingGrowthRangeInfo.twPremiumGrowthBelowX96
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidity: liquidity,
+                entryCumlFundingBelowX96: cumlFundingBelowX96,
+                entryCumlFundingWithinX96: cumlFundingWithinX96,
+                entryCumlFundingDivSqrtPWithinX96: cumlFundingDivSqrtPWithinX96
             });
-
-            if (!poolManager.isTickInitialized(perpId, params.tickLower)) {
-                perp.tickGrowthInfo.initialize(
-                    params.tickLower, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-                );
-            }
-            if (!poolManager.isTickInitialized(perpId, params.tickUpper)) {
-                perp.tickGrowthInfo.initialize(
-                    params.tickUpper, startingTick, perp.twPremiumX96, perp.twPremiumDivBySqrtPriceX96
-                );
-            }
 
             bytes memory encodedConfig = abi.encode(
                 Router.LiquidityConfig({
                     poolKey: perp.key,
                     positionId: posId,
                     isAdd: true,
-                    tickLower: params.tickLower,
-                    tickUpper: params.tickUpper,
-                    liquidityToMove: params.liquidity,
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    liquidityToMove: liquidity,
                     amount0Limit: params.maxAmt0In,
                     amount1Limit: params.maxAmt1In
                 })
@@ -181,6 +173,7 @@ library PerpLogic {
 
             uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notionalValue);
 
+            /// TODO: clean
             if (marginRatio < perp.minMakerOpeningMarginRatio) revert("margin ratio is too low");
             if (marginRatio > perp.maxMakerOpeningMarginRatio) revert("margin ratio is too high");
         } else {
@@ -218,35 +211,26 @@ library PerpLogic {
             (pos.perpDelta, pos.usdDelta) = abi.decode(encodedDeltas, (int256, int256));
             perp.takerOpenInterest += pos.perpDelta.abs().toUint128();
 
-            int24 endingTick;
-            (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
+            int24 endTick;
+            (sqrtPriceX96, endTick,,) = poolManager.getSlot0(perpId);
 
-            perp.tickGrowthInfo.crossTicks(
-                poolManager,
-                perpId,
-                startingTick,
-                perp.key.tickSpacing,
-                !params.isLong,
-                endingTick,
-                perp.twPremiumX96,
-                perp.twPremiumDivBySqrtPriceX96
-            );
+            perp.fundingState.crossTicks(poolManager, perpId, startTick, endTick, perp.key.tickSpacing, !params.isLong);
 
-            poolManager.executeAction(
-                Router.DONATE, abi.encode(Router.DonateConfig({poolKey: perp.key, amount: lpFee}))
-            );
+            poolManager.executeAction(Router.DONATE, abi.encode(Router.DonateConfig(perp.key, lpFee)));
         }
 
         if (pos.perpDelta == 0 && pos.usdDelta == 0) revert Mgr.ZeroSizePosition(pos.perpDelta, pos.usdDelta);
 
         pos.holder = msg.sender;
-        pos.entryTwPremiumX96 = perp.twPremiumX96;
+        pos.entryCumlFundingX96 = perp.fundingState.cumlFundingX96;
 
         if (pos.margin < perp.minOpeningMargin) revert Mgr.InvalidMargin(pos.margin);
 
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
+
+        pos.entryADLGrowth = perp.adlGrowth;
 
         perp.positions[posId] = pos;
 
@@ -276,8 +260,8 @@ library PerpLogic {
         (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perp.key.toId());
 
         // update funding accounting
-        updateTwPremiums(perp, sqrtPriceX96);
-        updatePremiumPerSecond(perp, sqrtPriceX96);
+        perp.fundingState.updateCumlFunding(sqrtPriceX96);
+        perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
@@ -309,22 +293,24 @@ library PerpLogic {
 
         if (pos.holder == address(0)) revert Mgr.InvalidClose(msg.sender, address(0), false);
 
-        (uint160 sqrtPriceX96, int24 startingTick,,) = poolManager.getSlot0(perpId);
-        updateTwPremiums(perp, sqrtPriceX96);
+        (uint160 sqrtPriceX96, int24 startTick,,) = poolManager.getSlot0(perpId);
+        perp.fundingState.updateCumlFunding(sqrtPriceX96);
 
         bool isLiquidation;
         bool isMaker = pos.makerDetails.liquidity > 0;
         int256 pnl;
         if (isMaker) {
             Mgr.MakerDetails memory makerDetails = pos.makerDetails;
+            int24 tickLower = makerDetails.tickLower;
+            int24 tickUpper = makerDetails.tickUpper;
 
             bytes memory encodedConfig = abi.encode(
                 Router.LiquidityConfig({
                     poolKey: perp.key,
                     positionId: params.posId,
                     isAdd: false,
-                    tickLower: makerDetails.tickLower,
-                    tickUpper: makerDetails.tickUpper,
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
                     liquidityToMove: makerDetails.liquidity,
                     amount0Limit: params.minAmt0Out,
                     amount1Limit: params.minAmt1Out
@@ -339,7 +325,7 @@ library PerpLogic {
 
             int256 takerPerpDelta = perpDelta + pos.perpDelta;
 
-            int256 funding = makerFunding(perp, pos, startingTick);
+            int256 funding = perp.fundingState.funding(pos, startTick);
 
             uint256 notional = liquidityNotional(takerPerpDelta, usdDelta, sqrtPriceX96);
 
@@ -360,10 +346,10 @@ library PerpLogic {
 
             // clear tick mapping to mimick uniswap pool ticks cleared
             if (!poolManager.isTickInitialized(perpId, makerDetails.tickLower)) {
-                perp.tickGrowthInfo.clear(makerDetails.tickLower);
+                perp.fundingState.clear(makerDetails.tickLower);
             }
             if (!poolManager.isTickInitialized(perpId, makerDetails.tickUpper)) {
-                perp.tickGrowthInfo.clear(makerDetails.tickUpper);
+                perp.fundingState.clear(makerDetails.tickUpper);
             }
 
             if (takerPerpDelta != 0) {
@@ -376,7 +362,7 @@ library PerpLogic {
                 newPos.perpDelta = takerPerpDelta;
                 newPos.usdDelta = 0;
                 newPos.margin = effectiveMargin;
-                newPos.entryTwPremiumX96 = perp.twPremiumX96;
+                newPos.entryCumlFundingX96 = perp.fundingState.cumlFundingX96;
                 newPos.entryADLGrowth = perp.adlGrowth;
 
                 perp.positions[posId] = newPos;
@@ -407,25 +393,15 @@ library PerpLogic {
 
             pnl = usdDelta + pos.usdDelta;
 
-            int24 endingTick;
-            (sqrtPriceX96, endingTick,,) = poolManager.getSlot0(perpId);
+            int24 endTick;
+            (sqrtPriceX96, endTick,,) = poolManager.getSlot0(perpId);
 
-            perp.tickGrowthInfo.crossTicks(
-                poolManager,
-                perpId,
-                startingTick,
-                perp.key.tickSpacing,
-                isLong,
-                endingTick,
-                perp.twPremiumX96,
-                perp.twPremiumDivBySqrtPriceX96
-            );
+            perp.fundingState.crossTicks(poolManager, perpId, startTick, endTick, perp.key.tickSpacing, isLong);
 
             // update mark twap
             perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
 
-            int256 twPremiumGrowthX96 = perp.twPremiumX96 - pos.entryTwPremiumX96;
-            int256 funding = twPremiumGrowthX96.mulDivSigned(pos.perpDelta, UINT_Q96);
+            int256 funding = perp.fundingState.funding(pos, endTick);
 
             uint256 notional = usdDelta < 0 ? uint256(-usdDelta) : uint256(usdDelta);
 
@@ -442,7 +418,7 @@ library PerpLogic {
             usdc.safeTransferFrom(perp.vault, pos.holder, effectiveMargin);
         }
 
-        int256 fundingPremiumPerSecX96 = updatePremiumPerSecond(perp, sqrtPriceX96);
+        int256 fundingPremiumPerSecX96 = perp.updateFundingPerSecond(block.timestamp.toUint32(), sqrtPriceX96);
 
         // update mark twap
         perp.twapState.write(block.timestamp.toUint32(), sqrtPriceX96);
@@ -459,36 +435,6 @@ library PerpLogic {
             fundingPremiumPerSecX96
         );
         delete perp.positions[params.posId];
-    }
-
-    function makerFunding(Mgr.Perp storage perp, Mgr.Position memory pos, int24 currentTick)
-        internal
-        view
-        returns (int256)
-    {
-        return Funding.calcPendingFundingPaymentWithLiquidityCoefficient(
-            pos.perpDelta,
-            pos.entryTwPremiumX96,
-            Funding.Growth({
-                twPremiumX96: perp.twPremiumX96,
-                twPremiumDivBySqrtPriceX96: perp.twPremiumDivBySqrtPriceX96
-            }),
-            Funding.calcLiquidityCoefficientInFundingPaymentByOrder(
-                pos.makerDetails.liquidity,
-                pos.makerDetails.tickLower,
-                pos.makerDetails.tickUpper,
-                perp.tickGrowthInfo.getAllFundingGrowth(
-                    pos.makerDetails.tickLower,
-                    pos.makerDetails.tickUpper,
-                    currentTick,
-                    perp.twPremiumX96,
-                    perp.twPremiumDivBySqrtPriceX96
-                ),
-                pos.makerDetails.entryTwPremiumGrowthInsideX96,
-                pos.makerDetails.entryTwPremiumDivBySqrtPriceGrowthInsideX96,
-                pos.makerDetails.entryTwPremiumGrowthBelowX96
-            )
-        );
     }
 
     function calcEffectiveMargin(
@@ -558,34 +504,6 @@ library PerpLogic {
 
         // currency1Amount is already in USD, so its notional value is its amount
         notional = perpsNotional + usd;
-    }
-
-    function updateTwPremiums(Mgr.Perp storage perp, uint160 sqrtPriceX96) internal {
-        int256 timeSinceLastUpdate = int256(block.timestamp - perp.lastTwPremiumsUpdate);
-
-        perp.twPremiumX96 += perp.premiumPerSecondX96 * timeSinceLastUpdate;
-
-        perp.twPremiumDivBySqrtPriceX96 +=
-            perp.premiumPerSecondX96.fullMulDivSigned(timeSinceLastUpdate * INT_Q96, sqrtPriceX96);
-
-        perp.lastTwPremiumsUpdate = uint32(block.timestamp);
-    }
-
-    // expects updateTwPremiums() to have been called before to account for time during old premiumPerSecondX96
-    function updatePremiumPerSecond(Mgr.Perp storage perp, uint160 sqrtPriceX96)
-        internal
-        returns (int256 premiumPerSecondX96)
-    {
-        uint256 twaSqrtMarkX96 =
-            perp.twapState.timeWeightedAvg(perp.twapWindow, block.timestamp.toUint32(), sqrtPriceX96);
-        uint256 twaIndexX96 = ITimeWeightedAvg(perp.beacon).timeWeightedAvg(perp.twapWindow);
-
-        uint256 twaMarkX192 = twaSqrtMarkX96 * twaSqrtMarkX96;
-        uint256 twaIndexX192 = twaIndexX96 * UINT_Q96;
-
-        premiumPerSecondX96 =
-            ((int256(twaMarkX192) - int256(twaIndexX192)) / INT_Q96 / int256(uint256(FUNDING_INTERVAL)));
-        perp.premiumPerSecondX96 = premiumPerSecondX96;
     }
 
     function getSqrtPriceLimitX96(Mgr.Perp storage perp, uint160 sqrtPriceX96, bool isBuy)
