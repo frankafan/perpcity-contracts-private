@@ -174,14 +174,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
         uint128 posId = uint128(svm.createUint(128, "posId"));
 
         // addMargin parameters
-        uint256 addMarginAmount = svm.createUint256("addMargin.margin");
+        uint256 addMarginAmount = svm.createUint256("addMarginAmount");
         vm.assume(addMarginAmount > 0);
 
         // closePosition parameters
-        uint128 posId = uint128(svm.createUint(128, "closePos.posId"));
-        uint128 minAmt0Out = uint128(svm.createUint(128, "closePos.minAmt0Out"));
-        uint128 minAmt1Out = uint128(svm.createUint(128, "closePos.minAmt1Out"));
-        uint128 maxAmt1In = uint128(svm.createUint(128, "closePos.maxAmt1In"));
+        uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
+        uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
+        uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
 
         // increaseCardinalityCap parameters
         uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
