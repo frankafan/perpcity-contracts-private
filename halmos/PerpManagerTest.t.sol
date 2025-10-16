@@ -196,7 +196,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
             args = abi.encode(perpId, cardinalityCap);
         } else {
-            revert("Unsupported selector");
+            args = svm.createBytes(1024, "data");
         }
 
         vm.prank(caller);
