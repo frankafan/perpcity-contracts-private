@@ -143,5 +143,66 @@ contract PerpManagerHalmosTest is SymTest, Test {
                 unspecifiedAmountLimit: limit
             });
     }
+
+    /// @notice Call PerpManager with symbolic arguments
+    /// @param selector Function selector to call
+    /// @param caller Address to call from
+    /// @param perpId Perp ID to use
+    function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
+        // Compute function selectors
+        bytes4 openMakerPositionSel = bytes4(
+            keccak256("openMakerPosition(bytes32,(uint256,uint128,int24,int24,uint128,uint128))")
+        );
+        bytes4 openTakerPositionSel = bytes4(keccak256("openTakerPosition(bytes32,(bool,uint256,uint256,uint128))"));
+        bytes4 addMarginSel = bytes4(keccak256("addMargin(bytes32,(uint128,uint256))"));
+        bytes4 closePositionSel = bytes4(keccak256("closePosition(bytes32,(uint128,uint128,uint128,uint128))"));
+        bytes4 increaseCardinalityCapSel = bytes4(keccak256("increaseCardinalityCap(bytes32,uint16)"));
+
+        // Limit the functions tested
+        vm.assume(selector == openMakerPositionSel);
+        // vm.assume(
+        //     selector == openMakerPositionSel ||
+        //         selector == openTakerPositionSel ||
+        //         selector == addMarginSel ||
+        //         selector == closePositionSel ||
+        //         selector == increaseCardinalityCapSel
+        // );
+
+        bytes memory args;
+
+        if (selector == openMakerPositionSel) {
+            IPerpManager.OpenMakerPositionParams memory params = _createSymbolicMakerParams();
+            args = abi.encode(perpId, params);
+        } else if (selector == openTakerPositionSel) {
+            IPerpManager.OpenTakerPositionParams memory params = _createSymbolicTakerParams();
+            args = abi.encode(perpId, params);
+        } else if (selector == addMarginSel) {
+            uint128 posId = uint128(svm.createUint(128, "posId"));
+            uint256 margin = svm.createUint256("margin");
+            vm.assume(margin > 0);
+            IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: margin});
+            args = abi.encode(perpId, params);
+        } else if (selector == closePositionSel) {
+            uint128 posId = uint128(svm.createUint(128, "posId"));
+            uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
+            uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
+            uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
+            IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
+                posId: posId,
+                minAmt0Out: minAmt0Out,
+                minAmt1Out: minAmt1Out,
+                maxAmt1In: maxAmt1In
+            });
+            args = abi.encode(perpId, params);
+        } else if (selector == increaseCardinalityCapSel) {
+            uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
+            args = abi.encode(perpId, cardinalityCap);
+        } else {
+            revert("Unsupported selector");
+        }
+
+        vm.prank(caller);
+        (bool success, ) = address(perpManager).call(abi.encodePacked(selector, args));
+        vm.assume(success);
     }
 }
