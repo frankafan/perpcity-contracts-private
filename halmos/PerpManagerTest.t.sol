@@ -149,14 +149,12 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @param caller Address to call from
     /// @param perpId Perp ID to use
     function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
-        // Compute function selectors
-        bytes4 openMakerPositionSel = bytes4(
-            keccak256("openMakerPosition(bytes32,(uint256,uint128,int24,int24,uint128,uint128))")
-        );
-        bytes4 openTakerPositionSel = bytes4(keccak256("openTakerPosition(bytes32,(bool,uint256,uint256,uint128))"));
-        bytes4 addMarginSel = bytes4(keccak256("addMargin(bytes32,(uint128,uint256))"));
-        bytes4 closePositionSel = bytes4(keccak256("closePosition(bytes32,(uint128,uint128,uint128,uint128))"));
-        bytes4 increaseCardinalityCapSel = bytes4(keccak256("increaseCardinalityCap(bytes32,uint16)"));
+        // Get function selectors from contract
+        bytes4 openMakerPositionSel = perpManager.openMakerPosition.selector;
+        bytes4 openTakerPositionSel = perpManager.openTakerPosition.selector;
+        bytes4 addMarginSel = perpManager.addMargin.selector;
+        bytes4 closePositionSel = perpManager.closePosition.selector;
+        bytes4 increaseCardinalityCapSel = perpManager.increaseCardinalityCap.selector;
 
         // Limit the functions tested
         vm.assume(selector == openMakerPositionSel);
