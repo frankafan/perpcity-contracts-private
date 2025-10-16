@@ -157,14 +157,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
         bytes4 increaseCardinalityCapSel = perpManager.increaseCardinalityCap.selector;
 
         // Limit the functions tested
-        vm.assume(selector == openMakerPositionSel);
-        // vm.assume(
-        //     selector == openMakerPositionSel ||
-        //         selector == openTakerPositionSel ||
-        //         selector == addMarginSel ||
-        //         selector == closePositionSel ||
-        //         selector == increaseCardinalityCapSel
-        // );
+        vm.assume(
+            selector == openMakerPositionSel ||
+                selector == openTakerPositionSel ||
+                selector == addMarginSel ||
+                selector == closePositionSel ||
+                selector == increaseCardinalityCapSel
+        );
 
         bytes memory args;
 
