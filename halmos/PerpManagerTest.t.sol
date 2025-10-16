@@ -80,6 +80,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         assert(poolManagerAddress == address(poolManagerMock));
         assert(poolManagerAddress != address(0));
+    }
+
     /* HELPER FUNCTIONS */
 
     /// @notice Create symbolic perp parameters
@@ -170,7 +172,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         IPerpManager.OpenTakerPositionParams memory takerParams = _createSymbolicTakerParams();
 
         uint128 posId = uint128(svm.createUint(128, "posId"));
-        
+
         // addMargin parameters
         uint256 addMarginAmount = svm.createUint256("addMargin.margin");
         vm.assume(addMarginAmount > 0);
@@ -191,7 +193,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
         } else if (selector == openTakerPositionSel) {
             args = abi.encode(perpId, takerParams);
         } else if (selector == addMarginSel) {
-            IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: addMarginAmount});
+            IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
+                posId: posId,
+                margin: addMarginAmount
+            });
             args = abi.encode(perpId, params);
         } else if (selector == closePositionSel) {
             IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
