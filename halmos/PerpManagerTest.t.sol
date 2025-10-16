@@ -165,25 +165,35 @@ contract PerpManagerHalmosTest is SymTest, Test {
                 selector == increaseCardinalityCapSel
         );
 
+        // Create symbolic parameters
+        IPerpManager.OpenMakerPositionParams memory makerParams = _createSymbolicMakerParams();
+        IPerpManager.OpenTakerPositionParams memory takerParams = _createSymbolicTakerParams();
+
+        uint128 posId = uint128(svm.createUint(128, "posId"));
+        
+        // addMargin parameters
+        uint256 addMarginAmount = svm.createUint256("addMargin.margin");
+        vm.assume(addMarginAmount > 0);
+
+        // closePosition parameters
+        uint128 posId = uint128(svm.createUint(128, "closePos.posId"));
+        uint128 minAmt0Out = uint128(svm.createUint(128, "closePos.minAmt0Out"));
+        uint128 minAmt1Out = uint128(svm.createUint(128, "closePos.minAmt1Out"));
+        uint128 maxAmt1In = uint128(svm.createUint(128, "closePos.maxAmt1In"));
+
+        // increaseCardinalityCap parameters
+        uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
+
         bytes memory args;
 
         if (selector == openMakerPositionSel) {
-            IPerpManager.OpenMakerPositionParams memory params = _createSymbolicMakerParams();
-            args = abi.encode(perpId, params);
+            args = abi.encode(perpId, makerParams);
         } else if (selector == openTakerPositionSel) {
-            IPerpManager.OpenTakerPositionParams memory params = _createSymbolicTakerParams();
-            args = abi.encode(perpId, params);
+            args = abi.encode(perpId, takerParams);
         } else if (selector == addMarginSel) {
-            uint128 posId = uint128(svm.createUint(128, "posId"));
-            uint256 margin = svm.createUint256("margin");
-            vm.assume(margin > 0);
-            IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: margin});
+            IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({posId: posId, margin: addMarginAmount});
             args = abi.encode(perpId, params);
         } else if (selector == closePositionSel) {
-            uint128 posId = uint128(svm.createUint(128, "posId"));
-            uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
-            uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
-            uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
             IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
                 posId: posId,
                 minAmt0Out: minAmt0Out,
@@ -192,7 +202,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
             });
             args = abi.encode(perpId, params);
         } else if (selector == increaseCardinalityCapSel) {
-            uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
             args = abi.encode(perpId, cardinalityCap);
         } else {
             args = svm.createBytes(1024, "data");
