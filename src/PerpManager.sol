@@ -25,7 +25,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
     /* STORAGE */
 
     /// @notice Mapping to store state of all perps
-    mapping(PoolId => IPerpManager.Perp) private perps;
+    mapping(PoolId => IPerpManager.Perp) internal perps;
 
     /* CONSTRUCTOR */
 
