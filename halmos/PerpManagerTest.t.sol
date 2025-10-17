@@ -6,6 +6,7 @@ import {SymTest} from "@halmos-cheatcodes/src/SymTest.sol";
 
 import {PerpManager} from "../src/PerpManager.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
+import {QuoteReverter} from "../src/libraries/QuoteReverter.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
@@ -77,12 +78,48 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.warp(blockTimestamp);
     }
 
-    /// PoolManager address is always the one set in constructor
-    function check_poolManager_immutable() public view {
-        address poolManagerAddress = address(perpManager.POOL_MANAGER());
+    function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
+        // Create perp
+        IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams();
+        vm.prank(creator);
+        PoolId perpId = perpManager.createPerp(perpParams);
 
-        assert(poolManagerAddress == address(poolManagerMock));
-        assert(poolManagerAddress != address(0));
+        address vault = perpManager.getVault(perpId);
+
+        uint128 initialInsurance = perpManager.getInsurance(perpId);
+        uint256 initialVaultBalance = usdcMock.balanceOf(vault);
+
+        // Initial assumptions
+        vm.assume(vault != address(0));
+        vm.assume(initialVaultBalance >= initialInsurance);
+
+        // Simulation
+        _callPerpManager(selector, caller, perpId);
+        _callPerpManager(selector, caller, perpId);
+        _callPerpManager(selector, caller, perpId);
+
+        uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
+        uint128 insuranceAfter = perpManager.getInsurance(perpId);
+        uint128 nextPosId = perpManager.getNextPosId(perpId);
+
+        // Calculate total effective margin in open positions
+        uint256 totalEffectiveMargin = 0;
+        for (uint128 i = 0; i < nextPosId; i++) {
+            IPerpManager.Position memory pos = perpManager.getPosition(perpId, i);
+            if (pos.holder != address(0)) {
+                // Use quoteClosePosition to get effective margin for this position
+                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId, i);
+                if (!success) {
+                    // XXX: bug if valid position cannot be quoted
+                    assert(false);
+                }
+
+                totalEffectiveMargin += quote.effectiveMargin;
+            }
+        }
+
+        // Invariant
+        assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
     }
 
     /* HELPER FUNCTIONS */
