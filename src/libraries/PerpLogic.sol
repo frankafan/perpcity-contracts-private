@@ -19,7 +19,6 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {console2} from "forge-std/console2.sol";
 
 /// @title PerpLogic
 /// @notice Library for the logic of the perp manager
@@ -245,7 +244,7 @@ library PerpLogic {
             // this range. Consideration: ranges passed during the middle of the swap are not rewarded
             poolManager.executeAction(Router.DONATE, abi.encode(Router.DonateConfig(perp.key, lpFeeAmt)));
 
-            // use params.margin instead of pos.margin since this inlcludes the fees paid
+            // use params.margin instead of pos.margin since this includes the fees paid
             if (!revertChanges) usdc.safeTransferFrom(msg.sender, perp.vault, params.margin);
             if (!revertChanges) usdc.safeTransferFrom(perp.vault, perp.creator, creatorFeeAmt);
         }
@@ -317,7 +316,7 @@ library PerpLogic {
         address usdc,
         Mgr.ClosePositionParams calldata params,
         bool revertChanges
-    ) external returns (uint128 posId, int256 pnl, int256 funding, uint256 netMargin, bool wasLiquidated) {
+    ) external returns (uint128 posId) {
         PoolId perpId = perp.key.toId();
         Mgr.Position memory pos = perp.positions[params.posId];
 
@@ -352,8 +351,6 @@ library PerpLogic {
             // execute using encoded config & fill in encodedDeltas with token movements
             encodedDeltas = poolManager.executeAction(Router.MODIFY_LIQUIDITY, abi.encode(config));
 
-            console2.log("before clear");
-
             // clear ticks that were also cleared in corresponding Uniswap pool (they would no longer be initialized)
             if (!poolManager.isTickInitialized(perpId, makerPos.tickLower)) perp.fundingState.clear(makerPos.tickLower);
             if (!poolManager.isTickInitialized(perpId, makerPos.tickUpper)) perp.fundingState.clear(makerPos.tickUpper);
@@ -387,13 +384,9 @@ library PerpLogic {
             perp.fundingState.crossTicks(poolManager, perpId, startTick, endTick, perp.key.tickSpacing, isLong);
         }
 
-        console2.log("after clear");
-
         // makers: both deltas >= 0 since tokens were taken out. taker longs: perpDelta < 0 & usdDelta > 0 since perps
         // sent in & usd received out. taker shorts: perpDelta > 0 & usdDelta < 0 since perps taken out & usd sent in
         (int256 exitPerpDelta, int256 exitUsdDelta) = abi.decode(encodedDeltas, (int256, int256));
-
-        console2.log("after decode deltas");
 
         // for takers, notional = value of perps sent in / out (equivalent to value of usd exchanged)
         uint256 notional = exitUsdDelta.abs();
@@ -434,6 +427,7 @@ library PerpLogic {
                 badDebt -= perp.insurance;
                 perp.insurance = 0;
 
+                // TODO: risk that total taker margin < bad debt, then use makers
                 // remaining bad debt is paid for by all other open taker positions. this is represented by incrementing
                 // badDebtGrowth by the bad debt created per open position size. When takers close, they have to pay the
                 // amount this tracker grew since entry per position size owned

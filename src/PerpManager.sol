@@ -80,7 +80,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
     /// @param params The parameters for closing the position
     /// @return posId The ID of the taker position created if the position closed was a maker. Otherwise, 0
     function closePosition(PoolId perpId, ClosePositionParams calldata params) external returns (uint128 posId) {
-        (posId,,,,) = PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
+        return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
     /// @notice Increases the cardinality cap for a perp
