@@ -431,7 +431,7 @@ library PerpLogic {
                 // remaining bad debt is paid for by all other open taker positions. this is represented by incrementing
                 // badDebtGrowth by the bad debt created per open position size. When takers close, they have to pay the
                 // amount this tracker grew since entry per position size owned
-                perp.badDebtGrowth += badDebt / perp.takerOpenInterest;
+                if (perp.takerOpenInterest > 0) perp.badDebtGrowth += badDebt / perp.takerOpenInterest;
             }
 
             // TODO: incentivize ADL liquidations
