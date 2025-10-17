@@ -9,6 +9,9 @@ import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
+// Test harness
+import {PerpManagerHarness} from "./PerpManagerHarness.sol";
+
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
@@ -20,7 +23,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     // Contracts
     PoolManagerMock internal poolManagerMock;
     ERC20Mock internal usdcMock;
-    PerpManager internal perpManager;
+    PerpManagerHarness internal perpManager;
 
     // Test actors
     address internal creator;
@@ -33,7 +36,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock("USD Coin", "USDC", 6);
 
-        perpManager = new PerpManager(IPoolManager(address(poolManagerMock)), address(usdcMock));
+        perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
