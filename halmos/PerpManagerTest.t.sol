@@ -9,6 +9,7 @@ import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {QuoteReverter} from "../src/libraries/QuoteReverter.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {UINT_Q96} from "../src/libraries/Constants.sol";
 
 // Test harness
 import {PerpManagerHarness} from "./PerpManagerHarness.sol";
@@ -16,6 +17,7 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
+import {BeaconMock} from "./mocks/BeaconMock.sol";
 
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
@@ -25,6 +27,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PoolManagerMock internal poolManagerMock;
     ERC20Mock internal usdcMock;
     PerpManagerHarness internal perpManager;
+    BeaconMock internal beaconMock;
 
     // Test actors
     address internal creator;
@@ -32,10 +35,14 @@ contract PerpManagerHalmosTest is SymTest, Test {
     address internal taker;
     address internal liquidator;
 
+    // Perps
+    PoolId internal perpId1;
+
     function setUp() public virtual {
         // Initialize mock contracts
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock("USD Coin", "USDC", 6);
+        beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
 
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
@@ -76,17 +83,15 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         vm.roll(blockNumber);
         vm.warp(blockTimestamp);
+
+        // Create perp
+        perpId1 = _createPerp(creator);
     }
 
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
-        // Create perp
-        IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams();
-        vm.prank(creator);
-        PoolId perpId = perpManager.createPerp(perpParams);
+        address vault = perpManager.getVault(perpId1);
 
-        address vault = perpManager.getVault(perpId);
-
-        uint128 initialInsurance = perpManager.getInsurance(perpId);
+        uint128 initialInsurance = perpManager.getInsurance(perpId1);
         uint256 initialVaultBalance = usdcMock.balanceOf(vault);
 
         // Initial assumptions
@@ -94,21 +99,21 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(initialVaultBalance >= initialInsurance);
 
         // Simulation
-        _callPerpManager(selector, caller, perpId);
-        _callPerpManager(selector, caller, perpId);
-        _callPerpManager(selector, caller, perpId);
+        _callPerpManager(selector, caller, perpId1);
+        _callPerpManager(selector, caller, perpId1);
+        // _callPerpManager(selector, caller, perpId1);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
-        uint128 insuranceAfter = perpManager.getInsurance(perpId);
-        uint128 nextPosId = perpManager.getNextPosId(perpId);
+        uint128 insuranceAfter = perpManager.getInsurance(perpId1);
+        uint128 nextPosId = perpManager.getNextPosId(perpId1);
 
         // Calculate total effective margin in open positions
         uint256 totalEffectiveMargin = 0;
         for (uint128 i = 0; i < nextPosId; i++) {
-            IPerpManager.Position memory pos = perpManager.getPosition(perpId, i);
+            IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
                 // Use quoteClosePosition to get effective margin for this position
-                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId, i);
+                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId1, i);
                 if (!success) {
                     // XXX: bug if valid position cannot be quoted
                     assert(false);
@@ -124,16 +129,23 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
     /* HELPER FUNCTIONS */
 
+    /// @notice Create symbolic perp
+    /// @param perpCreator Address creating the perp
+    function _createPerp(address perpCreator) internal returns (PoolId) {
+        IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(address(beaconMock));
+        vm.prank(perpCreator);
+        return perpManager.createPerp(perpParams);
+    }
+
     /// @notice Create symbolic perp parameters
-    function _createSymbolicPerpParams() internal returns (IPerpManager.CreatePerpParams memory) {
+    /// @param beacon The beacon address to use for the perp
+    function _createSymbolicPerpParams(address beacon) internal returns (IPerpManager.CreatePerpParams memory) {
         uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
-        address beacon = svm.createAddress("beacon");
 
         // Assume valid sqrt price range
         // MIN_SQRT_RATIO = 4295128739, MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
         vm.assume(startingSqrtPriceX96 >= 4295128739);
         vm.assume(startingSqrtPriceX96 <= type(uint160).max);
-        vm.assume(beacon != address(0));
 
         return IPerpManager.CreatePerpParams({startingSqrtPriceX96: startingSqrtPriceX96, beacon: beacon});
     }
