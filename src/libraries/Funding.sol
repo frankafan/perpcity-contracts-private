@@ -14,6 +14,8 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
+// This library's logic was largely inspired by Perp V2
+
 /// @title Funding
 /// @notice Library for calculating funding
 library Funding {
@@ -92,11 +94,11 @@ library Funding {
         returns (int256 premiumPerSecondX96)
     {
         // get time weighted average of sqrt mark price & square it to get mark TWAP
-        uint256 twAvgSqrtMarkX96 = perp.twapState.timeWeightedAvg(perp.twapWindow, blockTimestamp, sqrtPriceX96);
+        uint256 twAvgSqrtMarkX96 = perp.twAvgState.timeWeightedAvg(perp.twAvgWindow, blockTimestamp, sqrtPriceX96);
         uint256 twAvgMarkX96 = twAvgSqrtMarkX96.fullMulDiv(twAvgSqrtMarkX96, UINT_Q96);
 
         // call beacon to get index TWAP
-        uint256 twAvgIndexX96 = ITimeWeightedAvg(perp.beacon).timeWeightedAvg(perp.twapWindow);
+        uint256 twAvgIndexX96 = ITimeWeightedAvg(perp.beacon).timeWeightedAvg(perp.twAvgWindow);
 
         // the amount paid (or received) due to funding per interval is (mark TWAP - index TWAP)
         // if positive (mark > index), longs pay shorts to incentivize downwards price movement towards index
@@ -300,7 +302,7 @@ library Funding {
     {
         // the base funding payment is the position size * funding accrued per perp since entry. Perp delta is negative
         // if short, so payment's signage is corrected. Maker perp delta will always be <=0 since perps are sent in
-        payment = pos.perpDelta.fullMulDivSigned(state.cumlFundingX96 - pos.entryCumlFundingX96, UINT_Q96);
+        payment = pos.entryPerpDelta.fullMulDivSigned(state.cumlFundingX96 - pos.entryCumlFundingX96, UINT_Q96);
         // if maker, we calculate funding using the amount of perps sent / received over time as position size
         // i.e. (funding for a maker's remaining inventory over time - funding for starting inventory (payment is <= 0))
         if (pos.makerDetails.liquidity > 0) payment += makerInventoryFunding(state, pos.makerDetails, currentTick);

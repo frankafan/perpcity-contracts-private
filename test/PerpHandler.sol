@@ -144,7 +144,8 @@ contract PerpHandler is Test {
 
         vm.assume(amount0 > 10 || amount1 > 10);
 
-        uint256 perpsNotional = sqrtPriceX96.fullMulDiv(amount0 * sqrtPriceX96, UINT_Q192);
+        uint256 priceX96 = sqrtPriceX96.fullMulDiv(sqrtPriceX96, UINT_Q96);
+        uint256 perpsNotional = amount0.fullMulDiv(priceX96, UINT_Q96);
         notional = perpsNotional + uint256(amount1);
 
         // uint256 minMarginRatioAdjusted = FixedPointMathLib.max(minMarginRatio, 1e6.mulDiv(SCALE_1E6, notional));

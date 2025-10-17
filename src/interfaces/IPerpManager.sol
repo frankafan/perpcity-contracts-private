@@ -8,7 +8,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 /// @title IPerpManager
 /// @notice Interface for the PerpManager contract
-/// TODO: add comments
+/// TODO: add comments / fix for modularity
 interface IPerpManager {
     /* STRUCTS */
 
@@ -31,14 +31,14 @@ interface IPerpManager {
         uint128 nextPosId;
         uint32 creationTimestamp;
         uint32 makerLockupPeriod;
-        uint32 twapWindow;
+        uint32 twAvgWindow;
         uint256 sqrtPriceLowerMultiX96;
         uint256 sqrtPriceUpperMultiX96;
-        uint256 adlGrowth;
+        uint256 badDebtGrowth;
         uint128 insurance;
         uint128 takerOpenInterest;
         PoolKey key;
-        TimeWeightedAvg.State twapState;
+        TimeWeightedAvg.State twAvgState;
         Funding.State fundingState;
         mapping(uint128 => Position) positions;
     }
@@ -46,15 +46,15 @@ interface IPerpManager {
     struct Position {
         address holder;
         uint256 margin;
-        int256 perpDelta;
-        int256 usdDelta;
+        int256 entryPerpDelta;
+        int256 entryUsdDelta;
         int256 entryCumlFundingX96;
-        uint256 entryADLGrowth;
+        uint256 entryBadDebtGrowth;
         MakerDetails makerDetails;
     }
 
     struct MakerDetails {
-        uint32 entryTimestamp;
+        uint32 unlockTimestamp;
         int24 tickLower;
         int24 tickUpper;
         uint128 liquidity;
@@ -86,7 +86,7 @@ interface IPerpManager {
 
     struct AddMarginParams {
         uint128 posId;
-        uint256 margin;
+        uint256 amtToAdd;
     }
 
     struct ClosePositionParams {
@@ -100,25 +100,17 @@ interface IPerpManager {
 
     event PerpCreated(PoolId perpId, address beacon, uint256 startingSqrtPriceX96, uint256 indexPriceX96);
     event PositionOpened(
-        PoolId perpId,
-        uint256 posId,
-        address holder,
-        bool isMaker,
-        int256 perpDelta,
-        uint256 sqrtPriceX96,
-        int256 fundingPremiumPerSecX96
+        PoolId perpId, uint256 posId, Position position, uint256 sqrtPriceX96, int256 fundingPerSecX96
     );
     event MarginAdded(PoolId perpId, uint256 posId, uint256 newMargin);
     event PositionClosed(
         PoolId perpId,
         uint256 posId,
-        address holder,
-        bool wasMaker,
-        int256 perpDelta,
-        int256 pnl,
+        Position position,
+        int256 netUsdDelta,
         bool wasLiquidated,
         uint256 sqrtPriceX96,
-        int256 fundingPremiumPerSecX96
+        int256 fundingPerSecX96
     );
 
     /* ERRORS */
@@ -127,6 +119,7 @@ interface IPerpManager {
     error InvalidLiquidity(uint128 liquidity);
     error InvalidMargin(uint256 margin);
     error InvalidCaller(address caller, address expectedCaller);
-    error MakerPositionLocked(uint256 currentTimestamp, uint256 lockupPeriodEnd);
-    error ZeroSizePosition(int256 perpDelta, int256 usdDelta);
+    error PositionLocked();
+    error ZeroDeltaPosition();
+    error InvalidMarginRatio(uint256 marginRatio, uint256 minMarginRatio, uint256 maxMarginRatio);
 }

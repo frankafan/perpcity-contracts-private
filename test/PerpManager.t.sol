@@ -7,8 +7,7 @@ import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
 import {SCALE_1E6, UINT_Q96} from "../src/libraries/Constants.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
-
-import {QuoteReverter} from "../src/libraries/QuoteReverter.sol";
+import {Quoter} from "../src/libraries/Quoter.sol";
 import {TradingFee} from "../src/libraries/TradingFee.sol";
 import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
@@ -88,7 +87,7 @@ contract PerpManagerTest is DeployPoolManager {
 
         uint256 maker1Margin = 300e6;
 
-        uint128 maker1Liq = perpManager.estimateLiquidityForAmount1(maker1TickLower, maker1TickUpper, maker1Margin);
+        uint128 maker1Liq = perpManager.estimateLiquidityForUsd(maker1TickLower, maker1TickUpper, maker1Margin);
 
         deal(usdc, maker1, maker1Margin);
         usdc.safeApprove(address(perpManager), maker1Margin);
@@ -105,12 +104,12 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        IPerpManager.Position memory maker1Pos = perpManager.getPosition(perpId, maker1PosId);
+        IPerpManager.Position memory maker1Pos = perpManager.position(perpId, maker1PosId);
 
         console2.log("maker position opened with posId ", maker1PosId);
         console2.log("margin %6e", maker1Pos.margin);
-        console2.log("perpDelta %6e", maker1Pos.perpDelta);
-        console2.log("usdDelta %6e", maker1Pos.usdDelta);
+        console2.log("perpDelta %6e", maker1Pos.entryPerpDelta);
+        console2.log("usdDelta %6e", maker1Pos.entryUsdDelta);
         sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
@@ -132,7 +131,7 @@ contract PerpManagerTest is DeployPoolManager {
 
         uint256 maker2Margin = 300e6;
 
-        uint128 maker2Liq = perpManager.estimateLiquidityForAmount1(maker2TickLower, maker2TickUpper, maker2Margin);
+        uint128 maker2Liq = perpManager.estimateLiquidityForUsd(maker2TickLower, maker2TickUpper, maker2Margin);
 
         deal(usdc, maker2, maker2Margin);
         usdc.safeApprove(address(perpManager), maker2Margin);
@@ -149,12 +148,12 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        IPerpManager.Position memory maker2Pos = perpManager.getPosition(perpId, maker2PosId);
+        IPerpManager.Position memory maker2Pos = perpManager.position(perpId, maker2PosId);
 
         console2.log("maker position opened with posId ", maker2PosId);
         console2.log("margin %6e", maker2Pos.margin);
-        console2.log("perpDelta %6e", maker2Pos.perpDelta);
-        console2.log("usdDelta %6e", maker2Pos.usdDelta);
+        console2.log("perpDelta %6e", maker2Pos.entryPerpDelta);
+        console2.log("usdDelta %6e", maker2Pos.entryUsdDelta);
         sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
@@ -185,12 +184,12 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        IPerpManager.Position memory taker1Pos = perpManager.getPosition(perpId, taker1PosId);
+        IPerpManager.Position memory taker1Pos = perpManager.position(perpId, taker1PosId);
 
         console2.log("taker position opened with posId ", taker1PosId);
         console2.log("margin %6e", taker1Pos.margin);
-        console2.log("perpDelta %6e", taker1Pos.perpDelta);
-        console2.log("usdDelta %6e", taker1Pos.usdDelta);
+        console2.log("perpDelta %6e", taker1Pos.entryPerpDelta);
+        console2.log("usdDelta %6e", taker1Pos.entryUsdDelta);
         sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
@@ -221,12 +220,12 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        IPerpManager.Position memory taker2Pos = perpManager.getPosition(perpId, taker2PosId);
+        IPerpManager.Position memory taker2Pos = perpManager.position(perpId, taker2PosId);
 
         console2.log("taker position opened with posId ", taker2PosId);
         console2.log("margin %6e", taker2Pos.margin);
-        console2.log("perpDelta %6e", taker2Pos.perpDelta);
-        console2.log("usdDelta %6e", taker2Pos.usdDelta);
+        console2.log("perpDelta %6e", taker2Pos.entryPerpDelta);
+        console2.log("usdDelta %6e", taker2Pos.entryUsdDelta);
         sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
@@ -241,45 +240,48 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
 
         bool success;
-        QuoteReverter.CloseQuote memory quote;
+        int256 pnl;
+        int256 funding;
+        uint256 effectiveMargin;
+        bool wasLiquidated;
 
         vm.startPrank(maker1);
-        (success, quote) = perpManager.quoteClosePosition(perpId, maker1PosId);
+        (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, maker1PosId);
         console2.log("maker1 closePosition success: ", success);
-        console2.log("maker1 closePosition pnl: %6e", quote.pnl);
-        console2.log("maker1 closePosition funding: %6e", quote.funding);
-        console2.log("maker1 closePosition effectiveMargin: %6e", quote.effectiveMargin);
-        console2.log("maker1 closePosition wasLiquidated: ", quote.wasLiquidated);
+        console2.log("maker1 closePosition pnl: %6e", pnl);
+        console2.log("maker1 closePosition funding: %6e", funding);
+        console2.log("maker1 closePosition effectiveMargin: %6e", effectiveMargin);
+        console2.log("maker1 closePosition wasLiquidated: ", wasLiquidated);
         console2.log();
         vm.stopPrank();
 
         vm.startPrank(maker2);
-        (success, quote) = perpManager.quoteClosePosition(perpId, maker2PosId);
+        (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, maker2PosId);
         console2.log("maker2 closePosition success: ", success);
-        console2.log("maker2 closePosition pnl: %6e", quote.pnl);
-        console2.log("maker2 closePosition funding: %6e", quote.funding);
-        console2.log("maker2 closePosition effectiveMargin: %6e", quote.effectiveMargin);
-        console2.log("maker2 closePosition wasLiquidated: ", quote.wasLiquidated);
+        console2.log("maker2 closePosition pnl: %6e", pnl);
+        console2.log("maker2 closePosition funding: %6e", funding);
+        console2.log("maker2 closePosition effectiveMargin: %6e", effectiveMargin);
+        console2.log("maker2 closePosition wasLiquidated: ", wasLiquidated);
         console2.log();
         vm.stopPrank();
 
         vm.startPrank(taker1);
-        (success, quote) = perpManager.quoteClosePosition(perpId, taker1PosId);
+        (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, taker1PosId);
         console2.log("taker1 closePosition success: ", success);
-        console2.log("taker1 closePosition pnl: %6e", quote.pnl);
-        console2.log("taker1 closePosition funding: %6e", quote.funding);
-        console2.log("taker1 closePosition effectiveMargin: %6e", quote.effectiveMargin);
-        console2.log("taker1 closePosition wasLiquidated: ", quote.wasLiquidated);
+        console2.log("taker1 closePosition pnl: %6e", pnl);
+        console2.log("taker1 closePosition funding: %6e", funding);
+        console2.log("taker1 closePosition effectiveMargin: %6e", effectiveMargin);
+        console2.log("taker1 closePosition wasLiquidated: ", wasLiquidated);
         console2.log();
         vm.stopPrank();
 
         vm.startPrank(taker2);
-        (success, quote) = perpManager.quoteClosePosition(perpId, taker2PosId);
+        (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, taker2PosId);
         console2.log("taker2 closePosition success: ", success);
-        console2.log("taker2 closePosition pnl: %6e", quote.pnl);
-        console2.log("taker2 closePosition funding: %6e", quote.funding);
-        console2.log("taker2 closePosition effectiveMargin: %6e", quote.effectiveMargin);
-        console2.log("taker2 closePosition wasLiquidated: ", quote.wasLiquidated);
+        console2.log("taker2 closePosition pnl: %6e", pnl);
+        console2.log("taker2 closePosition funding: %6e", funding);
+        console2.log("taker2 closePosition effectiveMargin: %6e", effectiveMargin);
+        console2.log("taker2 closePosition wasLiquidated: ", wasLiquidated);
         console2.log();
         vm.stopPrank();
     }

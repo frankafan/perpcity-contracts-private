@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {UnlockCallback} from "./UnlockCallback.sol";
 import {IPerpManager} from "./interfaces/IPerpManager.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
-import {QuoteReverter} from "./libraries/QuoteReverter.sol";
+import {Quoter} from "./libraries/Quoter.sol";
 import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
 import {TradingFee} from "./libraries/TradingFee.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
@@ -54,7 +54,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 makerPosId)
     {
-        (makerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
+        (makerPosId,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
     /// @notice Opens a taker position
@@ -65,7 +65,7 @@ contract PerpManager is IPerpManager, UnlockCallback {
         external
         returns (uint128 takerPosId)
     {
-        (takerPosId,,,,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
+        (takerPosId,) = PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
     /// @notice Adds margin to an open position
@@ -80,37 +80,54 @@ contract PerpManager is IPerpManager, UnlockCallback {
     /// @param params The parameters for closing the position
     /// @return posId The ID of the taker position created if the position closed was a maker. Otherwise, 0
     function closePosition(PoolId perpId, ClosePositionParams calldata params) external returns (uint128 posId) {
-        return PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
+        (posId,,,,) = PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, false);
     }
 
     /// @notice Increases the cardinality cap for a perp
     /// @param perpId The ID of the perp to increase the cardinality cap for
     /// @param cardinalityCap The new cardinality cap
     function increaseCardinalityCap(PoolId perpId, uint16 cardinalityCap) external {
-        TimeWeightedAvg.increaseCardinalityCap(perps[perpId].twapState, cardinalityCap);
+        TimeWeightedAvg.increaseCardinalityCap(perps[perpId].twAvgState, cardinalityCap);
     }
 
     /* VIEW FUNCTIONS */
 
+    /// @notice Returns the tick spacing for a perp
+    /// @param perpId The ID of the perp to get the tick spacing for
+    /// @return tickSpacing The tick spacing for the perp
     function tickSpacing(PoolId perpId) external view returns (int24) {
         return perps[perpId].key.tickSpacing;
     }
 
+    /// @notice Returns the current sqrt price of a perp scaled by 2^96
+    /// @param perpId The ID of the perp to get the sqrt price of
+    /// @return sqrtPrice The current sqrt price
     function sqrtPriceX96(PoolId perpId) external view returns (uint160 sqrtPrice) {
         (sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
     }
 
-    function fees(PoolId perpId)
-        external
-        view
-        returns (uint24 creatorFee, uint24 insurnaceFee, uint24 lpFee, uint24 liquidationFee)
-    {
-        creatorFee = perps[perpId].creatorFee;
-        insurnaceFee = perps[perpId].insuranceFee;
+    /// @notice Returns the fees for a perp
+    /// @param perpId The ID of the perp to get the fees for
+    /// @return cFee The creator fee percentage scaled by 1e6
+    /// @return insFee The insurance fee percentage scaled by 1e6
+    /// @return lpFee The lp fee percentage scaled by 1e6
+    /// @return liqFee The liquidation fee percentage scaled by 1e6
+    function fees(PoolId perpId) external view returns (uint24 cFee, uint24 insFee, uint24 lpFee, uint24 liqFee) {
+        cFee = perps[perpId].creatorFee;
+        insFee = perps[perpId].insuranceFee;
         lpFee = TradingFee.calculateTradingFee(perps[perpId], POOL_MANAGER);
-        liquidationFee = perps[perpId].liquidationFee;
+        liqFee = perps[perpId].liquidationFee;
     }
 
+    /// @notice Returns the trading bounds for a perp
+    /// @param perpId The ID of the perp to get the trading bounds for
+    /// @return minOpeningMargin The minimum opening margin
+    /// @return minMakerMarginRatio The minimum maker margin ratio
+    /// @return maxMakerMarginRatio The maximum maker margin ratio
+    /// @return makerLiquidationMarginRatio The maker liquidation margin ratio
+    /// @return minTakerMarginRatio The minimum taker margin ratio
+    /// @return maxTakerMarginRatio The maximum taker margin ratio
+    /// @return takerLiquidationMarginRatio The taker liquidation margin ratio
     function tradingBounds(PoolId perpId)
         external
         view
@@ -133,137 +150,87 @@ contract PerpManager is IPerpManager, UnlockCallback {
         takerLiquidationMarginRatio = perps[perpId].takerLiquidationMarginRatio;
     }
 
-    function estimateLiquidityForAmount1(int24 tickA, int24 tickB, uint256 amount1)
-        external
-        pure
-        returns (uint128 liquidity)
-    {
+    /// @notice Estimates the liquidity for a certain amount of token1 (usd) provided within a tick range
+    /// @param tickA One tick boundry defining the range
+    /// @param tickB The other tick boundry defining the range
+    /// @param amount1 The amount of token1 (usd) to estimate liquidity for
+    /// @return liq The resulting liquidity calculated
+    function estimateLiquidityForUsd(int24 tickA, int24 tickB, uint256 amount1) external pure returns (uint128 liq) {
         return LiquidityAmounts.getLiquidityForAmount1(
             TickMath.getSqrtPriceAtTick(tickA), TickMath.getSqrtPriceAtTick(tickB), amount1
         );
     }
 
-    function timeWeightedAvgSqrtPriceX96(PoolId perpId, uint32 lookbackWindow) external view returns (uint256) {
+    /// @notice Returns the time-weighted average sqrt price of a perp, scaled by 2^96
+    /// @param perpId The ID of the perp to get the time-weighted average sqrt price of
+    /// @param lookbackWindow The lookback window in seconds to calculate the time-weighted average over
+    /// @return twAvg The time-weighted average sqrt price
+    function timeWeightedAvgSqrtPriceX96(PoolId perpId, uint32 lookbackWindow) external view returns (uint256 twAvg) {
         (uint160 sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
         return TimeWeightedAvg.timeWeightedAvg(
-            perps[perpId].twapState, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
+            perps[perpId].twAvgState, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
         );
     }
 
-    function getPosition(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory) {
+    /// @notice Returns the position details for a given position ID
+    /// @param perpId The ID of the perp to get the position for
+    /// @param posId The ID of the position to get
+    /// @return pos The position's details
+    function position(PoolId perpId, uint128 posId) external view returns (IPerpManager.Position memory pos) {
         return perps[perpId].positions[posId];
     }
 
+    /// @notice Quotes the opening of a maker position without changing state
+    /// @param perpId The ID of the perp to simulate opening the position in
+    /// @param params The parameters for opening the position
+    /// @return success Whether the transaction would have been successful
+    /// @return perpDelta The movement of perp contracts if the transaction was successful
+    /// @return usdDelta The movement of usd if the transaction was successful
     function quoteOpenMakerPosition(PoolId perpId, OpenMakerPositionParams calldata params)
         external
-        returns (bool success, QuoteReverter.OpenQuote memory quote)
+        returns (bool success, int256 perpDelta, int256 usdDelta)
     {
-        // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), true, true) {}
         catch (bytes memory reason) {
-            (success, quote) = QuoteReverter.parseOpenQuote(reason);
+            (success, perpDelta, usdDelta) = Quoter.parseOpen(reason);
         }
     }
 
+    /// @notice Quotes the opening of a taker position without changing state
+    /// @param perpId The ID of the perp to simulate opening the position in
+    /// @param params The parameters for opening the position
+    /// @return success Whether the transaction would have been successful
+    /// @return perpDelta The movement of perp contracts if the transaction was successful
+    /// @return usdDelta The movement of usd if the transaction was successful
     function quoteOpenTakerPosition(PoolId perpId, OpenTakerPositionParams calldata params)
         external
-        returns (bool success, QuoteReverter.OpenQuote memory quote)
+        returns (bool success, int256 perpDelta, int256 usdDelta)
     {
-        // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.openPosition(perps[perpId], POOL_MANAGER, USDC, abi.encode(params), false, true) {}
         catch (bytes memory reason) {
-            (success, quote) = QuoteReverter.parseOpenQuote(reason);
+            (success, perpDelta, usdDelta) = Quoter.parseOpen(reason);
         }
     }
 
+    // TODO: if closing maker, we only quote for maker close but want to quote for resulting taker close as well
+    /// @notice Quotes the closing of a position without changing state
+    /// @param perpId The ID of the perp to simulate closing the position in
+    /// @param posId The ID of the position to close
+    /// @return success Whether the transaction would have been successful
+    /// @return pnl The pnl of the position at close
+    /// @return funding The funding payment of the position at close
+    /// @return netMargin The margin of the position after pnl, funding, and fees
+    /// @return wasLiquidated Whether the position was liquidated by the close call
     function quoteClosePosition(PoolId perpId, uint128 posId)
         external
-        returns (bool success, QuoteReverter.CloseQuote memory quote)
+        returns (bool success, int256 pnl, int256 funding, uint256 netMargin, bool wasLiquidated)
     {
         // params are minimized / maximized where possible to ensure no reverts
         ClosePositionParams memory params = ClosePositionParams(posId, 0, 0, type(uint128).max);
 
-        // pass revert == true into close so we can parse live position details from the reason
         try PerpLogic.closePosition(perps[perpId], POOL_MANAGER, USDC, params, true) {}
         catch (bytes memory reason) {
-            (success, quote) = QuoteReverter.parseCloseQuote(reason);
+            (success, pnl, funding, netMargin, wasLiquidated) = Quoter.parseClose(reason);
         }
     }
-
-    // // returns max notional size scaled by WAD
-    // function maxNotionalTakerSize(PoolId perpId, bool isLong) external view returns (uint256 maxNotionalSize) {
-    //     (,int24 currentTick) = c.poolManager.getSqrtPriceX96AndTick(perpId);
-
-    //     // get mark twap, and calculate price band around it
-    //     uint256 markTwapX96 = getTWAP(perpId);
-
-    //     int24 tickBound;
-    //     if (isLong) {
-    //         uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 + perps[perpId].priceImpactBandX96;
-    //         uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
-    //         uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
-    //         if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
-    //             tickBound = TickMath.MAX_TICK;
-    //         } else if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
-    //             tickBound = TickMath.MIN_TICK;
-    //         } else {
-    //             tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
-    //         }
-    //     } else {
-    //         uint256 priceImpactMultiplierX96 = FixedPoint96.UINT_Q96 - perps[perpId].priceImpactBandX96;
-    //         uint256 priceBoundX96 = markTwapX96.fullMulDiv(priceImpactMultiplierX96, FixedPoint96.UINT_Q96);
-    //         uint256 sqrtPriceBoundX96 = FixedPointMathLib.mulSqrt(priceBoundX96, FixedPoint96.UINT_Q96);
-    //         if (sqrtPriceBoundX96 < TickMath.MIN_SQRT_PRICE) {
-    //             tickBound = TickMath.MIN_TICK;
-    //         } else if (sqrtPriceBoundX96 > TickMath.MAX_SQRT_PRICE) {
-    //             tickBound = TickMath.MAX_TICK;
-    //         } else {
-    //             tickBound = TickMath.getTickAtSqrtPrice(sqrtPriceBoundX96.toUint160());
-    //         }
-    //     }
-
-    //     int24 tickSpacing = perps[perpId].key.tickSpacing;
-    //     int128 liquidity = int128(c.poolManager.getLiquidity(perpId));
-
-    //     int24 tickUpper = currentTick;
-    //     bool isInitialized;
-    //     if (isLong) {
-    //         while (tickUpper < tickBound) {
-    //             (tickUpper, isInitialized) =
-    //                 c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, false);
-
-    //             if (isInitialized || tickUpper > tickBound) {
-    //                 if (tickUpper > tickBound) tickUpper = tickBound;
-    //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(currentTick);
-    //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(tickUpper);
-    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
-    //                        FixedPoint96.UINT_Q96);
-    //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
-    //                 liquidity += liquidityToAdd;
-    //                 currentTick = tickUpper;
-    //             }
-
-    //             // stop if we pass the ending tick
-    //         }
-    //     } else {
-    //         while (tickUpper > tickBound) {
-    //             (tickUpper, isInitialized) =
-    //                 c.poolManager.nextInitializedTickWithinOneWord(perpId, tickUpper, tickSpacing, true);
-
-    //             if (isInitialized || tickUpper < tickBound) {
-    //                 if (tickUpper < tickBound) tickUpper = tickBound;
-    //                 uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickUpper);
-    //                 uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(currentTick);
-    //                 maxNotionalSize += uint128(liquidity).fullMulDiv(sqrtPriceUpperX96 - sqrtPriceLowerX96,
-    //                        FixedPoint96.UINT_Q96);
-    //                 (,int128 liquidityToAdd) = c.poolManager.getTickLiquidity(perpId, tickUpper);
-    //                 liquidity -= liquidityToAdd;
-    //                 currentTick = tickUpper;
-    //             }
-    //             tickUpper--;
-
-    //             // stop if we pass the ending tick
-    //         }
-    //     }
-    // }
 }

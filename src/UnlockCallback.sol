@@ -50,8 +50,6 @@ contract UnlockCallback is IUnlockCallback {
         } else if (action == UniV4Router.DONATE) {
             UniV4Router.DonateConfig memory params = abi.decode(encodedParams, (UniV4Router.DonateConfig));
             UniV4Router.donate(POOL_MANAGER, params);
-            /// TODO: add back or remove
-            // return "";
         } else {
             // will revert if action is not valid
             revert InvalidAction(action);
