@@ -29,8 +29,11 @@ test-halmos: clean
 		# --cache-solver \
 		# --ffi \
 		# --symbolic-jump \
-		2>&1 | tee $(HALMOS_OUTPUT_DIR)/halmos_test.log
+	> $(HALMOS_OUTPUT_DIR)/halmos_test.log
 	@echo "Done."
+	make analyze
+analyze:
+	python halmos/analyze_out.py $(HALMOS_OUTPUT_DIR)/halmos_test.json
 
 clean:
 	rm -rf $(HALMOS_OUTPUT_DIR)/*
