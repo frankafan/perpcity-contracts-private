@@ -8,7 +8,6 @@ import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
 import {SCALE_1E6, UINT_Q96} from "../src/libraries/Constants.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {Quoter} from "../src/libraries/Quoter.sol";
-import {TradingFee} from "../src/libraries/TradingFee.sol";
 import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -20,6 +19,14 @@ import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol
 import {console2} from "forge-std/console2.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {Fees} from "../src/modules/Fees.sol";
+import {MarginRatios} from "../src/modules/MarginRatios.sol";
+import {Lockup} from "../src/modules/Lockup.sol";
+import {SqrtPriceImpactLimit} from "../src/modules/SqrtPriceImpactLimit.sol";
+import {IFees} from "../src/interfaces/modules/IFees.sol";
+import {IMarginRatios} from "../src/interfaces/modules/IMarginRatios.sol";
+import {ILockupPeriod} from "../src/interfaces/modules/ILockupPeriod.sol";
+import {ISqrtPriceImpactLimit} from "../src/interfaces/modules/ISqrtPriceImpactLimit.sol";
 
 contract PerpManagerTest is DeployPoolManager {
     using SafeTransferLib for address;
@@ -31,6 +38,8 @@ contract PerpManagerTest is DeployPoolManager {
     uint160 public constant SQRT_51_X96 = 565802252120580303859488394989;
     uint160 public constant SQRT_60_X96 = 613698707936721051257405563936;
 
+    IPoolManager public poolManager;
+
     address public usdc;
     PerpManager public perpManager;
 
@@ -41,9 +50,9 @@ contract PerpManagerTest is DeployPoolManager {
     address public taker2 = makeAddr("taker2");
 
     function setUp() public {
-        IPoolManager poolManager = deployPoolManager();
+        poolManager = deployPoolManager();
         usdc = address(new TestnetUSDC());
-        perpManager = new PerpManager(poolManager, usdc);
+        perpManager = new PerpManager(poolManager, usdc, owner);
     }
 
     function test_informal() public {
@@ -51,20 +60,35 @@ contract PerpManagerTest is DeployPoolManager {
 
         IBeacon beacon = new OwnableBeacon(owner, 50 * UINT_Q96, 100);
 
+        IFees fees = new Fees();
+        IMarginRatios marginRatios = new MarginRatios();
+        ILockupPeriod lockupPeriod = new Lockup();
+        ISqrtPriceImpactLimit sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
+
+        perpManager.registerFeesModule(fees);
+        perpManager.registerMarginRatiosModule(marginRatios);
+        perpManager.registerLockupPeriodModule(lockupPeriod);
+        perpManager.registerSqrtPriceImpactLimitModule(sqrtPriceImpactLimit);
+
         PoolId perpId = perpManager.createPerp(
             IPerpManager.CreatePerpParams({
-                startingSqrtPriceX96: 560227709747861399187319382275, // sqrt(50)
-                beacon: address(beacon)
+                beacon: address(beacon),
+                fees: fees,
+                marginRatios: marginRatios,
+                lockupPeriod: lockupPeriod,
+                sqrtPriceImpactLimit: sqrtPriceImpactLimit,
+                startingSqrtPriceX96: 560227709747861399187319382275 // sqrt(50)
             })
         );
 
-        int24 tickSpacing = perpManager.tickSpacing(perpId);
+        (PoolKey memory key,,,,,,,) = perpManager.perpConfigs(perpId);
+        int24 tickSpacing = key.tickSpacing;
         uint256 sqrtMarkPrice;
         uint256 markPriceX96;
         uint256 markPriceWAD;
 
         console2.log("perp created with id: ", vm.toString(PoolId.unwrap(perpId)));
-        sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
+        (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
         console2.log("mark price %6e", markPriceWAD);
@@ -87,7 +111,9 @@ contract PerpManagerTest is DeployPoolManager {
 
         uint256 maker1Margin = 300e6;
 
-        uint128 maker1Liq = perpManager.estimateLiquidityForUsd(maker1TickLower, maker1TickUpper, maker1Margin);
+        uint128 maker1Liq = LiquidityAmounts.getLiquidityForAmount1(
+            TickMath.getSqrtPriceAtTick(maker1TickLower), TickMath.getSqrtPriceAtTick(maker1TickUpper), maker1Margin
+        );
 
         deal(usdc, maker1, maker1Margin);
         usdc.safeApprove(address(perpManager), maker1Margin);
@@ -110,7 +136,7 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("margin %6e", maker1Pos.margin);
         console2.log("perpDelta %6e", maker1Pos.entryPerpDelta);
         console2.log("usdDelta %6e", maker1Pos.entryUsdDelta);
-        sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
+        (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
         console2.log("mark price %6e", markPriceWAD);
@@ -131,7 +157,9 @@ contract PerpManagerTest is DeployPoolManager {
 
         uint256 maker2Margin = 300e6;
 
-        uint128 maker2Liq = perpManager.estimateLiquidityForUsd(maker2TickLower, maker2TickUpper, maker2Margin);
+        uint128 maker2Liq = LiquidityAmounts.getLiquidityForAmount1(
+            TickMath.getSqrtPriceAtTick(maker2TickLower), TickMath.getSqrtPriceAtTick(maker2TickUpper), maker2Margin
+        );
 
         deal(usdc, maker2, maker2Margin);
         usdc.safeApprove(address(perpManager), maker2Margin);
@@ -154,7 +182,7 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("margin %6e", maker2Pos.margin);
         console2.log("perpDelta %6e", maker2Pos.entryPerpDelta);
         console2.log("usdDelta %6e", maker2Pos.entryUsdDelta);
-        sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
+        (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
         console2.log("mark price %6e", markPriceWAD);
@@ -190,7 +218,7 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("margin %6e", taker1Pos.margin);
         console2.log("perpDelta %6e", taker1Pos.entryPerpDelta);
         console2.log("usdDelta %6e", taker1Pos.entryUsdDelta);
-        sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
+        (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
         console2.log("mark price %6e", markPriceWAD);
@@ -226,7 +254,7 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("margin %6e", taker2Pos.margin);
         console2.log("perpDelta %6e", taker2Pos.entryPerpDelta);
         console2.log("usdDelta %6e", taker2Pos.entryUsdDelta);
-        sqrtMarkPrice = perpManager.sqrtPriceX96(perpId);
+        (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
         markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
         markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
         console2.log("mark price %6e", markPriceWAD);

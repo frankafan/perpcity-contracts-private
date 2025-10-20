@@ -3,7 +3,6 @@ pragma solidity 0.8.30;
 
 import {PerpManager} from "../src/PerpManager.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-import {TradingFee} from "../src/libraries/TradingFee.sol";
 
 import {PerpHandler} from "./PerpHandler.sol";
 

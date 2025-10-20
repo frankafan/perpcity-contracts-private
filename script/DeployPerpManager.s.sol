@@ -12,12 +12,14 @@ contract DeployPerpManager is Script {
     IPoolManager public constant POOL_MANAGER = IPoolManager(0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408);
     /// @notice The address of the USDC contract
     address public constant USDC = 0xC1a5D4E99BB224713dd179eA9CA2Fa6600706210;
+    /// @notice The address of the owner
+    address public constant OWNER = 0x0000000000000000000000000000000000000000;
 
     /// @notice Deploys PerpManager
     function run() public {
         vm.startBroadcast();
 
-        PerpManager perpManager = new PerpManager(POOL_MANAGER, USDC);
+        PerpManager perpManager = new PerpManager(POOL_MANAGER, USDC, OWNER);
         console2.log("PerpManager: ", address(perpManager));
 
         vm.stopBroadcast();

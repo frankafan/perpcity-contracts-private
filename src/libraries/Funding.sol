@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {IPerpManager} from "../interfaces/IPerpManager.sol";
+import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
 import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
-import {FUNDING_INTERVAL, INT_Q96, UINT_Q96} from "./Constants.sol";
+import {INT_Q96, UINT_Q96, TWAVG_WINDOW, FUNDING_INTERVAL} from "./Constants.sol";
 import {SignedMath} from "./SignedMath.sol";
 import {TimeWeightedAvg} from "./TimeWeightedAvg.sol";
 import {UniV4Router} from "./UniV4Router.sol";
@@ -69,36 +69,36 @@ library Funding {
     /// funding accrued since the last update
     /// @dev This should be called before prices change and before updateFundingPerSecond() is called because funding
     /// per second was some value since the last update and that value should be used for the time passed since then
-    /// @param state The calling contract's funding state
+    /// @param fundingState The calling contract's funding state
     /// @param sqrtPriceX96 The current sqrt price
-    function updateCumlFunding(State storage state, uint160 sqrtPriceX96) internal {
-        int256 timeSinceLastUpdate = (block.timestamp - state.lastCumlFundingUpdate).toInt256();
-        state.lastCumlFundingUpdate = block.timestamp.toUint32();
+    function updateCumlFunding(State storage fundingState, uint160 sqrtPriceX96) internal {
+        int256 timeSinceLastUpdate = (block.timestamp - fundingState.lastCumlFundingUpdate).toInt256();
+        fundingState.lastCumlFundingUpdate = block.timestamp.toUint32();
 
         // funding accrued is funding per second * number of seconds passed
-        int256 fundingAccruedX96 = state.fundingPerSecondX96 * timeSinceLastUpdate;
-        state.cumlFundingX96 += fundingAccruedX96;
+        int256 fundingAccruedX96 = fundingState.fundingPerSecondX96 * timeSinceLastUpdate;
+        fundingState.cumlFundingX96 += fundingAccruedX96;
 
         // cumlFundingDivSqrtPX96 update = funding accrued / √markPrice
-        state.cumlFundingDivSqrtPX96 += fundingAccruedX96.fullMulDivSigned(INT_Q96, sqrtPriceX96);
+        fundingState.cumlFundingDivSqrtPX96 += fundingAccruedX96.fullMulDivSigned(INT_Q96, sqrtPriceX96);
     }
 
     /// @notice Updates the funding per second value to account for new twAvgMarkX96 and twAvgIndexX96
     /// @dev This should be called after prices change and after updateCumlFunding() is called
-    /// @param perp The perp to update the funding per second for
-    /// @param blockTimestamp The current block timestamp truncated to uint32
+    /// @param perp The perp state to access twAvgState and fundingState from
+    /// @param beacon The perp's beacon address
     /// @param sqrtPriceX96 The current sqrt price
     /// @return premiumPerSecondX96 The new funding per second value
-    function updateFundingPerSecond(IPerpManager.Perp storage perp, uint32 blockTimestamp, uint160 sqrtPriceX96)
+    function updateFundingPerSecond(Mgr.PerpState storage perp, address beacon, uint160 sqrtPriceX96)
         internal
         returns (int256 premiumPerSecondX96)
     {
         // get time weighted average of sqrt mark price & square it to get mark TWAP
-        uint256 twAvgSqrtMarkX96 = perp.twAvgState.timeWeightedAvg(perp.twAvgWindow, blockTimestamp, sqrtPriceX96);
+        uint256 twAvgSqrtMarkX96 = perp.twAvgState.timeWeightedAvg(TWAVG_WINDOW, uint32(block.timestamp), sqrtPriceX96);
         uint256 twAvgMarkX96 = twAvgSqrtMarkX96.fullMulDiv(twAvgSqrtMarkX96, UINT_Q96);
 
         // call beacon to get index TWAP
-        uint256 twAvgIndexX96 = ITimeWeightedAvg(perp.beacon).timeWeightedAvg(perp.twAvgWindow);
+        uint256 twAvgIndexX96 = ITimeWeightedAvg(beacon).timeWeightedAvg(TWAVG_WINDOW);
 
         // the amount paid (or received) due to funding per interval is (mark TWAP - index TWAP)
         // if positive (mark > index), longs pay shorts to incentivize downwards price movement towards index
@@ -245,7 +245,7 @@ library Funding {
     /// @param makerPos Details specific to the maker position
     /// @param currentTick The perp's current tick
     /// @return funding The funding component for the maker position
-    function makerInventoryFunding(State storage state, IPerpManager.MakerDetails memory makerPos, int24 currentTick)
+    function makerInventoryFunding(State storage state, Mgr.MakerDetails memory makerPos, int24 currentTick)
         internal
         view
         returns (int256)
@@ -295,7 +295,7 @@ library Funding {
     /// @param pos The position to calculate funding for
     /// @param currentTick The perp's current tick
     /// @return payment The funding payment of the position
-    function funding(State storage state, IPerpManager.Position memory pos, int24 currentTick)
+    function funding(State storage state, Mgr.Position memory pos, int24 currentTick)
         internal
         view
         returns (int256 payment)

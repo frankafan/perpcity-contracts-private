@@ -5,6 +5,10 @@ import {Funding} from "../libraries/Funding.sol";
 import {TimeWeightedAvg} from "../libraries/TimeWeightedAvg.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {IFees} from "./modules/IFees.sol";
+import {IMarginRatios} from "./modules/IMarginRatios.sol";
+import {ILockupPeriod} from "./modules/ILockupPeriod.sol";
+import {ISqrtPriceImpactLimit} from "./modules/ISqrtPriceImpactLimit.sol";
 
 /// @title IPerpManager
 /// @notice Interface for the PerpManager contract
@@ -12,36 +16,28 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 interface IPerpManager {
     /* STRUCTS */
 
-    /// @notice A struct containing data that defines a perp and it's state
-    struct Perp {
-        address vault;
-        uint24 creatorFee;
-        uint24 insuranceFee;
-        uint24 liquidationFee;
-        uint24 liquidatorFeeSplit;
-        address beacon;
-        uint24 minOpeningMargin;
-        uint24 minMakerOpeningMarginRatio;
-        uint24 maxMakerOpeningMarginRatio;
-        uint24 makerLiquidationMarginRatio;
-        address creator;
-        uint24 minTakerOpeningMarginRatio;
-        uint24 maxTakerOpeningMarginRatio;
-        uint24 takerLiquidationMarginRatio;
-        uint128 nextPosId;
-        uint32 creationTimestamp;
-        uint32 makerLockupPeriod;
-        uint32 twAvgWindow;
-        uint256 sqrtPriceLowerMultiX96;
-        uint256 sqrtPriceUpperMultiX96;
-        uint256 badDebtGrowth;
-        uint128 insurance;
-        uint128 takerOpenInterest;
+    struct PerpConfig {
         PoolKey key;
+        address creator;
+        address vault;
+        address beacon;
+        IFees fees;
+        IMarginRatios marginRatios;
+        ILockupPeriod lockupPeriod;
+        ISqrtPriceImpactLimit sqrtPriceImpactLimit;
+    }
+
+    struct PerpState {
         TimeWeightedAvg.State twAvgState;
         Funding.State fundingState;
         mapping(uint128 => Position) positions;
+        uint128 nextPosId;
+        uint128 badDebtGrowthX96;
+        uint128 insurance;
+        uint128 takerOpenInterest;
     }
+
+    // min margin & tw avg window hardcoded
 
     struct Position {
         address holder;
@@ -49,7 +45,8 @@ interface IPerpManager {
         int256 entryPerpDelta;
         int256 entryUsdDelta;
         int256 entryCumlFundingX96;
-        uint256 entryBadDebtGrowth;
+        uint128 entryBadDebtGrowthX96;
+        uint24 liquidationMarginRatio;
         MakerDetails makerDetails;
     }
 
@@ -64,8 +61,12 @@ interface IPerpManager {
     }
 
     struct CreatePerpParams {
-        uint160 startingSqrtPriceX96;
         address beacon;
+        IFees fees;
+        IMarginRatios marginRatios;
+        ILockupPeriod lockupPeriod;
+        ISqrtPriceImpactLimit sqrtPriceImpactLimit;
+        uint160 startingSqrtPriceX96;
     }
 
     struct OpenMakerPositionParams {
@@ -112,6 +113,10 @@ interface IPerpManager {
         uint256 sqrtPriceX96,
         int256 fundingPerSecX96
     );
+    event FeesModuleRegistered(IFees feesModule);
+    event MarginRatiosModuleRegistered(IMarginRatios marginRatiosModule);
+    event LockupPeriodModuleRegistered(ILockupPeriod lockupPeriodModule);
+    event SqrtPriceImpactLimitModuleRegistered(ISqrtPriceImpactLimit sqrtPriceImpactLimitModule);
 
     /* ERRORS */
 
@@ -122,4 +127,9 @@ interface IPerpManager {
     error PositionLocked();
     error ZeroDeltaPosition();
     error InvalidMarginRatio(uint256 marginRatio, uint256 minMarginRatio, uint256 maxMarginRatio);
+    error FeesNotRegistered();
+    error MarginRatiosNotRegistered();
+    error LockupPeriodNotRegistered();
+    error SqrtPriceImpactLimitNotRegistered();
+    error ModuleAlreadyRegistered();
 }

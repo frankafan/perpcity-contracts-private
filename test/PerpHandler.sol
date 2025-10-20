@@ -88,12 +88,6 @@ contract PerpHandler is Test {
 
         startingSqrtPriceX96 = uint160(bound(startingSqrtPriceX96, minStartingSqrtPriceX96, maxStartingSqrtPriceX96));
 
-        IPerpManager.CreatePerpParams memory params =
-            IPerpManager.CreatePerpParams({startingSqrtPriceX96: startingSqrtPriceX96, beacon: address(beacon)});
-
-        PoolId perpId = perpManager.createPerp(params);
-        perps.push(perpId);
-
         vm.stopPrank();
 
         skipTime(secondsToSkip);
@@ -118,7 +112,8 @@ contract PerpHandler is Test {
 
         vm.startPrank(actor);
 
-        int24 tickSpacing = perpManager.tickSpacing(perpId);
+        (PoolKey memory key,,,,,,,) = perpManager.perpConfigs(perpId);
+        int24 tickSpacing = key.tickSpacing;
 
         int24 MAX_TICK = TickMath.maxUsableTick(tickSpacing);
 
