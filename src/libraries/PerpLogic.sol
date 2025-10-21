@@ -88,7 +88,7 @@ library PerpLogic {
     /// @param revertChanges Whether to revert the changes (and thus not change state)
     /// @return posId The ID of the opened position
     /// @return pos The details of the opened position
-    function openPosition(
+    function openPos(
         Mgr.PerpConfig calldata perpConfig,
         Mgr.PerpState storage perpState,
         IPoolManager poolManager,
