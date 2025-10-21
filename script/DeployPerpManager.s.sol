@@ -5,17 +5,11 @@ import {PerpManager} from "../src/PerpManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Script, console2} from "forge-std/Script.sol";
 
-/// @title DeployPerpManager
-/// @notice Deploys the PerpManager contract as a Uniswap V4 hook
 contract DeployPerpManager is Script {
-    /// @notice The address of the PoolManager contract
-    IPoolManager public constant POOL_MANAGER = IPoolManager(0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408);
-    /// @notice The address of the USDC contract
-    address public constant USDC = 0xC1a5D4E99BB224713dd179eA9CA2Fa6600706210;
-    /// @notice The address of the owner
-    address public constant OWNER = 0x0000000000000000000000000000000000000000;
+    IPoolManager public immutable POOL_MANAGER = IPoolManager(vm.envAddress("POOL_MANAGER"));
+    address public immutable USDC = vm.envAddress("USDC");
+    address public immutable OWNER = vm.envAddress("OWNER");
 
-    /// @notice Deploys PerpManager
     function run() public {
         vm.startBroadcast();
 

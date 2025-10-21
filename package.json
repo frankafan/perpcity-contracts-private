@@ -22,7 +22,7 @@
     "test:halmos": "FOUNDRY_PROFILE=halmos halmos",
     "test:coverage:report": "forge coverage --report lcov && genhtml lcov.info --branch-coverage --output-dir coverage",
     "deploy:perp-manager:base-sepolia": ". .env && forge script script/DeployPerpManager.s.sol:DeployPerpManager --rpc-url $BASE_SEPOLIA_RPC_URL --chain base-sepolia --account devKey --broadcast --verify -vv",
-    "deploy:beacon-registry:base-sepolia": ". .env && forge create src/beacons/BeaconRegistry.sol:BeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --chain base-sepolia --account devKey --broadcast --verify -vv --constructor-args $REGISTRY_OWNER",
+    "deploy:beacon-registry:base-sepolia": ". .env && forge create src/beacons/BeaconRegistry.sol:BeaconRegistry --rpc-url $BASE_SEPOLIA_RPC_URL --chain base-sepolia --account devKey --broadcast --verify -vv --constructor-args $OWNER",
     "deploy:gbm-factory:base-sepolia": ". .env && forge create src/beacons/gbm/EZKLHalo2GBMFactory.sol:EZKLHalo2GBMFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain base-sepolia --account devKey --broadcast --verify -vv",
     "deploy:ownable-factory:base-sepolia": ". .env && forge create src/beacons/ownable/OwnableFactory.sol:OwnableFactory --rpc-url $BASE_SEPOLIA_RPC_URL --chain base-sepolia --account devKey --broadcast --verify -vv"
   },
