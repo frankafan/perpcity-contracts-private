@@ -59,22 +59,21 @@ library PerpLogic {
 
         perpConfigs[perpId] = Mgr.PerpConfig({
             key: key,
+            creator: msg.sender,
             vault: address(new PerpVault(address(this), usdc)),
             beacon: params.beacon,
-            creator: msg.sender,
             fees: params.fees,
             marginRatios: params.marginRatios,
             lockupPeriod: params.lockupPeriod,
             sqrtPriceImpactLimit: params.sqrtPriceImpactLimit
         });
 
-        // start position ids at 1 and initialize the perp's twAvgState with the first observation
+        // start position ids at 1 and initialize the perp's twAvg state with the first observation
         Mgr.PerpState storage perpState = perpStates[perpId];
         perpState.nextPosId = 1;
-        perpState.twAvgState.initialize(uint32(block.timestamp));
+        perpState.twAvg.initialize(uint32(block.timestamp));
 
-        uint256 indexPriceX96 = IBeacon(params.beacon).data();
-        emit Mgr.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96, indexPriceX96);
+        emit Mgr.PerpCreated(perpId, params.beacon, params.startingSqrtPriceX96, IBeacon(params.beacon).data());
     }
 
     /// @notice Opens a new maker or taker position in a perp
@@ -101,15 +100,15 @@ library PerpLogic {
         (uint160 sqrtPriceX96, int24 startTick,,) = poolManager.getSlot0(perpId);
 
         // update cumulative funding trackers based on funding per second at last update and seconds passed since then
-        perpState.fundingState.updateCumlFunding(sqrtPriceX96);
+        perpState.funding.updateCumlFunding(sqrtPriceX96);
 
         posId = perpState.nextPosId;
         perpState.nextPosId++;
 
         // set known position details; cumlFundingX96 & adlGrowth will not change for the remainder of this function
         pos.holder = msg.sender;
-        pos.entryCumlFundingX96 = perpState.fundingState.cumlFundingX96;
-        pos.entryBadDebtGrowthX96 = perpState.badDebtGrowthX96;
+        pos.entryCumlFundingX96 = perpState.funding.cumlFundingX96;
+        pos.entryCumlBadDebtX96 = perpState.cumlBadDebtX96;
 
         uint256 notional;
 
@@ -126,12 +125,12 @@ library PerpLogic {
 
             // check if ticks defining the maker's range are initialized in Uniswap before the liquidity is added
             // if not, initialize them in our funding state using startTick as the current tick
-            if (!poolManager.isTickInitialized(perpId, tickLower)) perpState.fundingState.initTick(tickLower, startTick);
-            if (!poolManager.isTickInitialized(perpId, tickUpper)) perpState.fundingState.initTick(tickUpper, startTick);
+            if (!poolManager.isTickInitialized(perpId, tickLower)) perpState.funding.initTick(tickLower, startTick);
+            if (!poolManager.isTickInitialized(perpId, tickUpper)) perpState.funding.initTick(tickUpper, startTick);
 
             // obtain cumulative funding values in certain ranges at entry time, used to calculate funding owed at close
             (int256 cumlFundingBelowX96, int256 cumlFundingWithinX96, int256 cumlFundingDivSqrtPWithinX96) =
-                perpState.fundingState.cumlFundingRanges(tickLower, tickUpper, startTick);
+                perpState.funding.cumlFundingRanges(tickLower, tickUpper, startTick);
 
             // use provided and calculated values to assign maker-specific details
             pos.makerDetails = Mgr.MakerDetails({
@@ -171,6 +170,9 @@ library PerpLogic {
         } else {
             Mgr.OpenTakerPositionParams memory params = abi.decode(encodedParams, (Mgr.OpenTakerPositionParams));
 
+            // TODO: rm if possible
+            bool isLong = params.isLong;
+
             // notional value before fees = margin * leverage
             notional = params.margin.mulDiv(params.levX96, UINT_Q96);
 
@@ -195,11 +197,11 @@ library PerpLogic {
             // unspecifiedAmountLimit is the max perps sent in (for shorts) or min usd received out (for longs)
             Router.SwapConfig memory config = Router.SwapConfig({
                 poolKey: perpConfig.key,
-                isExactIn: params.isLong,
-                zeroForOne: !params.isLong,
+                isExactIn: isLong,
+                zeroForOne: !isLong,
                 amountSpecified: notional,
                 // calculate the sqrt price at which the swap will stop and only be partially filled
-                sqrtPriceLimitX96: sqrtPriceLimitX96(perpConfig, perpState, sqrtPriceX96, !params.isLong, false),
+                sqrtPriceLimitX96: sqrtPriceLimitX96(perpConfig, perpState, sqrtPriceX96, !isLong, false),
                 unspecifiedAmountLimit: params.unspecifiedAmountLimit
             });
 
@@ -213,14 +215,14 @@ library PerpLogic {
             if (pos.entryPerpDelta == 0 || pos.entryUsdDelta == 0) revert Mgr.ZeroDeltaPosition();
 
             // the pool of taker OI to absorb ADL is larger, so increment tracker to represent this
-            perpState.takerOpenInterest += pos.entryPerpDelta.abs().toUint128();
+            perpState.takerOI += pos.entryPerpDelta.abs().toUint128();
 
             int24 endTick;
             (sqrtPriceX96, endTick,,) = poolManager.getSlot0(perpId);
 
             // after price has moved, replicate crossing the ticks that were crossed in Uniswap in our tick mapping
             // if long, we move upward from startTick to endTick. If short, we move downward from startTick to endTick
-            perpState.fundingState.crossTicks(poolManager, perpId, startTick, endTick, perpConfig.key.tickSpacing, !params.isLong);
+            perpState.funding.crossTicks(poolManager, perpId, startTick, endTick, perpConfig.key.tickSpacing, !isLong);
 
             // after the swap has landed the current tick into some LP range, distribute the calculated LP fee to LPs in
             // this range. Consideration: ranges passed during the middle of the swap are not rewarded
@@ -231,17 +233,20 @@ library PerpLogic {
             if (!revertChanges) usdc.safeTransferFrom(perpConfig.vault, perpConfig.creator, creatorFeeAmt);
         }
 
+        // margin ratio = margin / notional value
         uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notional);
-        (uint24 minRatio, uint24 maxRatio, uint24 liquidationRatio) = perpConfig.marginRatios.marginRatios(perpConfig, isMaker);
-        if (marginRatio < minRatio || marginRatio > maxRatio) revert Mgr.InvalidMarginRatio(marginRatio, minRatio, maxRatio);
-        pos.liquidationMarginRatio = liquidationRatio;
+        (uint24 min, uint24 max, uint24 liq) = perpConfig.marginRatios.marginRatios(perpConfig, isMaker);
+
+        // ensure margin ratio is within bounds. if so, store liquidation margin ratio to check this position against
+        if (marginRatio < min || marginRatio > max) revert Mgr.InvalidMarginRatio(marginRatio, min, max);
+        pos.liquidationMarginRatio = liq;
 
         // disallow low margin amts that may cause potential rounding issues, else store pos in perp positions mapping
         if (pos.margin < MIN_OPENING_MARGIN) revert Mgr.InvalidMargin(pos.margin);
         perpState.positions[posId] = pos;
 
         // write a twAvg observation (time has passed since last update & sqrtPriceX96 has changed if taker pos opened)
-        perpState.twAvgState.write(uint32(block.timestamp), sqrtPriceX96);
+        perpState.twAvg.write(uint32(block.timestamp), sqrtPriceX96);
 
         // fundingPerSec updated after price change & new twAvg observation to capture latest twAvgMark & twAvgIndex
         int256 fundingPerSecX96 = perpState.updateFundingPerSecond(perpConfig.beacon, sqrtPriceX96);
@@ -270,24 +275,24 @@ library PerpLogic {
         if (msg.sender != pos.holder) revert Mgr.InvalidCaller(msg.sender, pos.holder);
         if (params.amtToAdd == 0) revert Mgr.InvalidMargin(params.amtToAdd);
 
-        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpConfig.key.toId());
-
         pos.margin += params.amtToAdd;
 
         // if taker, notional value = (perp amount * price)
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(perpConfig.key.toId());
         uint256 priceX96 = sqrtPriceX96.fullMulDiv(sqrtPriceX96, UINT_Q96);
         uint256 notional = pos.entryPerpDelta.abs().fullMulDiv(priceX96, UINT_Q96);
         // if maker, we need to add value of usd held
-        if (pos.makerDetails.liquidity > 0) notional += pos.entryUsdDelta.abs();
+        bool isMaker = pos.makerDetails.liquidity > 0;
+        if (isMaker) notional += pos.entryUsdDelta.abs();
 
+        // margin ratio = margin / notional value
         uint256 marginRatio = pos.margin.fullMulDiv(SCALE_1E6, notional);
-        (uint24 minRatio, uint24 maxRatio, uint24 liquidationRatio) = perpConfig.marginRatios.marginRatios(perpConfig, pos.makerDetails.liquidity > 0);
-        if (marginRatio < minRatio || marginRatio > maxRatio) revert Mgr.InvalidMarginRatio(marginRatio, minRatio, maxRatio);
-        pos.liquidationMarginRatio = liquidationRatio;
+        (uint24 min, uint24 max,) = perpConfig.marginRatios.marginRatios(perpConfig, isMaker);
+        if (marginRatio < min || marginRatio > max) revert Mgr.InvalidMarginRatio(marginRatio, min, max);
 
         // mark unchanged, but time passed — update cumuls, write a twAvg obs, & refresh funding rate w/ latest twAvgs
-        perpState.fundingState.updateCumlFunding(sqrtPriceX96);
-        perpState.twAvgState.write(uint32(block.timestamp), sqrtPriceX96);
+        perpState.funding.updateCumlFunding(sqrtPriceX96);
+        perpState.twAvg.write(uint32(block.timestamp), sqrtPriceX96);
         perpState.updateFundingPerSecond(perpConfig.beacon, sqrtPriceX96);
 
         usdc.safeTransferFrom(msg.sender, perpConfig.vault, params.amtToAdd);
@@ -319,7 +324,7 @@ library PerpLogic {
         (uint160 sqrtPriceX96, int24 startTick,,) = poolManager.getSlot0(perpId);
 
         // update cumulative funding trackers based on funding per second at last update and seconds passed since then
-        perpState.fundingState.updateCumlFunding(sqrtPriceX96);
+        perpState.funding.updateCumlFunding(sqrtPriceX96);
 
         bytes memory encodedDeltas; // this will be filled in with either a modify liquidity action or swap action
         bool isMaker = pos.makerDetails.liquidity > 0; // takers don't use Position.MakerDetails, so == 0 if taker
@@ -345,8 +350,8 @@ library PerpLogic {
             encodedDeltas = poolManager.executeAction(Router.MODIFY_LIQUIDITY, abi.encode(config));
 
             // clear ticks that were also cleared in corresponding Uniswap pool (they would no longer be initialized)
-            if (!poolManager.isTickInitialized(perpId, makerPos.tickLower)) perpState.fundingState.clear(makerPos.tickLower);
-            if (!poolManager.isTickInitialized(perpId, makerPos.tickUpper)) perpState.fundingState.clear(makerPos.tickUpper);
+            if (!poolManager.isTickInitialized(perpId, makerPos.tickLower)) perpState.funding.clear(makerPos.tickLower);
+            if (!poolManager.isTickInitialized(perpId, makerPos.tickUpper)) perpState.funding.clear(makerPos.tickUpper);
         } else {
             // if entryPerpDelta > 0, perps were taken from the pool on entry & held on (long)
             // if entryPerpDelta < 0, perps were borrowed and sent into the pool on entry & a debt was held (short)
@@ -369,12 +374,12 @@ library PerpLogic {
             encodedDeltas = poolManager.executeAction(Router.SWAP, abi.encode(config));
 
             // this position will no absorb future bad debt costs through ADL (even if it creates bad debt in this tx)
-            perpState.takerOpenInterest -= pos.entryPerpDelta.abs().toUint128();
+            perpState.takerOI -= pos.entryPerpDelta.abs().toUint128();
 
             // cross the same ticks the corresponding Uniswap pool did during the swap
             int24 endTick;
             (sqrtPriceX96, endTick,,) = poolManager.getSlot0(perpId);
-            perpState.fundingState.crossTicks(poolManager, perpId, startTick, endTick, perpConfig.key.tickSpacing, isLong);
+            perpState.funding.crossTicks(poolManager, perpId, startTick, endTick, perpConfig.key.tickSpacing, isLong);
         }
 
         // makers: both deltas >= 0 since tokens were taken out. taker longs: perpDelta < 0 & usdDelta > 0 since perps
@@ -393,14 +398,14 @@ library PerpLogic {
         int256 netPerpDelta = pos.entryPerpDelta + exitPerpDelta;
 
         // the amount paid due to funding accrued since entry; if > 0, holder pays amt; if < 0, amt paid to holder
-        int256 funding = perpState.fundingState.funding(pos, startTick);
+        int256 funding = perpState.funding.payment(pos, startTick);
 
-        // (perp.badDebtGrowth - pos.entryBadDebtGrowth) = amount of bad debt per position size created since entry
+        // (perp.cumlBadDebtX96 - pos.entryCumlBadDebtX96) = amount of bad debt per position size created since entry
         // adl payment = (bad debt per position size * position size); lowest possible payment is 0
-        uint256 adlFee = (perpState.badDebtGrowthX96 - pos.entryBadDebtGrowthX96).mulDiv(pos.entryPerpDelta.abs(), UINT_Q96);
+        uint256 adl = (perpState.cumlBadDebtX96 - pos.entryCumlBadDebtX96).mulDiv(pos.entryPerpDelta.abs(), UINT_Q96);
 
         // settle outstanding usd balance from pool actions, funding accrued since entry and adl payment for bad debt
-        int256 netMargin = int256(pos.margin) + netUsdDelta - funding - int256(adlFee);
+        int256 netMargin = int256(pos.margin) + netUsdDelta - funding - int256(adl);
 
         // we calculate what the liquidation fee would be if this position were to be liquidated since it contributes to
         // the margin ratio calculation (liquidation fee amt = notional * liquidation fee percentage)
@@ -420,14 +425,16 @@ library PerpLogic {
                 badDebt -= perpState.insurance;
                 perpState.insurance = 0;
 
-                // TODO: risk that total taker margin < bad debt, then use makers
+                // TODO: risk that total taker margin < bad debt, then use makers; fix line break when solving
                 // remaining bad debt is paid for by all other open taker positions. this is represented by incrementing
-                // badDebtGrowth by the bad debt created per open position size. When takers close, they have to pay the
+                // cumlBadDebt by the bad debt created per open position size. When takers close, they have to pay the
                 // amount this tracker grew since entry per position size owned
-                if (perpState.takerOpenInterest > 0) perpState.badDebtGrowthX96 += badDebt.mulDiv(UINT_Q96, perpState.takerOpenInterest).toUint128();
+                if (perpState.takerOI > 0) {
+                    perpState.cumlBadDebtX96 += badDebt.mulDiv(UINT_Q96, perpState.takerOI).toUint128();
+                }
             }
 
-            // TODO: incentivize ADL liquidations
+            // TODO: incentivize ADL liquidationss
             // this was a liquidation; there is nothing left to provide liquidator as reward; holder gets nothing back
             (isLiquidation, liquidationFeeAmt, netMargin) = (true, 0, 0);
         } else if (uint256(netMargin) <= liquidationFeeAmt) {
@@ -454,7 +461,7 @@ library PerpLogic {
         }
 
         // time passed and mark may have changed, so write a twAvg observation and update funding rate
-        perpState.twAvgState.write(uint32(block.timestamp), sqrtPriceX96);
+        perpState.twAvg.write(uint32(block.timestamp), sqrtPriceX96);
         int256 fundingPerSecX96 = perpState.updateFundingPerSecond(perpConfig.beacon, sqrtPriceX96);
 
         // TODO: test cases where there is a liquidation (insolvent & solvent) and a partial close such that there's no
@@ -476,12 +483,12 @@ library PerpLogic {
             newPos.entryPerpDelta = netPerpDelta;
             // netPerpDelta was accounted into netMargin, so there is no left over usd balance to settle
             newPos.entryUsdDelta = 0;
-            // this taker position is subject to funding and ADL (accounted through badDebtGrowth) like any other
-            newPos.entryCumlFundingX96 = perpState.fundingState.cumlFundingX96;
-            newPos.entryBadDebtGrowthX96 = perpState.badDebtGrowthX96;
+            // this taker position is subject to funding and ADL (accounted through cumlBadDebtX96) like any other
+            newPos.entryCumlFundingX96 = perpState.funding.cumlFundingX96;
+            newPos.entryCumlBadDebtX96 = perpState.cumlBadDebtX96;
 
             perpState.positions[posId] = newPos;
-            perpState.takerOpenInterest += netPerpDelta.abs().toUint128();
+            perpState.takerOI += netPerpDelta.abs().toUint128();
 
             emit Mgr.PositionOpened(perpId, posId, newPos, sqrtPriceX96, fundingPerSecX96);
         } else {
@@ -504,15 +511,18 @@ library PerpLogic {
     /// @param zeroForOne Whether currency0 is being swapped in for currency1 (if false, currency1 in for currency0 out)
     /// @param isQuoting Whether this is a quote (and thus we should use the max price limit)
     /// @return limit The sqrt price limit for the swap
-    function sqrtPriceLimitX96(Mgr.PerpConfig calldata perpConfig, Mgr.PerpState storage perpState, uint160 sqrtPriceX96, bool zeroForOne, bool isQuoting)
-        internal
-        returns (uint160 limit)
-    {
+    function sqrtPriceLimitX96(
+        Mgr.PerpConfig calldata perpConfig,
+        Mgr.PerpState storage perpState,
+        uint160 sqrtPriceX96,
+        bool zeroForOne,
+        bool isQuoting
+    ) internal returns (uint160 limit) {
         // get the time-weighted average sqrt price of the perp
-        uint256 twAvgSqrtPX96 = perpState.twAvgState.timeWeightedAvg(TWAVG_WINDOW, uint32(block.timestamp), sqrtPriceX96);
+        uint256 twAvgSqrtPX96 = perpState.twAvg.timeWeightedAvg(TWAVG_WINDOW, uint32(block.timestamp), sqrtPriceX96);
         // the sqrt factor used on twAvgSqrtPX96 to get a sqrt price limit is based on swap direction
         // e.g. on a long, 10% higher than current twAvgPrice would have a multiplier of sqrt(1.1) * 2^96
-        uint256 multiplierX96 = perpConfig.sqrtPriceImpactLimit.sqrtPriceImpactLimitX96(perpConfig, zeroForOne);
+        uint256 multiplierX96 = perpConfig.sqrtPriceImpactLimit.sqrtPriceImpactLimit(perpConfig, zeroForOne);
 
         // sqrtPriceLimit = twAvgSqrtPrice * multiplier; e.g. when price is 100$ and there is a 10% allowed upward
         // movement, sqrtPriceLimit = sqrt(1.1) * sqrt(100) = sqrt(110)

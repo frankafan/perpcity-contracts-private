@@ -15,5 +15,7 @@ interface IMarginRatios {
     /// @return minRatio The minimum margin ratio
     /// @return maxRatio The maximum margin ratio
     /// @return liqRatio The margin ratio at which the position is liquidatable
-    function marginRatios(IPerpManager.PerpConfig calldata perp, bool isMaker) external returns (uint24 minRatio, uint24 maxRatio, uint24 liqRatio);
+    function marginRatios(IPerpManager.PerpConfig calldata perp, bool isMaker)
+        external
+        returns (uint24 minRatio, uint24 maxRatio, uint24 liqRatio);
 }

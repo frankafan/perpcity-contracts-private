@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {ISqrtPriceImpactLimit} from "../interfaces/modules/ISqrtPriceImpactLimit.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
+import {ISqrtPriceImpactLimit} from "../interfaces/modules/ISqrtPriceImpactLimit.sol";
 
 /// @title SqrtPriceImpactLimit
 /// @notice A basic implementation of a sqrt price impact limit module
@@ -17,7 +17,7 @@ contract SqrtPriceImpactLimit is ISqrtPriceImpactLimit {
     /* FUNCTIONS */
 
     /// @inheritdoc ISqrtPriceImpactLimit
-    function sqrtPriceImpactLimitX96(IPerpManager.PerpConfig calldata, bool zfo) external pure returns (uint256) {
+    function sqrtPriceImpactLimit(IPerpManager.PerpConfig calldata, bool zfo) external pure returns (uint256) {
         return zfo ? SQRT_PRICE_LOWER_MULTI_X96 : SQRT_PRICE_UPPER_MULTI_X96;
     }
 }

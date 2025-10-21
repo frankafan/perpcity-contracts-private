@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {ILockupPeriod} from "../interfaces/modules/ILockupPeriod.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
+import {ILockupPeriod} from "../interfaces/modules/ILockupPeriod.sol";
 
 /// @title Lockup
 /// @notice A basic implementation of a lockup period module

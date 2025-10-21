@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
-import {IFees} from "../interfaces/modules/IFees.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
+import {IFees} from "../interfaces/modules/IFees.sol";
 
 /// @title Fees
 /// @notice A basic implementation of a fees module

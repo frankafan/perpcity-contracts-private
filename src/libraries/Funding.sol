@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
 import {ITimeWeightedAvg} from "../interfaces/ITimeWeightedAvg.sol";
-import {INT_Q96, UINT_Q96, TWAVG_WINDOW, FUNDING_INTERVAL} from "./Constants.sol";
+import {FUNDING_INTERVAL, INT_Q96, TWAVG_WINDOW, UINT_Q96} from "./Constants.sol";
 import {SignedMath} from "./SignedMath.sol";
 import {TimeWeightedAvg} from "./TimeWeightedAvg.sol";
 import {UniV4Router} from "./UniV4Router.sol";
@@ -85,16 +85,16 @@ library Funding {
 
     /// @notice Updates the funding per second value to account for new twAvgMarkX96 and twAvgIndexX96
     /// @dev This should be called after prices change and after updateCumlFunding() is called
-    /// @param perp The perp state to access twAvgState and fundingState from
+    /// @param perpState The perp state to access twAvg and funding states from
     /// @param beacon The perp's beacon address
     /// @param sqrtPriceX96 The current sqrt price
     /// @return premiumPerSecondX96 The new funding per second value
-    function updateFundingPerSecond(Mgr.PerpState storage perp, address beacon, uint160 sqrtPriceX96)
+    function updateFundingPerSecond(Mgr.PerpState storage perpState, address beacon, uint160 sqrtPriceX96)
         internal
         returns (int256 premiumPerSecondX96)
     {
         // get time weighted average of sqrt mark price & square it to get mark TWAP
-        uint256 twAvgSqrtMarkX96 = perp.twAvgState.timeWeightedAvg(TWAVG_WINDOW, uint32(block.timestamp), sqrtPriceX96);
+        uint256 twAvgSqrtMarkX96 = perpState.twAvg.timeWeightedAvg(TWAVG_WINDOW, uint32(block.timestamp), sqrtPriceX96);
         uint256 twAvgMarkX96 = twAvgSqrtMarkX96.fullMulDiv(twAvgSqrtMarkX96, UINT_Q96);
 
         // call beacon to get index TWAP
@@ -107,7 +107,7 @@ library Funding {
 
         // funding per second is (funding per interval / seconds in an interval)
         premiumPerSecondX96 = fundingPerIntervalX96 / FUNDING_INTERVAL;
-        perp.fundingState.fundingPerSecondX96 = premiumPerSecondX96;
+        perpState.funding.fundingPerSecondX96 = premiumPerSecondX96;
     }
 
     /// @notice Initializes a specified tick in State.ticks
@@ -295,16 +295,13 @@ library Funding {
     /// @param pos The position to calculate funding for
     /// @param currentTick The perp's current tick
     /// @return payment The funding payment of the position
-    function funding(State storage state, Mgr.Position memory pos, int24 currentTick)
-        internal
-        view
-        returns (int256 payment)
-    {
+    function payment(State storage state, Mgr.Position memory pos, int24 currentTick) internal view returns (int256) {
         // the base funding payment is the position size * funding accrued per perp since entry. Perp delta is negative
         // if short, so payment's signage is corrected. Maker perp delta will always be <=0 since perps are sent in
-        payment = pos.entryPerpDelta.fullMulDivSigned(state.cumlFundingX96 - pos.entryCumlFundingX96, UINT_Q96);
+        int256 funding = pos.entryPerpDelta.fullMulDivSigned(state.cumlFundingX96 - pos.entryCumlFundingX96, UINT_Q96);
         // if maker, we calculate funding using the amount of perps sent / received over time as position size
         // i.e. (funding for a maker's remaining inventory over time - funding for starting inventory (payment is <= 0))
-        if (pos.makerDetails.liquidity > 0) payment += makerInventoryFunding(state, pos.makerDetails, currentTick);
+        if (pos.makerDetails.liquidity > 0) funding += makerInventoryFunding(state, pos.makerDetails, currentTick);
+        return funding;
     }
 }

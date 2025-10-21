@@ -3,18 +3,20 @@ pragma solidity 0.8.30;
 
 import {UnlockCallback} from "./UnlockCallback.sol";
 import {IPerpManager} from "./interfaces/IPerpManager.sol";
+
+import {IFees} from "./interfaces/modules/IFees.sol";
+
+import {ILockupPeriod} from "./interfaces/modules/ILockupPeriod.sol";
+import {IMarginRatios} from "./interfaces/modules/IMarginRatios.sol";
+import {ISqrtPriceImpactLimit} from "./interfaces/modules/ISqrtPriceImpactLimit.sol";
 import {PerpLogic} from "./libraries/PerpLogic.sol";
 import {Quoter} from "./libraries/Quoter.sol";
 import {TimeWeightedAvg} from "./libraries/TimeWeightedAvg.sol";
+import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {IFees} from "./interfaces/modules/IFees.sol";
-import {IMarginRatios} from "./interfaces/modules/IMarginRatios.sol";
-import {ILockupPeriod} from "./interfaces/modules/ILockupPeriod.sol";
-import {ISqrtPriceImpactLimit} from "./interfaces/modules/ISqrtPriceImpactLimit.sol";
-import {Ownable} from "@solady/src/auth/Ownable.sol";
 
 /// @title PerpManager
 /// @notice Manages state for all perps
@@ -74,7 +76,8 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     /// @return posId The ID of the new maker position
     function openMakerPos(PoolId perpId, OpenMakerPositionParams calldata params) external returns (uint128 posId) {
         // TODO: fix break when POOL_MANAGER & USDC moved into constants
-        (posId,) = PerpLogic.openPos(configs[perpId], states[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
+        (posId,) =
+            PerpLogic.openPos(configs[perpId], states[perpId], POOL_MANAGER, USDC, abi.encode(params), true, false);
     }
 
     /// @notice Opens a taker position
@@ -83,7 +86,8 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     /// @return posId The ID of the new taker position
     function openTakerPos(PoolId perpId, OpenTakerPositionParams calldata params) external returns (uint128 posId) {
         // TODO: fix break when POOL_MANAGER & USDC moved into constants
-        (posId,) = PerpLogic.openPos(configs[perpId], states[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
+        (posId,) =
+            PerpLogic.openPos(configs[perpId], states[perpId], POOL_MANAGER, USDC, abi.encode(params), false, false);
     }
 
     /// @notice Adds margin to an open position
@@ -105,7 +109,7 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     /// @param perpId The ID of the perp to increase the cardinality cap for
     /// @param cardinalityCap The new cardinality cap
     function increaseCardinalityCap(PoolId perpId, uint16 cardinalityCap) external {
-        TimeWeightedAvg.increaseCardinalityCap(states[perpId].twAvgState, cardinalityCap);
+        TimeWeightedAvg.increaseCardinalityCap(states[perpId].twAvg, cardinalityCap);
     }
 
     /* MODULE FUNCTIONS */
@@ -151,7 +155,7 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     function timeWeightedAvgSqrtPriceX96(PoolId perpId, uint32 lookbackWindow) external view returns (uint256 twAvg) {
         (uint160 sqrtPrice,,,) = StateLibrary.getSlot0(POOL_MANAGER, perpId);
         return TimeWeightedAvg.timeWeightedAvg(
-            states[perpId].twAvgState, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
+            states[perpId].twAvg, lookbackWindow, SafeCastLib.toUint32(block.timestamp), sqrtPrice
         );
     }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.30;
 
+import {IPerpManager as Mgr} from "../interfaces/IPerpManager.sol";
 import {IMarginRatios} from "../interfaces/modules/IMarginRatios.sol";
-import {IPerpManager} from "../interfaces/IPerpManager.sol";
 
 /// @title MarginRatios
 /// @notice A basic implementation of a margin ratios module
@@ -26,7 +26,7 @@ contract MarginRatios is IMarginRatios {
     /* FUNCTIONS */
 
     /// @inheritdoc IMarginRatios
-    function marginRatios(IPerpManager.PerpConfig calldata, bool maker) external pure returns (uint24, uint24, uint24) {
+    function marginRatios(Mgr.PerpConfig calldata, bool maker) external pure returns (uint24, uint24, uint24) {
         if (maker) return (MIN_MAKER_RATIO, MAX_MAKER_RATIO, LIQUIDATION_MAKER_RATIO);
         else return (MIN_TAKER_RATIO, MAX_TAKER_RATIO, LIQUIDATION_TAKER_RATIO);
     }

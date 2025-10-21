@@ -5,9 +5,19 @@ import {PerpManager} from "../src/PerpManager.sol";
 import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
+
+import {IFees} from "../src/interfaces/modules/IFees.sol";
+
+import {ILockupPeriod} from "../src/interfaces/modules/ILockupPeriod.sol";
+import {IMarginRatios} from "../src/interfaces/modules/IMarginRatios.sol";
+import {ISqrtPriceImpactLimit} from "../src/interfaces/modules/ISqrtPriceImpactLimit.sol";
 import {SCALE_1E6, UINT_Q96} from "../src/libraries/Constants.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {Quoter} from "../src/libraries/Quoter.sol";
+import {Fees} from "../src/modules/Fees.sol";
+import {Lockup} from "../src/modules/Lockup.sol";
+import {MarginRatios} from "../src/modules/MarginRatios.sol";
+import {SqrtPriceImpactLimit} from "../src/modules/SqrtPriceImpactLimit.sol";
 import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -19,14 +29,6 @@ import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol
 import {console2} from "forge-std/console2.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {Fees} from "../src/modules/Fees.sol";
-import {MarginRatios} from "../src/modules/MarginRatios.sol";
-import {Lockup} from "../src/modules/Lockup.sol";
-import {SqrtPriceImpactLimit} from "../src/modules/SqrtPriceImpactLimit.sol";
-import {IFees} from "../src/interfaces/modules/IFees.sol";
-import {IMarginRatios} from "../src/interfaces/modules/IMarginRatios.sol";
-import {ILockupPeriod} from "../src/interfaces/modules/ILockupPeriod.sol";
-import {ISqrtPriceImpactLimit} from "../src/interfaces/modules/ISqrtPriceImpactLimit.sol";
 
 contract PerpManagerTest is DeployPoolManager {
     using SafeTransferLib for address;
@@ -81,7 +83,7 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        (PoolKey memory key,,,,,,,) = perpManager.perpConfigs(perpId);
+        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
         int24 tickSpacing = key.tickSpacing;
         uint256 sqrtMarkPrice;
         uint256 markPriceX96;
@@ -118,7 +120,7 @@ contract PerpManagerTest is DeployPoolManager {
         deal(usdc, maker1, maker1Margin);
         usdc.safeApprove(address(perpManager), maker1Margin);
 
-        uint128 maker1PosId = perpManager.openMakerPosition(
+        uint128 maker1PosId = perpManager.openMakerPos(
             perpId,
             IPerpManager.OpenMakerPositionParams({
                 margin: maker1Margin,
@@ -164,7 +166,7 @@ contract PerpManagerTest is DeployPoolManager {
         deal(usdc, maker2, maker2Margin);
         usdc.safeApprove(address(perpManager), maker2Margin);
 
-        uint128 maker2PosId = perpManager.openMakerPosition(
+        uint128 maker2PosId = perpManager.openMakerPos(
             perpId,
             IPerpManager.OpenMakerPositionParams({
                 margin: maker2Margin,
@@ -202,7 +204,7 @@ contract PerpManagerTest is DeployPoolManager {
         deal(usdc, taker1, taker1Margin);
         usdc.safeApprove(address(perpManager), taker1Margin);
 
-        uint128 taker1PosId = perpManager.openTakerPosition(
+        uint128 taker1PosId = perpManager.openTakerPos(
             perpId,
             IPerpManager.OpenTakerPositionParams({
                 isLong: true,
@@ -238,7 +240,7 @@ contract PerpManagerTest is DeployPoolManager {
         deal(usdc, taker2, taker2Margin);
         usdc.safeApprove(address(perpManager), taker2Margin);
 
-        uint128 taker2PosId = perpManager.openTakerPosition(
+        uint128 taker2PosId = perpManager.openTakerPos(
             perpId,
             IPerpManager.OpenTakerPositionParams({
                 isLong: false,

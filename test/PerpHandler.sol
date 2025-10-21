@@ -112,7 +112,7 @@ contract PerpHandler is Test {
 
         vm.startPrank(actor);
 
-        (PoolKey memory key,,,,,,,) = perpManager.perpConfigs(perpId);
+        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
         int24 tickSpacing = key.tickSpacing;
 
         int24 MAX_TICK = TickMath.maxUsableTick(tickSpacing);
@@ -166,7 +166,7 @@ contract PerpHandler is Test {
 
         deal(usdc, actor, margin);
         usdc.safeApprove(address(perpManager), margin);
-        uint128 makerPosId = perpManager.openMakerPosition(perpId, params);
+        uint128 makerPosId = perpManager.openMakerPos(perpId, params);
         makerPositions[perpId].push(makerPosId);
 
         // IPerpManager.Position memory makerPos = perpManager.getMakerPosition(perpId, makerPosId);

@@ -3,16 +3,18 @@ pragma solidity 0.8.30;
 
 import {Funding} from "../libraries/Funding.sol";
 import {TimeWeightedAvg} from "../libraries/TimeWeightedAvg.sol";
+
+import {IFees} from "./modules/IFees.sol";
+
+import {ILockupPeriod} from "./modules/ILockupPeriod.sol";
+import {IMarginRatios} from "./modules/IMarginRatios.sol";
+import {ISqrtPriceImpactLimit} from "./modules/ISqrtPriceImpactLimit.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {IFees} from "./modules/IFees.sol";
-import {IMarginRatios} from "./modules/IMarginRatios.sol";
-import {ILockupPeriod} from "./modules/ILockupPeriod.sol";
-import {ISqrtPriceImpactLimit} from "./modules/ISqrtPriceImpactLimit.sol";
 
 /// @title IPerpManager
 /// @notice Interface for the PerpManager contract
-/// TODO: add comments / fix for modularity
+/// TODO: add comments
 interface IPerpManager {
     /* STRUCTS */
 
@@ -28,16 +30,14 @@ interface IPerpManager {
     }
 
     struct PerpState {
-        TimeWeightedAvg.State twAvgState;
-        Funding.State fundingState;
+        TimeWeightedAvg.State twAvg;
+        Funding.State funding;
         mapping(uint128 => Position) positions;
         uint128 nextPosId;
-        uint128 badDebtGrowthX96;
+        uint128 cumlBadDebtX96;
         uint128 insurance;
-        uint128 takerOpenInterest;
+        uint128 takerOI;
     }
-
-    // min margin & tw avg window hardcoded
 
     struct Position {
         address holder;
@@ -45,7 +45,7 @@ interface IPerpManager {
         int256 entryPerpDelta;
         int256 entryUsdDelta;
         int256 entryCumlFundingX96;
-        uint128 entryBadDebtGrowthX96;
+        uint128 entryCumlBadDebtX96;
         uint24 liquidationMarginRatio;
         MakerDetails makerDetails;
     }
