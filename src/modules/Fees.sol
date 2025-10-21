@@ -4,17 +4,29 @@ pragma solidity 0.8.30;
 import {IFees} from "../interfaces/modules/IFees.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
 
+/// @title Fees
+/// @notice A basic implementation of a fees module
 contract Fees is IFees {
-    uint24 public constant CREATOR_FEE = 0.0001e6; // 0.01%
-    uint24 public constant INSURANCE_FEE = 0.001e6; // 0.1%
-    uint24 public constant LP_FEE = 0.01e6; // 1%
-    uint24 public constant LIQUIDATION_FEE = 0.01e6; // 1%
+    /* CONSTANTS */
 
-    function fees(IPerpManager.PerpConfig calldata perp) external returns (uint24 creatorFee, uint24 insuranceFee, uint24 lpFee) {
+    /// @notice The creator fee, equivalent to 0.01%
+    uint24 public constant CREATOR_FEE = 0.0001e6;
+    /// @notice The insurance fee, equivalent to 0.1%
+    uint24 public constant INSURANCE_FEE = 0.001e6;
+    /// @notice The liquidity provider fee, equivalent to 1%
+    uint24 public constant LP_FEE = 0.01e6;
+    /// @notice The liquidation fee, equivalent to 1%
+    uint24 public constant LIQUIDATION_FEE = 0.01e6;
+
+    /* FUNCTIONS */
+
+    /// @inheritdoc IFees
+    function fees(IPerpManager.PerpConfig calldata) external pure returns (uint24, uint24, uint24) {
         return (CREATOR_FEE, INSURANCE_FEE, LP_FEE);
     }
 
-    function liquidationFee(IPerpManager.PerpConfig calldata perp) external returns (uint24) {
+    /// @inheritdoc IFees
+    function liquidationFee(IPerpManager.PerpConfig calldata) external pure returns (uint24) {
         return LIQUIDATION_FEE;
     }
 }

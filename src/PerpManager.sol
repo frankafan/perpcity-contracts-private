@@ -48,6 +48,7 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     /// @dev This inherits UnlockCallback so it can accept callbacks from Uniswap PoolManager
     /// @param poolManager The address of the pool manager
     /// @param usdc The address of the USDC token
+    /// @param owner The address of the owner who can register modules
     constructor(IPoolManager poolManager, address usdc, address owner) UnlockCallback(poolManager) {
         USDC = usdc;
         _initializeOwner(owner);

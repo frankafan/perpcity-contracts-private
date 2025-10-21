@@ -8,5 +8,9 @@ import {IPerpManager} from "../IPerpManager.sol";
 interface ISqrtPriceImpactLimit {
     /* FUNCTIONS */
 
+    /// @notice Returns the sqrt price impact limit for a perp scaled by 2^96
+    /// @param perp The configuration for the perp
+    /// @param zeroForOne Whether the swap is currency0 in for currency1 out or vice versa
+    /// @return sqrtPriceImpactLimitX96 The sqrt price impact limit scaled by 2^96
     function sqrtPriceImpactLimitX96(IPerpManager.PerpConfig calldata perp, bool zeroForOne) external returns (uint256);
 }

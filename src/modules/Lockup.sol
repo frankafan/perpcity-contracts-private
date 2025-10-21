@@ -4,9 +4,18 @@ pragma solidity 0.8.30;
 import {ILockupPeriod} from "../interfaces/modules/ILockupPeriod.sol";
 import {IPerpManager} from "../interfaces/IPerpManager.sol";
 
+/// @title Lockup
+/// @notice A basic implementation of a lockup period module
 contract Lockup is ILockupPeriod {
+    /* CONSTANTS */
+
+    /// @notice The lockup period for new maker positions
     uint32 public constant LOCKUP_PERIOD = 7 days;
-    function lockupPeriod(IPerpManager.PerpConfig calldata perp) external returns (uint32) {
+
+    /* FUNCTIONS */
+
+    /// @inheritdoc ILockupPeriod
+    function lockupPeriod(IPerpManager.PerpConfig calldata) external pure returns (uint32) {
         return LOCKUP_PERIOD;
     }
 }

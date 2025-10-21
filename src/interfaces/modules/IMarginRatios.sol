@@ -8,5 +8,12 @@ import {IPerpManager} from "../IPerpManager.sol";
 interface IMarginRatios {
     /* FUNCTIONS */
 
-    function marginRatios(IPerpManager.PerpConfig calldata perp, bool isMaker) external returns (uint24 minRatio, uint24 maxRatio, uint24 liquidationRatio);
+    /// @notice Returns the margin ratios checked against for maker or taker positions given a perp config
+    /// @dev All margin ratios are scaled by 1e6
+    /// @param perp The configuration for the perp
+    /// @param isMaker Whether the position is a maker. If false, the position is a taker
+    /// @return minRatio The minimum margin ratio
+    /// @return maxRatio The maximum margin ratio
+    /// @return liqRatio The margin ratio at which the position is liquidatable
+    function marginRatios(IPerpManager.PerpConfig calldata perp, bool isMaker) external returns (uint24 minRatio, uint24 maxRatio, uint24 liqRatio);
 }

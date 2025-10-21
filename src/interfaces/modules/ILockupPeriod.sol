@@ -8,5 +8,8 @@ import {IPerpManager} from "../IPerpManager.sol";
 interface ILockupPeriod {
     /* FUNCTIONS */
 
-    function lockupPeriod(IPerpManager.PerpConfig calldata perp) external returns (uint32);
+    /// @notice Returns the lockup period of new maker positions for a perp
+    /// @param perp The configuration for the perp
+    /// @return lockupPeriod The lockup period in seconds
+    function lockupPeriod(IPerpManager.PerpConfig calldata perp) external returns (uint32 lockupPeriod);
 }
