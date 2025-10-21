@@ -16,6 +16,7 @@ contract InvariantTest is Test, DeployPoolManager {
     function setUp() public {
         IPoolManager poolManager = deployPoolManager();
         address usdc = address(new TestnetUSDC());
+        address creator = makeAddr("creator");
 
         // Since PerpManager.sol is a hook, we need to deploy it to an address with the correct flags
         address perpManagerAddress = address(
@@ -23,7 +24,7 @@ contract InvariantTest is Test, DeployPoolManager {
         );
 
         // Add all necessary constructor arguments for PerpManager.sol
-        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), usdc);
+        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), usdc, creator);
 
         // Use StdCheats.deployCodeTo to deploy the PerpManager.sol contract to the flags address
         deployCodeTo("PerpManager.sol:PerpManager", constructorArgs, perpManagerAddress);
