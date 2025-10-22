@@ -85,7 +85,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.warp(blockTimestamp);
 
         // Create perp
-        perpId1 = _createPerp(creator);
+        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
     }
 
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
@@ -113,7 +113,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
                 // Use quoteClosePosition to get effective margin for this position
-                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId1, i);
+                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId1, i); // TODO: write a new invariant to verify quoteClosePosition
                 if (!success) {
                     // XXX: bug if valid position cannot be quoted
                     assert(false);
