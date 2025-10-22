@@ -3,7 +3,29 @@ pragma solidity 0.8.30;
 
 /// @title Mock ERC20 Token for Halmos Testing
 /// @notice Minimal implementation focusing on functions used by PerpManager
-contract ERC20Mock {
+interface IERC20 {
+    /* EVENTS */
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    /* FUNCTIONS */
+
+    function totalSupply() external view returns (uint256);
+
+    function balanceOf(address account) external view returns (uint256);
+
+    function transfer(address to, uint256 value) external returns (bool);
+
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+}
+
+contract ERC20Mock is IERC20 {
     string public name;
     string public symbol;
     uint8 public decimals;
