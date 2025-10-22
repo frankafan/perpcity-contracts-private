@@ -434,7 +434,7 @@ library PerpLogic {
                 }
             }
 
-            // TODO: incentivize ADL liquidationss
+            // TODO: incentivize ADL liquidations
             // this was a liquidation; there is nothing left to provide liquidator as reward; holder gets nothing back
             (isLiquidation, liquidationFeeAmt, netMargin) = (true, 0, 0);
         } else if (uint256(netMargin) <= liquidationFeeAmt) {
