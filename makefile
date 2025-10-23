@@ -24,12 +24,11 @@ test-halmos: clean
 		--print-full-model \
 		--profile-instructions \
 		--no-status \
-		--solver z3 \
+		--solver z3 > $(HALMOS_OUTPUT_DIR)/halmos_test.log
 		# --flamegraph \
 		# --cache-solver \
 		# --ffi \
 		# --symbolic-jump \
-	> $(HALMOS_OUTPUT_DIR)/halmos_test.log
 	@echo "Done."
 	make analyze
 analyze:
