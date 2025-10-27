@@ -127,14 +127,24 @@ contract PerpManagerTest is DeployPoolManager {
         addTakerMargin();
     }
 
-    function testFuzz_CloseMakerPosition() public {
-        vm.skip(true); // skip test
-        closeMakerPosition();
+    function testFuzz_CloseMakerPosition(uint256 margin, int24 tickLower, int24 tickUpper) public {
+        (uint128 makerPosId, IPerpManager.Position memory makerPos) = openMakerPosition(margin, tickLower, tickUpper);
+        vm.warp(makerPos.makerDetails.unlockTimestamp);
+        closePosition(makerPosId);
+
+        // TODO: add asserts
     }
 
-    function testFuzz_CloseTakerPosition() public {
-        vm.skip(true); // skip test
-        closeTakerPosition();
+    function testFuzz_CloseTakerPosition(uint24 marginRatio, uint256 notional, bool isLong) public {
+        int24 tickLower = TickMath.getTickAtSqrtPrice(SQRT_1_X96);
+        int24 tickUpper = TickMath.getTickAtSqrtPrice(SQRT_100_X96);
+        (, IPerpManager.Position memory makerPos) = openMakerPosition(MAX_OPENING_MARGIN, tickLower, tickUpper);
+
+        (uint128 takerPosId,) = openTakerPosition(marginRatio, notional, isLong);
+        vm.warp(makerPos.makerDetails.unlockTimestamp);
+        closePosition(takerPosId);
+
+        // TODO: add asserts
     }
 
     function openMakerPosition(uint256 margin, int24 tickLower, int24 tickUpper)
@@ -290,13 +300,22 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
     }
 
-    function addMakerMargin() public {}
+    function addMakerMargin() internal {}
 
-    function addTakerMargin() public {}
+    function addTakerMargin() internal {}
 
-    function closeMakerPosition() public {}
+    function closePosition(uint128 posId) internal {
+        IPerpManager.Position memory pos = perpManager.position(perpId, posId);
 
-    function closeTakerPosition() public {}
+        vm.startPrank(pos.holder);
+
+        perpManager.closePosition(
+            perpId,
+            IPerpManager.ClosePositionParams({posId: posId, minAmt0Out: 0, minAmt1Out: 0, maxAmt1In: type(uint128).max})
+        );
+
+        vm.stopPrank();
+    }
 
     /* UTILITY FUNCTIONS */
 
