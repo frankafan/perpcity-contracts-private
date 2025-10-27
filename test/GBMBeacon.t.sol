@@ -61,10 +61,6 @@ contract GBMBeaconTest is Test {
             uint256 scaledData = data * 1e6 / UINT_Q96;
             console2.log("MARK: %6e", scaledData);
 
-            // uint256 twap = beacon.getTimeWeightedAvg(600);
-            // uint256 scaledTwap = twap * 1e6 / UINT_Q96;
-            // console2.log("MARK TWAP: %6e", scaledTwap);
-
             // skip 3 minutes
             skip(180);
         }
