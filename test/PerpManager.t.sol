@@ -5,21 +5,18 @@ import {PerpManager} from "../src/PerpManager.sol";
 import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
-import {IFees} from "../src/interfaces/modules/IFees.sol";
-import {ILockupPeriod} from "../src/interfaces/modules/ILockupPeriod.sol";
-import {IMarginRatios} from "../src/interfaces/modules/IMarginRatios.sol";
-import {ISqrtPriceImpactLimit} from "../src/interfaces/modules/ISqrtPriceImpactLimit.sol";
-import {SCALE_1E6, UINT_Q96} from "../src/libraries/Constants.sol";
-import {PerpLogic} from "../src/libraries/PerpLogic.sol";
-import {Quoter} from "../src/libraries/Quoter.sol";
+import {SCALE_1E6} from "../src/libraries/Constants.sol";
+
+import "../src/libraries/Constants.sol";
+import {SignedMath} from "../src/libraries/SignedMath.sol";
 import {Fees} from "../src/modules/Fees.sol";
 import {Lockup} from "../src/modules/Lockup.sol";
 import {MarginRatios} from "../src/modules/MarginRatios.sol";
 import {SqrtPriceImpactLimit} from "../src/modules/SqrtPriceImpactLimit.sol";
 import {DeployPoolManager} from "./utils/DeployPoolManager.sol";
 import {TestnetUSDC} from "./utils/TestnetUSDC.sol";
+import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolId, PoolKey} from "@uniswap/v4-core/src/types/PoolId.sol";
@@ -27,9 +24,6 @@ import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol
 import {console2} from "forge-std/console2.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
-import {SignedMath} from "../src/libraries/SignedMath.sol";
-import "../src/libraries/Constants.sol";
 
 contract PerpManagerTest is DeployPoolManager {
     using SafeCastLib for *;
@@ -91,7 +85,7 @@ contract PerpManagerTest is DeployPoolManager {
             })
         );
 
-        (PoolKey memory key,address creator,address vault,,,,,) = perpManager.configs(perpId);
+        (PoolKey memory key, address creator, address vault,,,,,) = perpManager.configs(perpId);
 
         perpConfig.key = key;
         perpConfig.creator = creator;
@@ -170,8 +164,8 @@ contract PerpManagerTest is DeployPoolManager {
         assertEq(makerPos.entryUsdDelta, -int256(amount1) - 1);
 
         // TODO: change to check these are the same as before opening
-        assertEq(makerPos.entryCumlFundingX96, 0); 
-        assertEq(makerPos.entryCumlBadDebtX96, 0); 
+        assertEq(makerPos.entryCumlFundingX96, 0);
+        assertEq(makerPos.entryCumlBadDebtX96, 0);
 
         // TODO: add liquidation margin ratio assert
 
@@ -236,7 +230,8 @@ contract PerpManagerTest is DeployPoolManager {
 
         /* TAKER POSITION */
 
-        (uint24 minMarginRatio, uint24 maxMarginRatio, uint24 liqMarginRatio) = perpConfig.marginRatios.marginRatios(perpConfig, false);
+        (uint24 minMarginRatio, uint24 maxMarginRatio, uint24 liqMarginRatio) =
+            perpConfig.marginRatios.marginRatios(perpConfig, false);
         console2.log("minMarginRatio: %6e", minMarginRatio);
         console2.log("maxMarginRatio: %6e", maxMarginRatio);
         console2.log("liqMarginRatio: %6e", liqMarginRatio);
@@ -301,6 +296,24 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
     }
 
+    function testFuzz_AddMakerMargin() public {
+        vm.skip(true); // skip test
+    }
+
+    function testFuzz_AddTakerMargin() public {
+        vm.skip(true); // skip test
+    }
+
+    function testFuzz_CloseMakerPosition() public {
+        vm.skip(true); // skip test
+    }
+
+    function testFuzz_CloseTakerPosition() public {
+        vm.skip(true); // skip test
+    }
+
+    /* UTILITY FUNCTIONS */
+
     // this is a workaround via ir caching block.timestamp
     function time() external view returns (uint256) {
         return block.timestamp;
@@ -309,8 +322,8 @@ contract PerpManagerTest is DeployPoolManager {
     function printMarkAndIndex() public view {
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, perpId);
         uint256 priceX96 = FixedPointMathLib.fullMulDiv(sqrtPriceX96, sqrtPriceX96, UINT_Q96);
-        uint256 priceWAD = FixedPointMathLib.mulDiv(priceX96, SCALE_1E6, UINT_Q96);
-        console2.log("Price: %6e", priceWAD);
+        uint256 priceWad = FixedPointMathLib.mulDiv(priceX96, SCALE_1E6, UINT_Q96);
+        console2.log("Price: %6e", priceWad);
 
         uint256 indexPriceX96 = IBeacon(perpConfig.beacon).data();
         console2.log("Index Price: %6e", x96toE6(indexPriceX96));
@@ -332,7 +345,10 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("Liquidity: ", makerPos.makerDetails.liquidity);
         console2.log("Entry Cuml Funding Below: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingBelowX96));
         console2.log("Entry Cuml Funding Within: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingWithinX96));
-        console2.log("Entry Cuml Funding Div Sqrt P Within: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingDivSqrtPWithinX96));
+        console2.log(
+            "Entry Cuml Funding Div Sqrt P Within: %6e",
+            x96toE6(makerPos.makerDetails.entryCumlFundingDivSqrtPWithinX96)
+        );
     }
 
     function printTakerPosition(IPerpManager.Position memory takerPos) public pure {

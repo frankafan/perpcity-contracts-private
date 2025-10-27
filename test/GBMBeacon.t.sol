@@ -15,7 +15,7 @@ contract MockVerifierWrapper is IVerifierWrapper {
         return (true, abi.decode(publicSignals, (uint256)));
     }
 
-    function verifier() external view returns (address) {
+    function verifier() external pure returns (address) {
         return address(0);
     }
 }
