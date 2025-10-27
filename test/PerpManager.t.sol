@@ -6,7 +6,6 @@ import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
 import {IBeacon} from "../src/interfaces/beacons/IBeacon.sol";
 import {SCALE_1E6} from "../src/libraries/Constants.sol";
-
 import "../src/libraries/Constants.sol";
 import {SignedMath} from "../src/libraries/SignedMath.sol";
 import {Fees} from "../src/modules/Fees.sol";
@@ -107,6 +106,41 @@ contract PerpManagerTest is DeployPoolManager {
     }
 
     function testFuzz_OpenMakerPosition(uint256 margin, int24 tickLower, int24 tickUpper) public {
+        openMakerPosition(margin, tickLower, tickUpper);
+    }
+
+    function testFuzz_OpenTakerPosition(uint24 marginRatio, uint256 notional, bool isLong) public {
+        int24 tickLower = TickMath.getTickAtSqrtPrice(SQRT_1_X96);
+        int24 tickUpper = TickMath.getTickAtSqrtPrice(SQRT_100_X96);
+        openMakerPosition(MAX_OPENING_MARGIN, tickLower, tickUpper);
+
+        openTakerPosition(marginRatio, notional, isLong);
+    }
+
+    function testFuzz_AddMakerMargin() public {
+        vm.skip(true); // skip test
+        addMakerMargin();
+    }
+
+    function testFuzz_AddTakerMargin() public {
+        vm.skip(true); // skip test
+        addTakerMargin();
+    }
+
+    function testFuzz_CloseMakerPosition() public {
+        vm.skip(true); // skip test
+        closeMakerPosition();
+    }
+
+    function testFuzz_CloseTakerPosition() public {
+        vm.skip(true); // skip test
+        closeTakerPosition();
+    }
+
+    function openMakerPosition(uint256 margin, int24 tickLower, int24 tickUpper)
+        internal
+        returns (uint128 makerPosId, IPerpManager.Position memory makerPos)
+    {
         margin = bound(margin, MIN_OPENING_MARGIN, MAX_OPENING_MARGIN);
         console2.log("Margin: %6e", margin);
 
@@ -147,12 +181,12 @@ contract PerpManagerTest is DeployPoolManager {
         vm.startPrank(MAKER1);
 
         SafeTransferLib.safeApprove(usdc, address(perpManager), margin);
-        uint128 makerPosId = perpManager.openMakerPos(perpId, params);
+        makerPosId = perpManager.openMakerPos(perpId, params);
 
         vm.stopPrank();
 
         assertGt(makerPosId, 0);
-        IPerpManager.Position memory makerPos = perpManager.position(perpId, makerPosId);
+        makerPos = perpManager.position(perpId, makerPosId);
 
         assertEq(makerPos.holder, MAKER1);
 
@@ -186,50 +220,10 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
     }
 
-    function testFuzz_OpenTakerPosition(uint24 marginRatio, uint256 notional, bool isLong) public {
-        /* MAKER POSITION */
-
-        uint128 makerMargin = MAX_OPENING_MARGIN;
-        console2.log("Maker Margin: %6e", makerMargin);
-
-        int24 tickLower = TickMath.getTickAtSqrtPrice(SQRT_1_X96);
-        int24 tickUpper = TickMath.getTickAtSqrtPrice(SQRT_100_X96);
-
-        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
-        int24 tickSpacing = key.tickSpacing;
-        tickLower = (tickLower / tickSpacing) * tickSpacing - tickSpacing;
-        tickUpper = (tickUpper / tickSpacing) * tickSpacing + tickSpacing;
-        console2.log("Maker Tick Lower: ", tickLower);
-        console2.log("Maker Tick Upper: ", tickUpper);
-
-        uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(
-            TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), makerMargin
-        );
-        console2.log("Maker Liquidity: ", liquidity);
-
-        IPerpManager.OpenMakerPositionParams memory makerParams = IPerpManager.OpenMakerPositionParams({
-            margin: makerMargin,
-            liquidity: liquidity,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            maxAmt0In: type(uint128).max,
-            maxAmt1In: type(uint128).max
-        });
-
-        deal(usdc, MAKER1, makerMargin);
-
-        vm.startPrank(MAKER1);
-
-        SafeTransferLib.safeApprove(usdc, address(perpManager), makerMargin);
-        uint128 makerPosId = perpManager.openMakerPos(perpId, makerParams);
-
-        vm.stopPrank();
-
-        console2.log("Maker Position ", makerPosId);
-        console2.log();
-
-        /* TAKER POSITION */
-
+    function openTakerPosition(uint24 marginRatio, uint256 notional, bool isLong)
+        internal
+        returns (uint128 takerPosId, IPerpManager.Position memory takerPos)
+    {
         (uint24 minMarginRatio, uint24 maxMarginRatio, uint24 liqMarginRatio) =
             perpConfig.marginRatios.marginRatios(perpConfig, false);
         console2.log("minMarginRatio: %6e", minMarginRatio);
@@ -259,12 +253,12 @@ contract PerpManagerTest is DeployPoolManager {
         vm.startPrank(TAKER1);
 
         SafeTransferLib.safeApprove(usdc, address(perpManager), margin);
-        uint128 takerPosId = perpManager.openTakerPos(perpId, takerParams);
+        takerPosId = perpManager.openTakerPos(perpId, takerParams);
 
         vm.stopPrank();
 
-        assertGt(takerPosId, makerPosId);
-        IPerpManager.Position memory takerPos = perpManager.position(perpId, takerPosId);
+        assertGt(takerPosId, 0);
+        takerPos = perpManager.position(perpId, takerPosId);
 
         assertEq(takerPos.holder, TAKER1);
 
@@ -296,21 +290,13 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
     }
 
-    function testFuzz_AddMakerMargin() public {
-        vm.skip(true); // skip test
-    }
+    function addMakerMargin() public {}
 
-    function testFuzz_AddTakerMargin() public {
-        vm.skip(true); // skip test
-    }
+    function addTakerMargin() public {}
 
-    function testFuzz_CloseMakerPosition() public {
-        vm.skip(true); // skip test
-    }
+    function closeMakerPosition() public {}
 
-    function testFuzz_CloseTakerPosition() public {
-        vm.skip(true); // skip test
-    }
+    function closeTakerPosition() public {}
 
     /* UTILITY FUNCTIONS */
 
@@ -319,7 +305,7 @@ contract PerpManagerTest is DeployPoolManager {
         return block.timestamp;
     }
 
-    function printMarkAndIndex() public view {
+    function printMarkAndIndex() internal view {
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, perpId);
         uint256 priceX96 = FixedPointMathLib.fullMulDiv(sqrtPriceX96, sqrtPriceX96, UINT_Q96);
         uint256 priceWad = FixedPointMathLib.mulDiv(priceX96, SCALE_1E6, UINT_Q96);
@@ -329,15 +315,15 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("Index Price: %6e", x96toE6(indexPriceX96));
     }
 
-    function x96toE6(uint256 x96) public pure returns (uint256) {
+    function x96toE6(uint256 x96) internal pure returns (uint256) {
         return FixedPointMathLib.mulDiv(x96, SCALE_1E6, UINT_Q96);
     }
 
-    function x96toE6(int256 x96) public pure returns (int256) {
+    function x96toE6(int256 x96) internal pure returns (int256) {
         return SignedMath.fullMulDivSigned(x96, SCALE_1E6.toInt256(), UINT_Q96);
     }
 
-    function printMakerPosition(IPerpManager.Position memory makerPos) public pure {
+    function printMakerPosition(IPerpManager.Position memory makerPos) internal pure {
         printTakerPosition(makerPos);
         console2.log("Unlock Timestamp: ", makerPos.makerDetails.unlockTimestamp);
         console2.log("Tick Lower: ", makerPos.makerDetails.tickLower);
@@ -351,7 +337,7 @@ contract PerpManagerTest is DeployPoolManager {
         );
     }
 
-    function printTakerPosition(IPerpManager.Position memory takerPos) public pure {
+    function printTakerPosition(IPerpManager.Position memory takerPos) internal pure {
         console2.log("Holder: ", takerPos.holder);
         console2.log("Margin: %6e", takerPos.margin);
         console2.log("Entry Perp Delta: %6e", takerPos.entryPerpDelta);
