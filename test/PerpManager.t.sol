@@ -33,6 +33,7 @@ import "../src/libraries/Constants.sol";
 
 contract PerpManagerTest is DeployPoolManager {
     using SafeCastLib for *;
+    using FixedPointMathLib for *;
 
     uint256 public constant NUM_50_X96 = 3961408125713216879677197516800;
 
@@ -45,7 +46,9 @@ contract PerpManagerTest is DeployPoolManager {
     uint160 public constant SQRT_100_X96 = 792281625142643375935439503360;
 
     uint16 public constant INITIAL_CARDINALITY_CAP = 50;
-    uint256 public constant MAX_OPENING_MARGIN = 1000e6;
+    uint128 public constant MAX_OPENING_MARGIN = 1000e6;
+    uint256 public constant MIN_NOTIONAL_TAKER_VALUE = 12e6;
+    uint256 public constant MAX_NOTIONAL_TAKER_VALUE = 200e6;
 
     address public immutable OWNER = makeAddr("owner");
     address public immutable MAKER1 = makeAddr("maker1");
@@ -114,12 +117,11 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("Margin: %6e", margin);
 
         int24 tickAtSqrtPrice = TickMath.getTickAtSqrtPrice(SQRT_50_X96);
-        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
-        int24 tickSpacing = key.tickSpacing;
-
         tickLower = bound(tickLower, TickMath.getTickAtSqrtPrice(SQRT_1_X96), tickAtSqrtPrice).toInt24();
         tickUpper = bound(tickUpper, tickAtSqrtPrice, TickMath.getTickAtSqrtPrice(SQRT_100_X96)).toInt24();
 
+        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
+        int24 tickSpacing = key.tickSpacing;
         tickLower = (tickLower / tickSpacing) * tickSpacing - tickSpacing;
         tickUpper = (tickUpper / tickSpacing) * tickSpacing + tickSpacing;
         console2.log("Tick Lower: ", tickLower);
@@ -167,8 +169,9 @@ contract PerpManagerTest is DeployPoolManager {
         assertEq(makerPos.entryPerpDelta, -int256(amount0) - 1);
         assertEq(makerPos.entryUsdDelta, -int256(amount1) - 1);
 
-        assertEq(makerPos.entryCumlFundingX96, 0); // TODO: change to check its the same as before opening
-        assertEq(makerPos.entryCumlBadDebtX96, 0); // TODO: change to check its the same as before opening
+        // TODO: change to check these are the same as before opening
+        assertEq(makerPos.entryCumlFundingX96, 0); 
+        assertEq(makerPos.entryCumlBadDebtX96, 0); 
 
         // TODO: add liquidation margin ratio assert
 
@@ -189,264 +192,114 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log();
     }
 
-    // function test_informal() public {
-    //     vm.startPrank(owner);
+    function testFuzz_OpenTakerPosition(uint24 marginRatio, uint256 notional, bool isLong) public {
+        /* MAKER POSITION */
 
-    //     IBeacon beacon = new OwnableBeacon(owner, 50 * UINT_Q96, 100);
+        uint128 makerMargin = MAX_OPENING_MARGIN;
+        console2.log("Maker Margin: %6e", makerMargin);
 
-    //     IFees fees = new Fees();
-    //     IMarginRatios marginRatios = new MarginRatios();
-    //     ILockupPeriod lockupPeriod = new Lockup();
-    //     ISqrtPriceImpactLimit sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
+        int24 tickLower = TickMath.getTickAtSqrtPrice(SQRT_1_X96);
+        int24 tickUpper = TickMath.getTickAtSqrtPrice(SQRT_100_X96);
 
-    //     perpManager.registerFeesModule(fees);
-    //     perpManager.registerMarginRatiosModule(marginRatios);
-    //     perpManager.registerLockupPeriodModule(lockupPeriod);
-    //     perpManager.registerSqrtPriceImpactLimitModule(sqrtPriceImpactLimit);
+        (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
+        int24 tickSpacing = key.tickSpacing;
+        tickLower = (tickLower / tickSpacing) * tickSpacing - tickSpacing;
+        tickUpper = (tickUpper / tickSpacing) * tickSpacing + tickSpacing;
+        console2.log("Maker Tick Lower: ", tickLower);
+        console2.log("Maker Tick Upper: ", tickUpper);
 
-    //     PoolId perpId = perpManager.createPerp(
-    //         IPerpManager.CreatePerpParams({
-    //             beacon: address(beacon),
-    //             fees: fees,
-    //             marginRatios: marginRatios,
-    //             lockupPeriod: lockupPeriod,
-    //             sqrtPriceImpactLimit: sqrtPriceImpactLimit,
-    //             startingSqrtPriceX96: 560227709747861399187319382275 // sqrt(50)
-    //         })
-    //     );
+        uint128 liquidity = LiquidityAmounts.getLiquidityForAmount1(
+            TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), makerMargin
+        );
+        console2.log("Maker Liquidity: ", liquidity);
 
-    //     (PoolKey memory key,,,,,,,) = perpManager.configs(perpId);
-    //     int24 tickSpacing = key.tickSpacing;
-    //     uint256 sqrtMarkPrice;
-    //     uint256 markPriceX96;
-    //     uint256 markPriceWAD;
+        IPerpManager.OpenMakerPositionParams memory makerParams = IPerpManager.OpenMakerPositionParams({
+            margin: makerMargin,
+            liquidity: liquidity,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            maxAmt0In: type(uint128).max,
+            maxAmt1In: type(uint128).max
+        });
 
-    //     console2.log("perp created with id: ", vm.toString(PoolId.unwrap(perpId)));
-    //     (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
-    //     markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
-    //     markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
-    //     console2.log("mark price %6e", markPriceWAD);
-    //     console2.log("time: ", this.time());
+        deal(usdc, MAKER1, makerMargin);
 
-    //     vm.stopPrank();
+        vm.startPrank(MAKER1);
 
-    //     // 1 hour passes
-    //     skip(1 hours);
-    //     console2.log("time: ", this.time());
-    //     console2.log();
+        SafeTransferLib.safeApprove(usdc, address(perpManager), makerMargin);
+        uint128 makerPosId = perpManager.openMakerPos(perpId, makerParams);
 
-    //     vm.startPrank(maker1);
+        vm.stopPrank();
 
-    //     int24 maker1TickLower = TickMath.getTickAtSqrtPrice(SQRT_40_X96);
-    //     maker1TickLower = (maker1TickLower / tickSpacing) * tickSpacing;
+        console2.log("Maker Position ", makerPosId);
+        console2.log();
 
-    //     int24 maker1TickUpper = TickMath.getTickAtSqrtPrice(SQRT_51_X96);
-    //     maker1TickUpper = (maker1TickUpper / tickSpacing) * tickSpacing;
+        /* TAKER POSITION */
 
-    //     uint256 maker1Margin = 300e6;
+        (uint24 minMarginRatio, uint24 maxMarginRatio, uint24 liqMarginRatio) = perpConfig.marginRatios.marginRatios(perpConfig, false);
+        console2.log("minMarginRatio: %6e", minMarginRatio);
+        console2.log("maxMarginRatio: %6e", maxMarginRatio);
+        console2.log("liqMarginRatio: %6e", liqMarginRatio);
+        marginRatio = bound(marginRatio, minMarginRatio, maxMarginRatio).toUint24();
+        console2.log("Taker Margin Ratio: %6e", marginRatio);
 
-    //     uint128 maker1Liq = LiquidityAmounts.getLiquidityForAmount1(
-    //         TickMath.getSqrtPriceAtTick(maker1TickLower), TickMath.getSqrtPriceAtTick(maker1TickUpper), maker1Margin
-    //     );
+        uint256 levX96 = FixedPointMathLib.fullMulDiv(UINT_Q96, SCALE_1E6, marginRatio);
+        console2.log("levX96: %6e", x96toE6(levX96));
 
-    //     deal(usdc, maker1, maker1Margin);
-    //     usdc.safeApprove(address(perpManager), maker1Margin);
+        notional = bound(notional, MIN_NOTIONAL_TAKER_VALUE, MAX_NOTIONAL_TAKER_VALUE);
+        console2.log("Taker Notional: %6e", notional);
 
-    //     uint128 maker1PosId = perpManager.openMakerPos(
-    //         perpId,
-    //         IPerpManager.OpenMakerPositionParams({
-    //             margin: maker1Margin,
-    //             liquidity: maker1Liq,
-    //             tickLower: maker1TickLower,
-    //             tickUpper: maker1TickUpper,
-    //             maxAmt0In: type(uint128).max,
-    //             maxAmt1In: type(uint128).max
-    //         })
-    //     );
+        uint128 margin = FixedPointMathLib.fullMulDiv(notional, marginRatio, SCALE_1E6).toUint128();
+        console2.log("Taker Margin: %6e", margin);
 
-    //     IPerpManager.Position memory maker1Pos = perpManager.position(perpId, maker1PosId);
+        IPerpManager.OpenTakerPositionParams memory takerParams = IPerpManager.OpenTakerPositionParams({
+            isLong: isLong,
+            margin: margin,
+            levX96: levX96,
+            unspecifiedAmountLimit: isLong ? 0 : type(uint128).max
+        });
 
-    //     console2.log("maker position opened with posId ", maker1PosId);
-    //     console2.log("margin %6e", maker1Pos.margin);
-    //     console2.log("perpDelta %6e", maker1Pos.entryPerpDelta);
-    //     console2.log("usdDelta %6e", maker1Pos.entryUsdDelta);
-    //     (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
-    //     markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
-    //     markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
-    //     console2.log("mark price %6e", markPriceWAD);
-    //     console2.log();
+        deal(usdc, TAKER1, margin);
 
-    //     vm.stopPrank();
+        vm.startPrank(TAKER1);
 
-    //     // 1 hour passes
-    //     skip(1 hours);
+        SafeTransferLib.safeApprove(usdc, address(perpManager), margin);
+        uint128 takerPosId = perpManager.openTakerPos(perpId, takerParams);
 
-    //     vm.startPrank(maker2);
+        vm.stopPrank();
 
-    //     int24 maker2TickLower = TickMath.getTickAtSqrtPrice(SQRT_49_X96);
-    //     maker2TickLower = (maker2TickLower / tickSpacing) * tickSpacing;
+        assertGt(takerPosId, makerPosId);
+        IPerpManager.Position memory takerPos = perpManager.position(perpId, takerPosId);
 
-    //     int24 maker2TickUpper = TickMath.getTickAtSqrtPrice(SQRT_60_X96);
-    //     maker2TickUpper = (maker2TickUpper / tickSpacing) * tickSpacing;
+        assertEq(takerPos.holder, TAKER1);
 
-    //     uint256 maker2Margin = 300e6;
+        assertGe(takerPos.margin, MIN_OPENING_MARGIN);
+        assertLe(takerPos.margin, MAX_OPENING_MARGIN);
+        assertLe(takerPos.margin, margin); // TODO: more specific check calculating fees
 
-    //     uint128 maker2Liq = LiquidityAmounts.getLiquidityForAmount1(
-    //         TickMath.getSqrtPriceAtTick(maker2TickLower), TickMath.getSqrtPriceAtTick(maker2TickUpper), maker2Margin
-    //     );
+        if (isLong) assertGt(takerPos.entryPerpDelta, 0);
+        else assertLt(takerPos.entryPerpDelta, 0);
+        // TODO: more specific check calculating fees
+        assertLe(takerPos.entryUsdDelta.abs(), notional);
 
-    //     deal(usdc, maker2, maker2Margin);
-    //     usdc.safeApprove(address(perpManager), maker2Margin);
+        // TODO: change to check these are the same as before opening
+        assertEq(takerPos.entryCumlFundingX96, 0);
+        assertEq(takerPos.entryCumlBadDebtX96, 0);
 
-    //     uint128 maker2PosId = perpManager.openMakerPos(
-    //         perpId,
-    //         IPerpManager.OpenMakerPositionParams({
-    //             margin: maker2Margin,
-    //             liquidity: maker2Liq,
-    //             tickLower: maker2TickLower,
-    //             tickUpper: maker2TickUpper,
-    //             maxAmt0In: type(uint128).max,
-    //             maxAmt1In: type(uint128).max
-    //         })
-    //     );
+        assertEq(takerPos.liquidationMarginRatio, liqMarginRatio);
 
-    //     IPerpManager.Position memory maker2Pos = perpManager.position(perpId, maker2PosId);
+        assertEq(takerPos.makerDetails.unlockTimestamp, 0);
+        assertEq(takerPos.makerDetails.tickLower, 0);
+        assertEq(takerPos.makerDetails.tickUpper, 0);
+        assertEq(takerPos.makerDetails.liquidity, 0);
+        assertEq(takerPos.makerDetails.entryCumlFundingBelowX96, 0);
+        assertEq(takerPos.makerDetails.entryCumlFundingWithinX96, 0);
+        assertEq(takerPos.makerDetails.entryCumlFundingDivSqrtPWithinX96, 0);
 
-    //     console2.log("maker position opened with posId ", maker2PosId);
-    //     console2.log("margin %6e", maker2Pos.margin);
-    //     console2.log("perpDelta %6e", maker2Pos.entryPerpDelta);
-    //     console2.log("usdDelta %6e", maker2Pos.entryUsdDelta);
-    //     (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
-    //     markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
-    //     markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
-    //     console2.log("mark price %6e", markPriceWAD);
-    //     console2.log();
-
-    //     vm.stopPrank();
-
-    //     // 1 hour passes
-    //     skip(1 hours);
-    //     console2.log("time: ", this.time());
-    //     console2.log();
-
-    //     vm.startPrank(taker1);
-
-    //     uint256 taker1Margin = 50e6;
-
-    //     deal(usdc, taker1, taker1Margin);
-    //     usdc.safeApprove(address(perpManager), taker1Margin);
-
-    //     uint128 taker1PosId = perpManager.openTakerPos(
-    //         perpId,
-    //         IPerpManager.OpenTakerPositionParams({
-    //             isLong: true,
-    //             margin: taker1Margin,
-    //             levX96: 2 * UINT_Q96,
-    //             unspecifiedAmountLimit: 0
-    //         })
-    //     );
-
-    //     IPerpManager.Position memory taker1Pos = perpManager.position(perpId, taker1PosId);
-
-    //     console2.log("taker position opened with posId ", taker1PosId);
-    //     console2.log("margin %6e", taker1Pos.margin);
-    //     console2.log("perpDelta %6e", taker1Pos.entryPerpDelta);
-    //     console2.log("usdDelta %6e", taker1Pos.entryUsdDelta);
-    //     (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
-    //     markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
-    //     markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
-    //     console2.log("mark price %6e", markPriceWAD);
-    //     console2.log();
-
-    //     vm.stopPrank();
-
-    //     // 1 hour passes
-    //     skip(1 hours);
-    //     console2.log("time: ", this.time());
-    //     console2.log();
-
-    //     vm.startPrank(taker2);
-
-    //     uint256 taker2Margin = 100e6;
-
-    //     deal(usdc, taker2, taker2Margin);
-    //     usdc.safeApprove(address(perpManager), taker2Margin);
-
-    //     uint128 taker2PosId = perpManager.openTakerPos(
-    //         perpId,
-    //         IPerpManager.OpenTakerPositionParams({
-    //             isLong: false,
-    //             margin: taker2Margin,
-    //             levX96: 2 * UINT_Q96,
-    //             unspecifiedAmountLimit: type(uint128).max
-    //         })
-    //     );
-
-    //     IPerpManager.Position memory taker2Pos = perpManager.position(perpId, taker2PosId);
-
-    //     console2.log("taker position opened with posId ", taker2PosId);
-    //     console2.log("margin %6e", taker2Pos.margin);
-    //     console2.log("perpDelta %6e", taker2Pos.entryPerpDelta);
-    //     console2.log("usdDelta %6e", taker2Pos.entryUsdDelta);
-    //     (sqrtMarkPrice,,,) = poolManager.getSlot0(perpId);
-    //     markPriceX96 = sqrtMarkPrice.fullMulDiv(sqrtMarkPrice, UINT_Q96);
-    //     markPriceWAD = markPriceX96.mulDiv(SCALE_1E6, UINT_Q96);
-    //     console2.log("mark price %6e", markPriceWAD);
-    //     console2.log();
-
-    //     vm.stopPrank();
-
-    //     // 1 hour passes
-    //     skip(1 hours);
-    //     console2.log("time: ", this.time());
-    //     console2.log();
-
-    //     bool success;
-    //     int256 pnl;
-    //     int256 funding;
-    //     uint256 effectiveMargin;
-    //     bool wasLiquidated;
-
-    //     vm.startPrank(maker1);
-    //     (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, maker1PosId);
-    //     console2.log("maker1 closePosition success: ", success);
-    //     console2.log("maker1 closePosition pnl: %6e", pnl);
-    //     console2.log("maker1 closePosition funding: %6e", funding);
-    //     console2.log("maker1 closePosition effectiveMargin: %6e", effectiveMargin);
-    //     console2.log("maker1 closePosition wasLiquidated: ", wasLiquidated);
-    //     console2.log();
-    //     vm.stopPrank();
-
-    //     vm.startPrank(maker2);
-    //     (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, maker2PosId);
-    //     console2.log("maker2 closePosition success: ", success);
-    //     console2.log("maker2 closePosition pnl: %6e", pnl);
-    //     console2.log("maker2 closePosition funding: %6e", funding);
-    //     console2.log("maker2 closePosition effectiveMargin: %6e", effectiveMargin);
-    //     console2.log("maker2 closePosition wasLiquidated: ", wasLiquidated);
-    //     console2.log();
-    //     vm.stopPrank();
-
-    //     vm.startPrank(taker1);
-    //     (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, taker1PosId);
-    //     console2.log("taker1 closePosition success: ", success);
-    //     console2.log("taker1 closePosition pnl: %6e", pnl);
-    //     console2.log("taker1 closePosition funding: %6e", funding);
-    //     console2.log("taker1 closePosition effectiveMargin: %6e", effectiveMargin);
-    //     console2.log("taker1 closePosition wasLiquidated: ", wasLiquidated);
-    //     console2.log();
-    //     vm.stopPrank();
-
-    //     vm.startPrank(taker2);
-    //     (success, pnl, funding, effectiveMargin, wasLiquidated) = perpManager.quoteClosePosition(perpId, taker2PosId);
-    //     console2.log("taker2 closePosition success: ", success);
-    //     console2.log("taker2 closePosition pnl: %6e", pnl);
-    //     console2.log("taker2 closePosition funding: %6e", funding);
-    //     console2.log("taker2 closePosition effectiveMargin: %6e", effectiveMargin);
-    //     console2.log("taker2 closePosition wasLiquidated: ", wasLiquidated);
-    //     console2.log();
-    //     vm.stopPrank();
-    // }
+        console2.log("Taker Position ", takerPosId);
+        printTakerPosition(takerPos);
+        console2.log();
+    }
 
     // this is a workaround via ir caching block.timestamp
     function time() external view returns (uint256) {
@@ -460,29 +313,35 @@ contract PerpManagerTest is DeployPoolManager {
         console2.log("Price: %6e", priceWAD);
 
         uint256 indexPriceX96 = IBeacon(perpConfig.beacon).data();
-        console2.log("Index Price: %6e", X96toE6(indexPriceX96));
+        console2.log("Index Price: %6e", x96toE6(indexPriceX96));
     }
 
-    function X96toE6(uint256 x96) public pure returns (uint256) {
+    function x96toE6(uint256 x96) public pure returns (uint256) {
         return FixedPointMathLib.mulDiv(x96, SCALE_1E6, UINT_Q96);
     }
 
-    function X96toE6(int256 x96) public pure returns (int256) {
+    function x96toE6(int256 x96) public pure returns (int256) {
         return SignedMath.fullMulDivSigned(x96, SCALE_1E6.toInt256(), UINT_Q96);
     }
 
-    function printMakerPosition(IPerpManager.Position memory makerPos) public view {
-        console2.log("Holder: ", makerPos.holder);
-        console2.log("Margin: %6e", makerPos.margin);
-        console2.log("Entry Perp Delta: %6e", makerPos.entryPerpDelta);
-        console2.log("Entry Usd Delta: %6e", makerPos.entryUsdDelta);
-        console2.log("Entry Cuml Funding: %6e", X96toE6(makerPos.entryCumlFundingX96));
+    function printMakerPosition(IPerpManager.Position memory makerPos) public pure {
+        printTakerPosition(makerPos);
         console2.log("Unlock Timestamp: ", makerPos.makerDetails.unlockTimestamp);
         console2.log("Tick Lower: ", makerPos.makerDetails.tickLower);
         console2.log("Tick Upper: ", makerPos.makerDetails.tickUpper);
         console2.log("Liquidity: ", makerPos.makerDetails.liquidity);
-        console2.log("Entry Cuml Funding Below: %6e", X96toE6(makerPos.makerDetails.entryCumlFundingBelowX96));
-        console2.log("Entry Cuml Funding Within: %6e", X96toE6(makerPos.makerDetails.entryCumlFundingWithinX96));
-        console2.log("Entry Cuml Funding Div Sqrt P Within: %6e", X96toE6(makerPos.makerDetails.entryCumlFundingDivSqrtPWithinX96));
+        console2.log("Entry Cuml Funding Below: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingBelowX96));
+        console2.log("Entry Cuml Funding Within: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingWithinX96));
+        console2.log("Entry Cuml Funding Div Sqrt P Within: %6e", x96toE6(makerPos.makerDetails.entryCumlFundingDivSqrtPWithinX96));
+    }
+
+    function printTakerPosition(IPerpManager.Position memory takerPos) public pure {
+        console2.log("Holder: ", takerPos.holder);
+        console2.log("Margin: %6e", takerPos.margin);
+        console2.log("Entry Perp Delta: %6e", takerPos.entryPerpDelta);
+        console2.log("Entry Usd Delta: %6e", takerPos.entryUsdDelta);
+        console2.log("Entry Cuml Funding: %6e", x96toE6(takerPos.entryCumlFundingX96));
+        console2.log("Entry Cuml Bad Debt: %6e", x96toE6(takerPos.entryCumlBadDebtX96));
+        console2.log("Liquidation Margin Ratio: %6e", takerPos.liquidationMarginRatio);
     }
 }
