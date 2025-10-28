@@ -33,7 +33,7 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     mapping(PoolId => IPerpManager.PerpConfig) public configs;
     /// @notice The state of every perp created
     /// @dev values are modified on every action
-    mapping(PoolId => IPerpManager.PerpState) private states;
+    mapping(PoolId => IPerpManager.PerpState) internal states;
 
     /// @notice A mapping containing registered fee module addresses
     mapping(IFees => bool) public isFeesRegistered;
