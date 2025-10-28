@@ -35,15 +35,15 @@ The test performs the following sequence (from `halmos/PerpManagerTest.t.sol:91-
 
 3. **Calculate Total Obligations:**
    - Iterates through all positions (line 112)
-   - For each non-zero position, calls `quoteClosePosition` to get `effectiveMargin`
-   - Sums up `totalEffectiveMargin` across all positions (line 122)
+   - For each non-zero position, calls `quoteClosePosition` to get `netMargin`
+   - Sums up `totalEffectiveMargin` across all positions (line 121)
 
 4. **Assert Invariant:**
    ```solidity
    assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
    ```
    This checks that the vault has enough funds to:
-   - Pay out all positions at their current value (`totalEffectiveMargin`)
+   - Pay out all positions at their current value (`totalEffectiveMargin`, calculated from `netMargin`)
    - Maintain the insurance fund (`insuranceAfter`)
 
 ### What's Being Tested
@@ -596,9 +596,15 @@ function checkVaultSolvency(PoolId perpId) public view returns (bool) {
         Position storage pos = perp.positions[i];
         if (pos.holder != address(0)) {
             // Use safe accounting - don't revert on quote failures
-            try this.quoteClosePosition(perpId, i) returns (bool success, QuoteReverter.CloseQuote memory quote) {
+            try this.quoteClosePosition(perpId, i) returns (
+                bool success,
+                int256 pnl,
+                int256 funding,
+                uint256 netMargin,
+                bool wasLiquidated
+            ) {
                 if (success) {
-                    totalObligations += quote.effectiveMargin;
+                    totalObligations += netMargin;
                 }
             } catch {
                 // Position can't be quoted - assume worst case

@@ -6,10 +6,15 @@ import {SymTest} from "@halmos-cheatcodes/src/SymTest.sol";
 
 import {PerpManager} from "../src/PerpManager.sol";
 import {IPerpManager} from "../src/interfaces/IPerpManager.sol";
-import {QuoteReverter} from "../src/libraries/QuoteReverter.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {UINT_Q96} from "../src/libraries/Constants.sol";
+
+// Modules
+import {IFees, Fees} from "../src/modules/Fees.sol";
+import {IMarginRatios, MarginRatios} from "../src/modules/MarginRatios.sol";
+import {ILockupPeriod, Lockup} from "../src/modules/Lockup.sol";
+import {ISqrtPriceImpactLimit, SqrtPriceImpactLimit} from "../src/modules/SqrtPriceImpactLimit.sol";
 
 // Test harness
 import {PerpManagerHarness} from "./PerpManagerHarness.sol";
@@ -29,6 +34,12 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PerpManagerHarness internal perpManager;
     BeaconMock internal beaconMock;
 
+    // Modules
+    Fees internal fees;
+    MarginRatios internal marginRatios;
+    Lockup internal lockup;
+    SqrtPriceImpactLimit internal sqrtPriceImpactLimit;
+
     // Test actors
     address internal creator;
     address internal maker;
@@ -45,6 +56,17 @@ contract PerpManagerHalmosTest is SymTest, Test {
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
 
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
+
+        // Initialize and register modules
+        fees = new Fees();
+        marginRatios = new MarginRatios();
+        lockup = new Lockup();
+        sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
+
+        perpManager.registerFeesModule(fees);
+        perpManager.registerMarginRatiosModule(marginRatios);
+        perpManager.registerLockupPeriodModule(lockup);
+        perpManager.registerSqrtPriceImpactLimitModule(sqrtPriceImpactLimit);
 
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
@@ -113,13 +135,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
             IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
                 // Use quoteClosePosition to get effective margin for this position
-                (bool success, QuoteReverter.CloseQuote memory quote) = perpManager.quoteClosePosition(perpId1, i); // TODO: write a new invariant to verify quoteClosePosition
+                (bool success, , , uint256 netMargin, ) = perpManager.quoteClosePosition(perpId1, i); // TODO: write a new invariant to verify quoteClosePosition
                 if (!success) {
                     // XXX: bug if valid position cannot be quoted
                     assert(false);
                 }
 
-                totalEffectiveMargin += quote.effectiveMargin;
+                totalEffectiveMargin += netMargin;
             }
         }
 
@@ -147,7 +169,15 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(startingSqrtPriceX96 >= 4295128739);
         vm.assume(startingSqrtPriceX96 <= type(uint160).max);
 
-        return IPerpManager.CreatePerpParams({startingSqrtPriceX96: startingSqrtPriceX96, beacon: beacon});
+        return
+            IPerpManager.CreatePerpParams({
+                beacon: beacon,
+                fees: fees,
+                marginRatios: marginRatios,
+                lockupPeriod: lockup,
+                sqrtPriceImpactLimit: sqrtPriceImpactLimit,
+                startingSqrtPriceX96: startingSqrtPriceX96
+            });
     }
 
     /// @notice Create symbolic maker position parameters
@@ -204,8 +234,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @param perpId Perp ID to use
     function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
         // Get function selectors from contract
-        bytes4 openMakerPositionSel = perpManager.openMakerPosition.selector;
-        bytes4 openTakerPositionSel = perpManager.openTakerPosition.selector;
+        bytes4 openMakerPositionSel = perpManager.openMakerPos.selector;
+        bytes4 openTakerPositionSel = perpManager.openTakerPos.selector;
         bytes4 addMarginSel = perpManager.addMargin.selector;
         bytes4 closePositionSel = perpManager.closePosition.selector;
         bytes4 increaseCardinalityCapSel = perpManager.increaseCardinalityCap.selector;
@@ -246,7 +276,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         } else if (selector == addMarginSel) {
             IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
                 posId: posId,
-                margin: addMarginAmount
+                amtToAdd: addMarginAmount
             });
             args = abi.encode(perpId, params);
         } else if (selector == closePositionSel) {
