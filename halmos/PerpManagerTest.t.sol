@@ -95,8 +95,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
 
         // Assumptions for block values
-        vm.assume(blockNumber > 0 && blockNumber < type(uint32).max);
-        vm.assume(blockTimestamp > 1700000000 && blockTimestamp < type(uint32).max); // After Nov 2023
+        vm.assume(blockNumber > 0);
+        vm.assume(blockTimestamp > 0);
 
         vm.roll(blockNumber);
         vm.warp(blockTimestamp);
@@ -185,10 +185,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         // Assumptions
         vm.assume(margin > 0);
-        vm.assume(liq > 0);
-        vm.assume(tickLower < tickUpper);
-        vm.assume(maxAmt0 > 0);
-        vm.assume(maxAmt1 > 0);
 
         return
             IPerpManager.OpenMakerPositionParams({
@@ -210,8 +206,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         // Assumptions
         vm.assume(margin > 0);
-        vm.assume(levX96 > 0);
-        vm.assume(limit > 0);
 
         return
             IPerpManager.OpenTakerPositionParams({
@@ -251,7 +245,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         // addMargin parameters
         uint256 addMarginAmount = svm.createUint256("addMarginAmount");
-        vm.assume(addMarginAmount > 0);
 
         // closePosition parameters
         uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
