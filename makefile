@@ -6,7 +6,6 @@ HALMOS_OUTPUT_DIR := halmos/out
 
 test-halmos: clean
 	mkdir -p $(HALMOS_OUTPUT_DIR)/smt
-	@echo "Running Halmos..."
 	FOUNDRY_PROFILE=halmos halmos \
 		--contract PerpManagerHalmosTest \
 		-v \
@@ -31,7 +30,6 @@ test-halmos: clean
 		# --cache-solver \
 		# --ffi \
 		# --symbolic-jump \
-	@echo "Done."
 	make analyze
 
 analyze:
