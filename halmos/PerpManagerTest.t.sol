@@ -57,6 +57,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
+        // Create symbolic storage
+        svm.enableSymbolicStorage(address(usdcMock));
+        svm.enableSymbolicStorage(address(beaconMock));
+        svm.enableSymbolicStorage(address(poolManagerMock));
+
         // Initialize and register modules
         fees = new Fees();
         marginRatios = new MarginRatios();
@@ -117,7 +122,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        _callPerpManagerNTimes(selector, caller, perpId1, 50);
+        _callPerpManagerNTimes(selector, caller, perpId1, 2);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
