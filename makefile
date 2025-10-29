@@ -1,3 +1,4 @@
+LOOP ?= 10
 HALMOS_OUTPUT_DIR := halmos/out
 
 
@@ -9,6 +10,7 @@ test-halmos: clean
 	FOUNDRY_PROFILE=halmos halmos \
 		--contract PerpManagerHalmosTest \
 		-v \
+		--loop $(LOOP) \
 		--statistics \
 		--json-output $(HALMOS_OUTPUT_DIR)/halmos_test.json \
 		--coverage-output $(HALMOS_OUTPUT_DIR)/coverage.log \
@@ -31,6 +33,7 @@ test-halmos: clean
 		# --symbolic-jump \
 	@echo "Done."
 	make analyze
+
 analyze:
 	python halmos/analyze_out.py $(HALMOS_OUTPUT_DIR)/halmos_test.json
 
