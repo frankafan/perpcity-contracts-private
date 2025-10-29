@@ -113,6 +113,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Initial assumptions
         vm.assume(vault != address(0));
         vm.assume(initialVaultBalance >= initialInsurance);
+        vm.assume(caller != address(0));
+        vm.assume(caller != address(perpManager));
+        vm.assume(caller != vault);
 
         _callPerpManagerNTimes(selector, caller, perpId1, 50);
 
