@@ -53,9 +53,9 @@ def analyze_halmos_output(file_path):
                 f"Test: {test['name']}\n"
                 f"Exit Code: {test['exitcode']}\n"
                 f"Num Counterexamples: {test['num_models']}\n"
-                f"Num Paths: {test['num_paths']}\n"
-                f"Time: {test['time'][0]:.2f}s\n"
-                f"Bounded Loops: {test['num_bounded_loops']}\n"
+                f"Num Paths: {test['num_paths']}\n" # number of paths: [total, success, blocked]
+                f"Time: {test['time'][0]:.2f}s\n" # time: [total, paths, models]
+                f"Bounded Loops: {test['num_bounded_loops']}\n" # number of incomplete loops
             )
 
             if test["num_models"] > 0 and "models" in test:
