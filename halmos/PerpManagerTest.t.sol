@@ -89,7 +89,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(maker != liquidator);
         vm.assume(taker != liquidator);
 
-
         // Set symbolic block number and timestamp
         uint256 blockNumber = svm.createUint(32, "block.number");
         uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
@@ -115,10 +114,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(vault != address(0));
         vm.assume(initialVaultBalance >= initialInsurance);
 
-        // Simulation
-        _callPerpManager(selector, caller, perpId1);
-        _callPerpManager(selector, caller, perpId1);
-        // _callPerpManager(selector, caller, perpId1);
+        _callPerpManagerNTimes(selector, caller, perpId1, 50);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
@@ -283,5 +279,17 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.prank(caller);
         (bool success, ) = address(perpManager).call(abi.encodePacked(selector, args));
         vm.assume(success);
+    }
+
+    /// @notice Call `_callPerpManager` `n` times
+    /// @param selector Function selector to call
+    /// @param caller Address to call from
+    /// @param perpId Perp ID to use
+    /// @param n Number of times to call
+    function _callPerpManagerNTimes(bytes4 selector, address caller, PoolId perpId, uint256 n) internal {
+        vm.assume(n <= 256);
+        for (uint256 i = 0; i < n; i++) {
+            _callPerpManager(selector, caller, perpId);
+        }
     }
 }
