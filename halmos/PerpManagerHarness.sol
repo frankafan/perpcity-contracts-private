@@ -8,6 +8,8 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {Quoter} from "../src/libraries/Quoter.sol";
 
+// TODO: see which ones can be removed
+
 /// @title PerpManagerHarness
 /// @notice Test harness for PerpManager to access internal states
 contract PerpManagerHarness is PerpManager {
@@ -25,6 +27,7 @@ contract PerpManagerHarness is PerpManager {
         return states[perpId].takerOI;
     }
 
+    // TODO: remove cause public
     function getVault(PoolId perpId) external view returns (address) {
         return configs[perpId].vault;
     }
@@ -56,6 +59,9 @@ contract PerpManagerHarness is PerpManager {
             int256 pnl;
             int256 funding;
             bool wasLiquidated;
+
+            // TODO: try to just read net margin from the perp directly before and after actually closing the position
+            // TODO: use the emitted event from new position to get the margin - use getRecordedLogs
             (success, pnl, funding, netMargin, wasLiquidated) = Quoter.parseClose(reason);
 
             if (!success) {

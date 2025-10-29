@@ -25,6 +25,8 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
+// TODO: keep requires. Justification is taken from Morpho blue
+// TODO: try using Solady ERC20
 contract ERC20Mock is IERC20 {
     string public name;
     string public symbol;

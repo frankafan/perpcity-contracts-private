@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {OwnableBeacon} from "../../src/beacons/ownable/OwnableBeacon.sol";
 
+// TODO: get rid of and just use ownablebeacon
 /// @notice Mock Beacon for Halmos Testing
 contract BeaconMock is OwnableBeacon {
     constructor(
