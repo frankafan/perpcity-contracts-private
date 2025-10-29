@@ -89,11 +89,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(maker != liquidator);
         vm.assume(taker != liquidator);
 
-        // Enable symbolic storage for key contracts
-        svm.enableSymbolicStorage(address(this));
-        svm.enableSymbolicStorage(address(perpManager));
-        svm.enableSymbolicStorage(address(poolManagerMock));
-        svm.enableSymbolicStorage(address(usdcMock));
 
         // Set symbolic block number and timestamp
         uint256 blockNumber = svm.createUint(32, "block.number");
