@@ -1,7 +1,8 @@
 FROM ghcr.io/a16z/halmos:latest
 
 # install flamegraph
-RUN apt-get update && apt-get install -y git perl
+RUN apt-get update && apt-get install -y git perl vim
+RUN uv pip install ipdb
 RUN git clone https://github.com/brendangregg/FlameGraph.git /opt/FlameGraph
 RUN export PATH=$PATH:/opt/FlameGraph
 

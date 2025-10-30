@@ -25,7 +25,8 @@ test-halmos: clean
 		--print-full-model \
 		--profile-instructions \
 		--no-status \
-		--solver z3 > $(HALMOS_OUTPUT_DIR)/halmos_test.log
+		--solver z3 | tee $(HALMOS_OUTPUT_DIR)/halmos_test.log
+		# --print-steps
 		# --flamegraph \
 		# --cache-solver \
 		# --ffi \
@@ -40,3 +41,10 @@ analyze:
 
 clean:
 	rm -rf $(HALMOS_OUTPUT_DIR)/*
+
+build-dockerfile:
+	cd halmos && docker build -t perpcityhalmos -f dockerfile .
+
+run-container:
+	docker run -it -v .:/workspace --entrypoint=/bin/bash perpcityhalmos
+
