@@ -118,7 +118,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
         // TODO: verify the function arguments are symbolic
 
-        address vault = perpManager.getVault(perpId1);
+        (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
         uint128 initialInsurance = perpManager.getInsurance(perpId1);
         uint256 initialVaultBalance = usdcMock.balanceOf(vault);

@@ -17,7 +17,7 @@ contract PerpManagerHarness is PerpManager {
         return states[perpId].insurance;
     }
 
-    // TODO: remove cause public
+    // XXX: optional because configs is public
     function getVault(PoolId perpId) external view returns (address) {
         return configs[perpId].vault;
     }
