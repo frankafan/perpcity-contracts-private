@@ -60,9 +60,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
         // Create symbolic storage
-        svm.enableSymbolicStorage(address(usdcMock));
-        svm.enableSymbolicStorage(address(beaconMock));
-        svm.enableSymbolicStorage(address(poolManagerMock));
+        // svm.enableSymbolicStorage(address(usdcMock));
+        // svm.enableSymbolicStorage(address(beaconMock));
+        // svm.enableSymbolicStorage(address(poolManagerMock));
 
         // Initialize and register modules
         fees = new Fees();
