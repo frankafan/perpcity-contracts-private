@@ -8,8 +8,6 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PerpLogic} from "../src/libraries/PerpLogic.sol";
 import {Quoter} from "../src/libraries/Quoter.sol";
 
-// TODO: see which ones can be removed
-
 /// @title PerpManagerHarness
 /// @notice Test harness for PerpManager to access internal states
 contract PerpManagerHarness is PerpManager {
@@ -17,14 +15,6 @@ contract PerpManagerHarness is PerpManager {
 
     function getInsurance(PoolId perpId) external view returns (uint128) {
         return states[perpId].insurance;
-    }
-
-    function getCumlBadDebtX96(PoolId perpId) external view returns (uint128) {
-        return states[perpId].cumlBadDebtX96;
-    }
-
-    function getTakerOpenInterest(PoolId perpId) external view returns (uint128) {
-        return states[perpId].takerOI;
     }
 
     // TODO: remove cause public
