@@ -56,8 +56,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock("USD Coin", "USDC", 6);
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
-        // TODO: remove hardcoded typecast
-        perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
+        perpManager = new PerpManagerHarness(poolManagerMock, address(usdcMock));
 
         // Create symbolic storage
         svm.enableSymbolicStorage(address(usdcMock));

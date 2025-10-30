@@ -2,11 +2,11 @@
 pragma solidity 0.8.30;
 
 // TODO: figure out justification / correct mock
-// TODO: get correct inheritance
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 /// @title Mock PoolManager for Halmos Testing
 /// @notice Minimal implementation focusing on functions used by PerpManager
-contract PoolManagerMock {
+contract PoolManagerMock is IPoolManager {
     function unlock(bytes calldata data) external returns (bytes memory) {
         // Simple passthrough for testing
         return data;
