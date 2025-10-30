@@ -54,7 +54,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     function setUp() public virtual {
         // Initialize mock contracts
         poolManagerMock = new PoolManagerMock();
-        usdcMock = new ERC20Mock("USD Coin", "USDC", 6);
+        usdcMock = new ERC20Mock();
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
         // TODO: remove hardcoded typecast
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
