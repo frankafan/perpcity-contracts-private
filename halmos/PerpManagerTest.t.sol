@@ -243,21 +243,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         IPerpManager.OpenMakerPositionParams memory makerParams = _createSymbolicMakerParams();
         IPerpManager.OpenTakerPositionParams memory takerParams = _createSymbolicTakerParams();
 
-        // TODO: make a wrapper for svm.createUint that does the same thing called simulateAllPossibleValues
-        // TODO: put these symbolic variables into the if-else block
-        uint128 posId = uint128(svm.createUint(128, "posId"));
-
-        // addMargin parameters
-        uint256 addMarginAmount = svm.createUint256("addMarginAmount");
-
-        // closePosition parameters
-        uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
-        uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
-        uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
-
-        // increaseCardinalityCap parameters
-        uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
-
         bytes memory args;
 
         if (selector == openMakerPositionSel) {
@@ -265,12 +250,18 @@ contract PerpManagerHalmosTest is SymTest, Test {
         } else if (selector == openTakerPositionSel) {
             args = abi.encode(perpId, takerParams);
         } else if (selector == addMarginSel) {
+            uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
+            uint256 addMarginAmount = simulateAllPossibleValues(256, "addMarginAmount");
             IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
                 posId: posId,
                 amtToAdd: addMarginAmount
             });
             args = abi.encode(perpId, params);
         } else if (selector == closePositionSel) {
+            uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
+            uint128 minAmt0Out = uint128(simulateAllPossibleValues(128, "minAmt0Out"));
+            uint128 minAmt1Out = uint128(simulateAllPossibleValues(128, "minAmt1Out"));
+            uint128 maxAmt1In = uint128(simulateAllPossibleValues(128, "maxAmt1In"));
             IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
                 posId: posId,
                 minAmt0Out: minAmt0Out,
@@ -279,6 +270,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             });
             args = abi.encode(perpId, params);
         } else if (selector == increaseCardinalityCapSel) {
+            uint16 cardinalityCap = uint16(simulateAllPossibleValues(16, "cardinalityCap"));
             args = abi.encode(perpId, cardinalityCap);
         } else {
             args = svm.createBytes(1024, "data");
@@ -287,6 +279,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.prank(caller);
         (bool success, ) = address(perpManager).call(abi.encodePacked(selector, args));
         vm.assume(success);
+    }
+
+    /// @notice Wrapper around Halmos uint symbolic value creation
+    function simulateAllPossibleValues(uint256 numBits, string memory name) internal returns (uint256) {
+        return svm.createUint(numBits, name);
     }
 
     /// @notice Call `_callPerpManager` `n` times
