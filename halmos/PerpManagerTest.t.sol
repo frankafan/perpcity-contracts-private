@@ -121,7 +121,17 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        _callPerpManagerNTimes(selector, caller, perpId1, 2);
+        uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
+        uint256 addMarginAmount = simulateAllPossibleValues(256, "addMarginAmount");
+        IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
+            posId: posId,
+            amtToAdd: addMarginAmount
+        });
+
+        bytes memory calldata_ = abi.encodeWithSelector(selector, perpId1, params);
+        vm.prank(caller);
+        (bool success, ) = address(perpManager).call(calldata_);
+        vm.assume(success);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
