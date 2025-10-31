@@ -109,7 +109,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
     }
 
     function check_vaultBalanceIntegrity(address caller) public {
-        // ... initialization code ...
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
         uint128 initialInsurance = perpManager.getInsurance(perpId1);
