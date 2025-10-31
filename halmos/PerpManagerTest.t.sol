@@ -94,8 +94,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(taker != liquidator);
 
         // Set symbolic block number and timestamp
-        uint256 blockNumber = svm.createUint(32, "block.number");
-        uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
+        uint256 blockNumber = simulateAllPossibleValues(32, "block.number");
+        uint256 blockTimestamp = simulateAllPossibleValues(32, "block.timestamp");
 
         // Assumptions for block values
         vm.assume(blockNumber > 0);
@@ -159,7 +159,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @notice Create symbolic perp parameters
     /// @param beacon The beacon address to use for the perp
     function _createSymbolicPerpParams(address beacon) internal returns (IPerpManager.CreatePerpParams memory) {
-        uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
+        uint160 startingSqrtPriceX96 = uint160(simulateAllPossibleValues(160, "startingSqrtPriceX96"));
 
         // Mirror of Uniswap v4 TickMath.MIN_SQRT_PRICE and MAX_SQRT_PRICE constants
         vm.assume(startingSqrtPriceX96 >= 4295128739);
@@ -179,11 +179,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @notice Create symbolic maker position parameters
     function _createSymbolicMakerParams() internal returns (IPerpManager.OpenMakerPositionParams memory) {
         uint256 margin = svm.createUint256("maker.margin");
-        uint128 liq = uint128(svm.createUint(128, "maker.liquidity"));
-        int24 tickLower = int24(int256(svm.createUint(24, "maker.tickLower")));
-        int24 tickUpper = int24(int256(svm.createUint(24, "maker.tickUpper")));
-        uint128 maxAmt0 = uint128(svm.createUint(128, "maker.maxAmt0In"));
-        uint128 maxAmt1 = uint128(svm.createUint(128, "maker.maxAmt1In"));
+        uint128 liq = uint128(simulateAllPossibleValues(128, "maker.liquidity"));
+        int24 tickLower = int24(int256(simulateAllPossibleValues(24, "maker.tickLower")));
+        int24 tickUpper = int24(int256(simulateAllPossibleValues(24, "maker.tickUpper")));
+        uint128 maxAmt0 = uint128(simulateAllPossibleValues(128, "maker.maxAmt0In"));
+        uint128 maxAmt1 = uint128(simulateAllPossibleValues(128, "maker.maxAmt1In"));
 
         // Assumptions
         vm.assume(margin > 0);
@@ -204,7 +204,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         bool isLong = svm.createBool("taker.isLong");
         uint256 margin = svm.createUint256("taker.margin");
         uint256 levX96 = svm.createUint256("taker.levX96");
-        uint128 limit = uint128(svm.createUint(128, "taker.limit"));
+        uint128 limit = uint128(simulateAllPossibleValues(128, "taker.limit"));
 
         // Assumptions
         vm.assume(margin > 0);
