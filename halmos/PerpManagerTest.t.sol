@@ -132,10 +132,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         for (uint128 i = 0; i < nextPosId; i++) {
             IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
-                // Use quoteClosePosition to get effective margin for this position
                 (bool success, uint256 netMargin) = perpManager.getNetMargin(perpId1, i);
                 if (!success) {
-                    // XXX: bug if valid position cannot be quoted
                     assert(false);
                 }
                 totalEffectiveMargin += netMargin;
