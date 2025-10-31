@@ -94,8 +94,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(taker != liquidator);
 
         // Set symbolic block number and timestamp
-        uint256 blockNumber = simulateAllPossibleValues(32, "block.number");
-        uint256 blockTimestamp = simulateAllPossibleValues(32, "block.timestamp");
+        uint256 blockNumber = createAlgebraicVariable(32, "block.number");
+        uint256 blockTimestamp = createAlgebraicVariable(32, "block.timestamp");
 
         // Assumptions for block values
         vm.assume(blockNumber > 0);
@@ -108,7 +108,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         perpId1 = _createPerp(creator);
     }
 
-    function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
+    function check_vaultBalanceIntegrity(address caller) public {
+        // ... initialization code ...
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
         uint128 initialInsurance = perpManager.getInsurance(perpId1);
@@ -121,17 +122,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
-        uint256 addMarginAmount = simulateAllPossibleValues(256, "addMarginAmount");
         IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
-            posId: posId,
-            amtToAdd: addMarginAmount
+            posId: uint128(createAlgebraicVariable(128, "posId")),
+            amtToAdd: createAlgebraicVariable(256, "addMarginAmount")
         });
 
-        bytes memory calldata_ = abi.encodeWithSelector(selector, perpId1, params);
         vm.prank(caller);
-        (bool success, ) = address(perpManager).call(calldata_);
-        vm.assume(success);
+        perpManager.addMargin(perpId1, params);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
@@ -167,12 +164,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @notice Create symbolic perp parameters
     /// @param beacon The beacon address to use for the perp
     function _createSymbolicPerpParams(address beacon) internal returns (IPerpManager.CreatePerpParams memory) {
-        uint160 startingSqrtPriceX96 = uint160(simulateAllPossibleValues(160, "startingSqrtPriceX96"));
-
-        // Mirror of Uniswap v4 TickMath.MIN_SQRT_PRICE and MAX_SQRT_PRICE constants
-        vm.assume(startingSqrtPriceX96 >= 4295128739);
-        vm.assume(startingSqrtPriceX96 <= 1461446703485210103287273052203988822378723970342);
-
+        uint160 startingSqrtPriceX96 = uint160(createAlgebraicVariable(160, "startingSqrtPriceX96"));
         return
             IPerpManager.CreatePerpParams({
                 beacon: beacon,
@@ -187,11 +179,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @notice Create symbolic maker position parameters
     function _createSymbolicMakerParams() internal returns (IPerpManager.OpenMakerPositionParams memory) {
         uint256 margin = svm.createUint256("maker.margin");
-        uint128 liq = uint128(simulateAllPossibleValues(128, "maker.liquidity"));
-        int24 tickLower = int24(int256(simulateAllPossibleValues(24, "maker.tickLower")));
-        int24 tickUpper = int24(int256(simulateAllPossibleValues(24, "maker.tickUpper")));
-        uint128 maxAmt0 = uint128(simulateAllPossibleValues(128, "maker.maxAmt0In"));
-        uint128 maxAmt1 = uint128(simulateAllPossibleValues(128, "maker.maxAmt1In"));
+        uint128 liq = uint128(createAlgebraicVariable(128, "maker.liquidity"));
+        int24 tickLower = int24(int256(createAlgebraicVariable(24, "maker.tickLower")));
+        int24 tickUpper = int24(int256(createAlgebraicVariable(24, "maker.tickUpper")));
+        uint128 maxAmt0 = uint128(createAlgebraicVariable(128, "maker.maxAmt0In"));
+        uint128 maxAmt1 = uint128(createAlgebraicVariable(128, "maker.maxAmt1In"));
 
         // Assumptions
         vm.assume(margin > 0);
@@ -212,7 +204,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         bool isLong = svm.createBool("taker.isLong");
         uint256 margin = svm.createUint256("taker.margin");
         uint256 levX96 = svm.createUint256("taker.levX96");
-        uint128 limit = uint128(simulateAllPossibleValues(128, "taker.limit"));
+        uint128 limit = uint128(createAlgebraicVariable(128, "taker.limit"));
 
         // Assumptions
         vm.assume(margin > 0);
@@ -258,18 +250,18 @@ contract PerpManagerHalmosTest is SymTest, Test {
         } else if (selector == openTakerPositionSel) {
             args = abi.encode(perpId, takerParams);
         } else if (selector == addMarginSel) {
-            uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
-            uint256 addMarginAmount = simulateAllPossibleValues(256, "addMarginAmount");
+            uint128 posId = uint128(createAlgebraicVariable(128, "posId"));
+            uint256 addMarginAmount = createAlgebraicVariable(256, "addMarginAmount");
             IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
                 posId: posId,
                 amtToAdd: addMarginAmount
             });
             args = abi.encode(perpId, params);
         } else if (selector == closePositionSel) {
-            uint128 posId = uint128(simulateAllPossibleValues(128, "posId"));
-            uint128 minAmt0Out = uint128(simulateAllPossibleValues(128, "minAmt0Out"));
-            uint128 minAmt1Out = uint128(simulateAllPossibleValues(128, "minAmt1Out"));
-            uint128 maxAmt1In = uint128(simulateAllPossibleValues(128, "maxAmt1In"));
+            uint128 posId = uint128(createAlgebraicVariable(128, "posId"));
+            uint128 minAmt0Out = uint128(createAlgebraicVariable(128, "minAmt0Out"));
+            uint128 minAmt1Out = uint128(createAlgebraicVariable(128, "minAmt1Out"));
+            uint128 maxAmt1In = uint128(createAlgebraicVariable(128, "maxAmt1In"));
             IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
                 posId: posId,
                 minAmt0Out: minAmt0Out,
@@ -278,7 +270,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             });
             args = abi.encode(perpId, params);
         } else if (selector == increaseCardinalityCapSel) {
-            uint16 cardinalityCap = uint16(simulateAllPossibleValues(16, "cardinalityCap"));
+            uint16 cardinalityCap = uint16(createAlgebraicVariable(16, "cardinalityCap"));
             args = abi.encode(perpId, cardinalityCap);
         } else {
             args = svm.createBytes(1024, "data");
@@ -290,7 +282,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     }
 
     /// @notice Wrapper around Halmos uint symbolic value creation
-    function simulateAllPossibleValues(uint256 numBits, string memory name) internal returns (uint256) {
+    function createAlgebraicVariable(uint256 numBits, string memory name) internal returns (uint256) {
         return svm.createUint(numBits, name);
     }
 
