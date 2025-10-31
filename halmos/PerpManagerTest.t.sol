@@ -121,7 +121,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        _callPerpManagerNTimes(selector, caller, perpId1, 1);
+        _callPerpManagerNTimes(selector, caller, perpId1, 2);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
