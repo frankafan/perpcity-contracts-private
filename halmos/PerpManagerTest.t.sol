@@ -24,8 +24,6 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
 import {BeaconMock} from "./mocks/BeaconMock.sol";
 
-// TODO: give a list of symbolic values assumed
-
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
@@ -56,7 +54,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock();
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
-        // TODO: remove hardcoded typecast
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
         // Create symbolic storage
@@ -70,13 +67,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
         lockup = new Lockup();
         sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
 
-        // TODO: make sure the rest also aligns with the current version PerpManager
         perpManager.registerFeesModule(fees);
         perpManager.registerMarginRatiosModule(marginRatios);
         perpManager.registerLockupPeriodModule(lockup);
         perpManager.registerSqrtPriceImpactLimitModule(sqrtPriceImpactLimit);
 
-        // TODO: try with concrete vs symbolic and see if the number of paths is different
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
         maker = svm.createAddress("maker");
@@ -98,7 +93,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(maker != liquidator);
         vm.assume(taker != liquidator);
 
-        // TODO: remove if possible
         // Set symbolic block number and timestamp
         uint256 blockNumber = svm.createUint(32, "block.number");
         uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
@@ -111,13 +105,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.warp(blockTimestamp);
 
         // Create perp
-        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
+        perpId1 = _createPerp(creator);
     }
 
-    // TODO: write out methodology / justifications in docstring
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
-        // TODO: verify the function arguments are symbolic
-
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
         uint128 initialInsurance = perpManager.getInsurance(perpId1);
@@ -134,12 +125,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
-        uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
+        uint128 nextPosId = perpManager.getNextPosId(perpId1);
 
         // Calculate total effective margin in open positions
         uint256 totalEffectiveMargin = 0;
         for (uint128 i = 0; i < nextPosId; i++) {
-            // TODO: add check for if the position is already closed
             IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
                 // Use quoteClosePosition to get effective margin for this position
@@ -153,7 +143,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         }
 
         // Invariant
-        // TODO: print and verify these are all symbolic
         assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
     }
 
@@ -173,12 +162,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
 
         // TODO: use their hardcoded constant
-        // Assume valid sqrt price range
-        // MIN_SQRT_RATIO = 4295128739, MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
         vm.assume(startingSqrtPriceX96 >= 4295128739);
         vm.assume(startingSqrtPriceX96 <= type(uint160).max);
 
-        // TODO: take variables from arguments or this
         return
             IPerpManager.CreatePerpParams({
                 beacon: beacon,
@@ -238,7 +224,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @param perpId Perp ID to use
     function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
         // Get function selectors from contract
-        // TODO: don't make variables for these
         bytes4 openMakerPositionSel = perpManager.openMakerPos.selector;
         bytes4 openTakerPositionSel = perpManager.openTakerPos.selector;
         bytes4 addMarginSel = perpManager.addMargin.selector;
@@ -246,8 +231,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         bytes4 increaseCardinalityCapSel = perpManager.increaseCardinalityCap.selector;
 
         // Limit the functions tested
-        // TODO: document that these are entry points
-        // TODO: check vault balance integrity by only calling one entry point one time manually - the sum of all should be the same as calling callPerpManager once
         vm.assume(
             selector == openMakerPositionSel ||
                 selector == openTakerPositionSel ||
