@@ -161,9 +161,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
     function _createSymbolicPerpParams(address beacon) internal returns (IPerpManager.CreatePerpParams memory) {
         uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
 
-        // TODO: use their hardcoded constant
+        // Mirror of Uniswap v4 TickMath.MIN_SQRT_PRICE and MAX_SQRT_PRICE constants
         vm.assume(startingSqrtPriceX96 >= 4295128739);
-        vm.assume(startingSqrtPriceX96 <= type(uint160).max);
+        vm.assume(startingSqrtPriceX96 <= 1461446703485210103287273052203988822378723970342);
 
         return
             IPerpManager.CreatePerpParams({
