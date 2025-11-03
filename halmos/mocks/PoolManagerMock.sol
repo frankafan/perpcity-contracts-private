@@ -289,7 +289,6 @@ contract PoolManagerMock {
         return _pools[id].tickBitmap[word];
     }
 
-
     /* HELPER FUNCTIONS */
 
     /// @dev Settles currency for a recipient
@@ -314,3 +313,9 @@ contract PoolManagerMock {
         _accountDelta(key.currency1, delta.amount1(), target);
     }
 }
+
+// contract PoolManagerMock {
+//     function unlock(bytes calldata data) external returns (bytes memory) {
+//         return data;
+//     }
+// }
