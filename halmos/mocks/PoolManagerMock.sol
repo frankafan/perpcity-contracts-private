@@ -313,3 +313,4 @@ contract PoolManagerMock {
         _accountDelta(key.currency0, delta.amount0(), target);
         _accountDelta(key.currency1, delta.amount1(), target);
     }
+}
