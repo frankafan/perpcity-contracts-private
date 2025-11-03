@@ -11,11 +11,47 @@ import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/Pool
 import {Pool} from "@uniswap/v4-core/src/libraries/Pool.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
-/// @notice Mock implementation of IPoolManager for Halmos testing
+/// @notice Mock implementation of PoolManager for Halmos testing
 /// @dev Simplified implementation focusing on core pool operations needed for PerpManager tests
-contract PoolManagerMock is IPoolManager {
+/// @dev Does not inherit IPoolManager to avoid implementing unused interface methods
+contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
     using Pool for Pool.State;
+
+    /* EVENTS */
+
+    event Initialize(
+        PoolId indexed id,
+        Currency indexed currency0,
+        Currency indexed currency1,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks,
+        uint160 sqrtPriceX96,
+        int24 tick
+    );
+    event ModifyLiquidity(
+        PoolId indexed id,
+        address indexed sender,
+        int24 tickLower,
+        int24 tickUpper,
+        int256 liquidityDelta,
+        bytes32 salt
+    );
+    event Swap(
+        PoolId indexed id,
+        address indexed sender,
+        int128 amount0,
+        int128 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick,
+        uint24 fee
+    );
+    event Donate(PoolId indexed id, address indexed sender, uint256 amount0, uint256 amount1);
+    event Transfer(address indexed caller, address indexed from, address indexed to, uint256 id, uint256 amount);
+
+    /* STORAGE */
 
     /// @dev Pool state mapping
     mapping(PoolId => Pool.State) internal _pools;
@@ -29,22 +65,16 @@ contract PoolManagerMock is IPoolManager {
     /// @dev Lock state
     bool internal unlocked;
 
-    /// @dev Protocol fees accrued
-    mapping(Currency => uint256) internal _protocolFeesAccrued;
+    /* CORE FUNCTIONS */
 
-    /// @dev Protocol fee controller
-    address internal _protocolFeeController;
-
-    /* IPoolManager FUNCTIONS */
-
-    /// @inheritdoc IPoolManager
+    /// @notice Unlocks the pool manager and executes callback
     /// @dev Called by: UniV4Router.executeAction() in all PerpManager entry points
     /// - PerpManager.createPerp() -> PerpLogic.createPerp() -> executeAction(CREATE_POOL)
     /// - PerpManager.openMakerPos() -> PerpLogic.openPos() -> executeAction(MODIFY_LIQUIDITY)
     /// - PerpManager.openTakerPos() -> PerpLogic.openPos() -> executeAction(SWAP, DONATE)
     /// - PerpManager.addMargin() -> PerpLogic.addMargin() (no unlock, just state updates)
     /// - PerpManager.closePosition() -> PerpLogic.closePosition() -> executeAction(MODIFY_LIQUIDITY or SWAP)
-    function unlock(bytes calldata data) external override returns (bytes memory result) {
+    function unlock(bytes calldata data) external returns (bytes memory result) {
         require(!unlocked, "Already unlocked");
 
         unlocked = true;
@@ -56,20 +86,27 @@ contract PoolManagerMock is IPoolManager {
         unlocked = false;
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.createPool() during pool creation
     /// - PerpManager.createPerp() -> PerpLogic.createPerp() -> UniV4Router.createPool()
     /// Location: src/libraries/UniV4Router.sol:141
-    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external override returns (int24 tick) {
+    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         PoolId id = key.toId();
 
         // Initialize the pool using the Pool library
         tick = _pools[id].initialize(sqrtPriceX96, 0);
 
-        emit Initialize(id, key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks, sqrtPriceX96, tick);
+        emit Initialize(
+            id,
+            key.currency0,
+            key.currency1,
+            key.fee,
+            key.tickSpacing,
+            address(key.hooks),
+            sqrtPriceX96,
+            tick
+        );
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.modifyLiquidity() for adding/removing liquidity
     /// - PerpManager.openMakerPos() -> PerpLogic.openPos() -> UniV4Router.modifyLiquidity() (add liquidity)
     /// - PerpManager.closePosition() -> PerpLogic.closePosition() -> UniV4Router.modifyLiquidity() (remove liquidity)
@@ -78,7 +115,7 @@ contract PoolManagerMock is IPoolManager {
         PoolKey memory key,
         ModifyLiquidityParams memory params,
         bytes calldata
-    ) external override returns (BalanceDelta callerDelta, BalanceDelta feesAccrued) {
+    ) external returns (BalanceDelta callerDelta, BalanceDelta feesAccrued) {
         require(unlocked, "Manager locked");
 
         PoolId id = key.toId();
@@ -104,7 +141,6 @@ contract PoolManagerMock is IPoolManager {
         emit ModifyLiquidity(id, msg.sender, params.tickLower, params.tickUpper, params.liquidityDelta, params.salt);
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.swap() for executing swaps
     /// - PerpManager.openTakerPos() -> PerpLogic.openPos() -> UniV4Router.swap()
     /// - PerpManager.closePosition() -> PerpLogic.closePosition() -> UniV4Router.swap() (for taker positions)
@@ -113,7 +149,7 @@ contract PoolManagerMock is IPoolManager {
         PoolKey memory key,
         SwapParams memory params,
         bytes calldata
-    ) external override returns (BalanceDelta swapDelta) {
+    ) external returns (BalanceDelta swapDelta) {
         require(unlocked, "Manager locked");
         require(params.amountSpecified != 0, "Swap amount cannot be zero");
 
@@ -140,7 +176,6 @@ contract PoolManagerMock is IPoolManager {
         emit Swap(id, msg.sender, swapDelta.amount0(), swapDelta.amount1(), sqrtPriceX96, pool.liquidity, tick, 0);
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.donate() to distribute LP fees
     /// - PerpManager.openTakerPos() -> PerpLogic.openPos() -> UniV4Router.donate()
     /// Location: src/libraries/UniV4Router.sol:236 (called from PerpLogic.sol:229)
@@ -149,7 +184,7 @@ contract PoolManagerMock is IPoolManager {
         uint256 amount0,
         uint256 amount1,
         bytes calldata
-    ) external override returns (BalanceDelta delta) {
+    ) external returns (BalanceDelta delta) {
         require(unlocked, "Manager locked");
 
         PoolId id = key.toId();
@@ -162,29 +197,26 @@ contract PoolManagerMock is IPoolManager {
         emit Donate(id, msg.sender, amount0, amount1);
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: AccountingToken.initialize() during pool creation
     /// - PerpManager.createPerp() -> PerpLogic.createPerp() -> UniV4Router.createPool() -> AccountingToken.initialize()
     /// Location: src/AccountingToken.sol:38
-    function sync(Currency) external override {
+    function sync(Currency) external {
         // Simplified: do nothing for mock
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: AccountingToken.initialize() during pool creation
     /// - PerpManager.createPerp() -> PerpLogic.createPerp() -> UniV4Router.createPool() -> AccountingToken.initialize()
     /// Location: src/AccountingToken.sol:47
-    function settle() external payable override returns (uint256 paid) {
+    function settle() external payable returns (uint256 paid) {
         require(unlocked, "Manager locked");
         return _settle(msg.sender);
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.clearBalance() and AccountingToken.initialize()
     /// - All PerpManager functions -> UniV4Router.clearBalance() when settling positive deltas
     /// - PerpManager.createPerp() -> AccountingToken.initialize() for initial token minting
     /// Locations: src/libraries/UniV4Router.sol:251, src/AccountingToken.sol:44
-    function mint(address to, uint256 id, uint256 amount) external override {
+    function mint(address to, uint256 id, uint256 amount) external {
         require(unlocked, "Manager locked");
 
         Currency currency = Currency.wrap(address(uint160(id)));
@@ -194,11 +226,10 @@ contract PoolManagerMock is IPoolManager {
         emit Transfer(msg.sender, address(0), to, id, amount);
     }
 
-    /// @inheritdoc IPoolManager
     /// @dev Called by: UniV4Router.clearBalance() when settling negative deltas
     /// - All PerpManager functions -> UniV4Router.clearBalance() when tokens need to be burned
     /// Location: src/libraries/UniV4Router.sol:256
-    function burn(address from, uint256 id, uint256 amount) external override {
+    function burn(address from, uint256 id, uint256 amount) external {
         require(unlocked, "Manager locked");
 
         Currency currency = Currency.wrap(address(uint160(id)));
@@ -206,40 +237,6 @@ contract PoolManagerMock is IPoolManager {
 
         _balances[from][id] -= amount;
         emit Transfer(msg.sender, from, address(0), id, amount);
-    }
-
-    /// @inheritdoc IPoolManager
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function updateDynamicLPFee(PoolKey memory, uint24) external pure override {
-        // Not needed for basic mock
-        revert("Not implemented");
-    }
-
-    /* IProtocolFees FUNCTIONS */
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function protocolFeesAccrued(Currency currency) external view override returns (uint256) {
-        return _protocolFeesAccrued[currency];
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function setProtocolFee(PoolKey memory, uint24) external pure override {
-        revert("Not implemented");
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function setProtocolFeeController(address controller) external override {
-        _protocolFeeController = controller;
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function collectProtocolFees(address, Currency, uint256) external pure override returns (uint256) {
-        revert("Not implemented");
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function protocolFeeController() external view override returns (address) {
-        return _protocolFeeController;
     }
 
     /* VIEW FUNCTIONS */
@@ -292,79 +289,6 @@ contract PoolManagerMock is IPoolManager {
         return _pools[id].tickBitmap[word];
     }
 
-    /// @notice Get next initialized tick within one word
-    /// @dev Called by: Funding.crossTicks() when crossing ticks during swaps
-    /// - PerpLogic.openPos() -> Funding.crossTicks() -> poolManager.nextInitializedTickWithinOneWord() (line 225)
-    /// - PerpLogic.closePosition() -> Funding.crossTicks() -> poolManager.nextInitializedTickWithinOneWord() (line 382)
-    /// Location: src/libraries/Funding.sol:167
-    function nextInitializedTickWithinOneWord(
-        PoolId id,
-        int24 tick,
-        int24 tickSpacing,
-        bool lte
-    ) external view returns (int24 next, bool initialized) {
-        Pool.State storage pool = _pools[id];
-        return pool.nextInitializedTickWithinOneWord(tick, tickSpacing, lte);
-    }
-
-    /* IExtsload FUNCTIONS */
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function extsload(bytes32 slot) external view override returns (bytes32) {
-        bytes32 value;
-        assembly {
-            value := sload(slot)
-        }
-        return value;
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function extsload(bytes32 startSlot, uint256 nSlots) external view override returns (bytes32[] memory) {
-        bytes32[] memory values = new bytes32[](nSlots);
-        for (uint256 i = 0; i < nSlots; i++) {
-            bytes32 slot = bytes32(uint256(startSlot) + i);
-            assembly {
-                let value := sload(slot)
-                mstore(add(add(values, 32), mul(i, 32)), value)
-            }
-        }
-        return values;
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function extsload(bytes32[] calldata slots) external view override returns (bytes32[] memory) {
-        bytes32[] memory values = new bytes32[](slots.length);
-        for (uint256 i = 0; i < slots.length; i++) {
-            assembly {
-                let value := sload(calldataload(add(slots.offset, mul(i, 32))))
-                mstore(add(add(values, 32), mul(i, 32)), value)
-            }
-        }
-        return values;
-    }
-
-    /* IExttload FUNCTIONS */
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function exttload(bytes32 slot) external view override returns (bytes32) {
-        bytes32 value;
-        assembly {
-            value := tload(slot)
-        }
-        return value;
-    }
-
-    /// @dev Not called by PerpManager - required by IPoolManager interface
-    function exttload(bytes32[] calldata slots) external view override returns (bytes32[] memory) {
-        bytes32[] memory values = new bytes32[](slots.length);
-        for (uint256 i = 0; i < slots.length; i++) {
-            assembly {
-                let value := tload(calldataload(add(slots.offset, mul(i, 32))))
-                mstore(add(add(values, 32), mul(i, 32)), value)
-            }
-        }
-        return values;
-    }
 
     /* HELPER FUNCTIONS */
 
@@ -389,4 +313,3 @@ contract PoolManagerMock is IPoolManager {
         _accountDelta(key.currency0, delta.amount0(), target);
         _accountDelta(key.currency1, delta.amount1(), target);
     }
-}
