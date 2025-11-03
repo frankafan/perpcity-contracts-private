@@ -72,7 +72,7 @@ contract PoolManagerMock {
 
     /// @notice Unlocks the pool manager and executes callback
     function unlock(bytes calldata data) external returns (bytes memory result) {
-        _requireLocked();
+        require(!_unlocked, "Already unlocked");
         _unlocked = true;
         result = IUnlockCallback(msg.sender).unlockCallback(data);
         _unlocked = false;
@@ -107,7 +107,7 @@ contract PoolManagerMock {
         ModifyLiquidityParams memory params,
         bytes calldata
     ) external returns (BalanceDelta callerDelta, BalanceDelta feesAccrued) {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         PoolId id = key.toId();
 
         (BalanceDelta principalDelta, BalanceDelta fees) = _poolStates[id].modifyLiquidity(
@@ -129,7 +129,7 @@ contract PoolManagerMock {
 
     /// @notice Execute a swap in a pool
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata) external returns (BalanceDelta delta) {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         PoolId id = key.toId();
         PoolMock.State storage pool = _poolStates[id];
 
@@ -163,7 +163,7 @@ contract PoolManagerMock {
         uint256 amount1,
         bytes calldata
     ) external returns (BalanceDelta delta) {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         PoolId id = key.toId();
         delta = _poolStates[id].donate(amount0, amount1);
         _accountDeltas(key, delta, msg.sender);
@@ -176,7 +176,7 @@ contract PoolManagerMock {
 
     /// @notice Mint tokens (settle negative delta)
     function mint(address to, uint256 id, uint256 amount) external {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         _accountDelta(Currency.wrap(address(uint160(id))), -int128(uint128(amount)), msg.sender);
         _tokenBalances[to][id] += amount;
         emit Transfer(msg.sender, address(0), to, id, amount);
@@ -184,7 +184,7 @@ contract PoolManagerMock {
 
     /// @notice Burn tokens (settle positive delta)
     function burn(address from, uint256 id, uint256 amount) external {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         _accountDelta(Currency.wrap(address(uint160(id))), int128(uint128(amount)), msg.sender);
         _tokenBalances[from][id] -= amount;
         emit Transfer(msg.sender, from, address(0), id, amount);
@@ -192,7 +192,7 @@ contract PoolManagerMock {
 
     /// @notice Settle with native currency
     function settle() external payable returns (uint256 paid) {
-        _requireUnlocked();
+        require(_unlocked, "Manager locked");
         paid = msg.value;
         if (paid > 0) _accountDelta(Currency.wrap(address(0)), int128(uint128(paid)), msg.sender);
     }
@@ -240,16 +240,6 @@ contract PoolManagerMock {
     // ============================================================
     // INTERNAL HELPERS
     // ============================================================
-
-    /// @dev Require the manager to be unlocked
-    function _requireUnlocked() internal view {
-        require(_unlocked, "Manager locked");
-    }
-
-    /// @dev Require the manager to be locked
-    function _requireLocked() internal view {
-        require(!_unlocked, "Already unlocked");
-    }
 
     /// @dev Account a single currency delta
     function _accountDelta(Currency currency, int128 delta, address target) internal {
