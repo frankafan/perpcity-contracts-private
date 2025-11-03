@@ -109,6 +109,7 @@ contract PerpManager is IPerpManager, UnlockCallback, Ownable {
     /// @param perpId The ID of the perp to increase the cardinality cap for
     /// @param cardinalityCap The new cardinality cap
     function increaseCardinalityCap(PoolId perpId, uint16 cardinalityCap) external {
+        // BUG: should not be external
         TimeWeightedAvg.increaseCardinalityCap(states[perpId].twAvg, cardinalityCap);
     }
 
