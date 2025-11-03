@@ -4,6 +4,9 @@ HALMOS_OUTPUT_DIR := halmos/out
 
 .PHONY: test-halmos test-halmos-usdc
 
+compile:
+	FOUNDRY_PROFILE=halmos forge build
+
 test-halmos: clean
 	mkdir -p $(HALMOS_OUTPUT_DIR)/smt
 	FOUNDRY_PROFILE=halmos halmos \
