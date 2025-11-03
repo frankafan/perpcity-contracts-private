@@ -164,6 +164,7 @@ library Funding {
         bool isInitialized;
 
         while (true) {
+            // BUG: poolManager does not have nextInitializedTickWithinOneWord
             (tick, isInitialized) = poolManager.nextInitializedTickWithinOneWord(poolId, tick, tickSpacing, zeroForOne);
 
             if (zeroForOne ? tick < endingTick : tick > endingTick) {
