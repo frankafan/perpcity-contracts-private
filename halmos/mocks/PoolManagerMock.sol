@@ -8,15 +8,14 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {BalanceDelta, BalanceDeltaLibrary, toBalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-import {Pool} from "@uniswap/v4-core/src/libraries/Pool.sol";
-import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {PoolMock} from "./PoolMock.sol";
 
-/// @notice Mock implementation of PoolManager for Halmos testing
-/// @dev Simplified implementation focusing on core pool operations needed for PerpManager tests
+/// @notice Mock implementation of PoolManager for Halmos testing using PoolMock
+/// @dev Uses lightweight PoolMock instead of heavy Pool.State to reduce symbolic execution complexity
 /// @dev Does not inherit IPoolManager to avoid implementing unused interface methods
 contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
-    using Pool for Pool.State;
+    using PoolMock for PoolMock.State;
 
     /* EVENTS */
 
@@ -53,8 +52,8 @@ contract PoolManagerMock {
 
     /* STORAGE */
 
-    /// @dev Pool state mapping
-    mapping(PoolId => Pool.State) internal _pools;
+    /// @dev Pool state mapping using PoolMock
+    mapping(PoolId => PoolMock.State) internal _pools;
 
     /// @dev ERC6909 balances: balances[owner][id]
     mapping(address => mapping(uint256 => uint256)) internal _balances;
@@ -92,7 +91,7 @@ contract PoolManagerMock {
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         PoolId id = key.toId();
 
-        // Initialize the pool using the Pool library
+        // Initialize using PoolMock
         tick = _pools[id].initialize(sqrtPriceX96, 0);
 
         emit Initialize(
@@ -119,11 +118,11 @@ contract PoolManagerMock {
         require(unlocked, "Manager locked");
 
         PoolId id = key.toId();
-        Pool.State storage pool = _pools[id];
+        PoolMock.State storage pool = _pools[id];
 
         BalanceDelta principalDelta;
         (principalDelta, feesAccrued) = pool.modifyLiquidity(
-            Pool.ModifyLiquidityParams({
+            PoolMock.ModifyLiquidityParams({
                 owner: msg.sender,
                 tickLower: params.tickLower,
                 tickUpper: params.tickUpper,
@@ -151,13 +150,12 @@ contract PoolManagerMock {
         bytes calldata
     ) external returns (BalanceDelta swapDelta) {
         require(unlocked, "Manager locked");
-        require(params.amountSpecified != 0, "Swap amount cannot be zero");
 
         PoolId id = key.toId();
-        Pool.State storage pool = _pools[id];
+        PoolMock.State storage pool = _pools[id];
 
         (swapDelta, , , ) = pool.swap(
-            Pool.SwapParams({
+            PoolMock.SwapParams({
                 tickSpacing: key.tickSpacing,
                 zeroForOne: params.zeroForOne,
                 amountSpecified: params.amountSpecified,
@@ -169,9 +167,9 @@ contract PoolManagerMock {
         // Account the deltas
         _accountPoolBalanceDelta(key, swapDelta, msg.sender);
 
-        // Get slot0 data from the pool
-        uint160 sqrtPriceX96 = pool.slot0.sqrtPriceX96();
-        int24 tick = pool.slot0.tick();
+        // Get current slot0 data
+        uint160 sqrtPriceX96 = pool.slot0.sqrtPriceX96;
+        int24 tick = pool.slot0.tick;
 
         emit Swap(id, msg.sender, swapDelta.amount0(), swapDelta.amount1(), sqrtPriceX96, pool.liquidity, tick, 0);
     }
@@ -188,7 +186,7 @@ contract PoolManagerMock {
         require(unlocked, "Manager locked");
 
         PoolId id = key.toId();
-        Pool.State storage pool = _pools[id];
+        PoolMock.State storage pool = _pools[id];
 
         delta = pool.donate(amount0, amount1);
 
@@ -251,11 +249,11 @@ contract PoolManagerMock {
     function getSlot0(
         PoolId id
     ) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) {
-        Pool.State storage pool = _pools[id];
-        sqrtPriceX96 = pool.slot0.sqrtPriceX96();
-        tick = pool.slot0.tick();
-        protocolFee = pool.slot0.protocolFee();
-        lpFee = pool.slot0.lpFee();
+        PoolMock.State storage pool = _pools[id];
+        sqrtPriceX96 = pool.slot0.sqrtPriceX96;
+        tick = pool.slot0.tick;
+        protocolFee = pool.slot0.protocolFee;
+        lpFee = pool.slot0.lpFee;
     }
 
     /// @notice Get tick info for a pool
@@ -276,8 +274,8 @@ contract PoolManagerMock {
             uint256 feeGrowthOutside1X128
         )
     {
-        Pool.State storage pool = _pools[id];
-        Pool.TickInfo memory info = pool.ticks[tick];
+        PoolMock.State storage pool = _pools[id];
+        PoolMock.TickInfo memory info = pool.ticks[tick];
         return (info.liquidityGross, info.liquidityNet, info.feeGrowthOutside0X128, info.feeGrowthOutside1X128);
     }
 
