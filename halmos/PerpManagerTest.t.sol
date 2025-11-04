@@ -21,8 +21,8 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-// import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
-import {PoolManagerMock} from "./mocks/PoolManagerMockSimplified.sol";
+import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
+// import {PoolManagerMock} from "./mocks/PoolManagerMockSimplified.sol";
 import {BeaconMock} from "./mocks/BeaconMock.sol";
 
 // TODO: give a list of symbolic values assumed
