@@ -5,15 +5,60 @@ import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockC
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta, toBalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-import {PoolMock} from "./PoolMock.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 /// @notice Simplified PoolManager mock for Halmos testing
 /// @dev Barebones implementation focusing on core logic with minimal complexity
-/// @dev Uses PoolMock library to reduce symbolic execution overhead
+/// @dev All pool logic is inlined to reduce symbolic execution overhead
 contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
+
+    // Structs
+
+    /// @dev Slot0 contains the current price and tick
+    struct Slot0 {
+        uint160 sqrtPriceX96;
+        int24 tick;
+        uint24 protocolFee;
+        uint24 lpFee;
+    }
+
+    /// @dev Tick info for a specific tick
+    struct TickInfo {
+        uint128 liquidityGross;
+        int128 liquidityNet;
+        uint256 feeGrowthOutside0X128;
+        uint256 feeGrowthOutside1X128;
+    }
+
+    /// @dev Simplified pool state
+    struct PoolState {
+        Slot0 slot0;
+        uint128 liquidity;
+        mapping(int24 => TickInfo) ticks;
+        mapping(int16 => uint256) tickBitmap;
+    }
+
+    /// @dev Parameters for internal modifyLiquidity
+    struct ModifyLiquidityParamsInternal {
+        address owner;
+        int24 tickLower;
+        int24 tickUpper;
+        int128 liquidityDelta;
+        int24 tickSpacing;
+        bytes32 salt;
+    }
+
+    /// @dev Parameters for internal swap
+    struct SwapParamsInternal {
+        int24 tickSpacing;
+        bool zeroForOne;
+        int256 amountSpecified;
+        uint160 sqrtPriceLimitX96;
+        uint128 lpFeeOverride;
+    }
 
     // Events
     event Initialize(
@@ -52,8 +97,8 @@ contract PoolManagerMock {
     /// @dev Lock state - true when unlocked, false when locked
     bool internal _unlocked;
 
-    /// @dev Pool states using simplified PoolMock library
-    mapping(PoolId => PoolMock.State) internal _poolStates;
+    /// @dev Pool states
+    mapping(PoolId => PoolState) internal _poolStates;
 
     /// @dev ERC6909-style token balances: owner => tokenId => balance
     mapping(address => mapping(uint256 => uint256)) internal _tokenBalances;
@@ -78,7 +123,7 @@ contract PoolManagerMock {
         PoolId id = key.toId();
         uint24 lpFee = key.fee;
 
-        tick = PoolMock.initialize(_poolStates[id], sqrtPriceX96, lpFee);
+        tick = _initializePool(_poolStates[id], sqrtPriceX96, lpFee);
 
         emit Initialize(
             id,
@@ -101,9 +146,9 @@ contract PoolManagerMock {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
 
-        (BalanceDelta principalDelta, BalanceDelta fees) = PoolMock.modifyLiquidity(
+        (BalanceDelta principalDelta, BalanceDelta fees) = _modifyLiquidity(
             _poolStates[id],
-            PoolMock.ModifyLiquidityParams({
+            ModifyLiquidityParamsInternal({
                 owner: msg.sender,
                 tickLower: params.tickLower,
                 tickUpper: params.tickUpper,
@@ -123,11 +168,11 @@ contract PoolManagerMock {
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata) external returns (BalanceDelta delta) {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
-        PoolMock.State storage pool = _poolStates[id];
+        PoolState storage pool = _poolStates[id];
 
-        (delta, , , ) = PoolMock.swap(
+        (delta, , , ) = _swap(
             pool,
-            PoolMock.SwapParams({
+            SwapParamsInternal({
                 tickSpacing: key.tickSpacing,
                 zeroForOne: params.zeroForOne,
                 amountSpecified: params.amountSpecified,
@@ -158,7 +203,7 @@ contract PoolManagerMock {
     ) external returns (BalanceDelta delta) {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
-        delta = PoolMock.donate(_poolStates[id], amount0, amount1);
+        delta = _donate(amount0, amount1);
         _accountDeltas(key, delta, msg.sender);
         emit Donate(id, msg.sender, amount0, amount1);
     }
@@ -199,7 +244,7 @@ contract PoolManagerMock {
     function getSlot0(
         PoolId id
     ) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) {
-        PoolMock.Slot0 memory slot0 = _poolStates[id].slot0;
+        Slot0 memory slot0 = _poolStates[id].slot0;
         return (slot0.sqrtPriceX96, slot0.tick, slot0.protocolFee, slot0.lpFee);
     }
 
@@ -217,13 +262,103 @@ contract PoolManagerMock {
             uint256 feeGrowthOutside1X128
         )
     {
-        PoolMock.TickInfo memory info = _poolStates[id].ticks[tick];
+        TickInfo memory info = _poolStates[id].ticks[tick];
         return (info.liquidityGross, info.liquidityNet, info.feeGrowthOutside0X128, info.feeGrowthOutside1X128);
     }
 
     /// @notice Get tick bitmap for a pool
     function getTickBitmap(PoolId id, int16 word) external view returns (uint256) {
         return _poolStates[id].tickBitmap[word];
+    }
+
+    // Internal pool logic (was in PoolMock)
+
+    /// @dev Initialize a pool
+    function _initializePool(
+        PoolState storage self,
+        uint160 sqrtPriceX96,
+        uint24 protocolFee
+    ) internal returns (int24 tick) {
+        require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
+
+        tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+
+        self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: protocolFee, lpFee: 0});
+    }
+
+    /// @dev Modify liquidity in the pool
+    function _modifyLiquidity(
+        PoolState storage self,
+        ModifyLiquidityParamsInternal memory params
+    ) internal returns (BalanceDelta delta, BalanceDelta feesAccrued) {
+        // Simplified: return approximate deltas
+        int128 amount0Delta = int128(params.liquidityDelta / 2);
+        int128 amount1Delta = int128(params.liquidityDelta / 2);
+
+        delta = toBalanceDelta(amount0Delta, amount1Delta);
+        feesAccrued = toBalanceDelta(0, 0);
+
+        // Update liquidity
+        if (params.liquidityDelta > 0) {
+            self.liquidity += uint128(params.liquidityDelta);
+        } else if (params.liquidityDelta < 0) {
+            self.liquidity -= uint128(-params.liquidityDelta);
+        }
+
+        // Update tick info
+        _updateTick(self, params.tickLower, params.liquidityDelta);
+        _updateTick(self, params.tickUpper, params.liquidityDelta);
+    }
+
+    /// @dev Execute a swap
+    function _swap(
+        PoolState storage self,
+        SwapParamsInternal memory params
+    ) internal returns (BalanceDelta delta, uint160, uint24, uint128) {
+        require(params.amountSpecified != 0, "Amount cannot be zero");
+
+        // Simplified: calculate approximate swap delta
+        int128 amount0Delta;
+        int128 amount1Delta;
+
+        if (params.zeroForOne) {
+            amount0Delta = int128(params.amountSpecified);
+            amount1Delta = -int128(params.amountSpecified); // Simplified 1:1 swap
+        } else {
+            amount0Delta = -int128(params.amountSpecified);
+            amount1Delta = int128(params.amountSpecified);
+        }
+
+        delta = toBalanceDelta(amount0Delta, amount1Delta);
+
+        // Update pool state (simplified price impact)
+        if (params.zeroForOne) {
+            self.slot0.tick -= 1; // Price moves down
+        } else {
+            self.slot0.tick += 1; // Price moves up
+        }
+        self.slot0.sqrtPriceX96 = TickMath.getSqrtPriceAtTick(self.slot0.tick);
+
+        return (delta, self.slot0.sqrtPriceX96, 0, self.liquidity);
+    }
+
+    /// @dev Donate to the pool
+    function _donate(uint256 amount0, uint256 amount1) internal pure returns (BalanceDelta delta) {
+        // Simplified: donations are just added as deltas
+        delta = toBalanceDelta(-int128(uint128(amount0)), -int128(uint128(amount1)));
+    }
+
+    /// @dev Helper to update tick info
+    function _updateTick(PoolState storage self, int24 tick, int128 liquidityDelta) private {
+        TickInfo storage info = self.ticks[tick];
+
+        if (liquidityDelta > 0) {
+            info.liquidityGross += uint128(liquidityDelta);
+            info.liquidityNet += liquidityDelta;
+        } else if (liquidityDelta < 0) {
+            info.liquidityGross -= uint128(-liquidityDelta);
+            info.liquidityNet += liquidityDelta; // Note: adding negative delta
+        }
     }
 
     // Internal helpers
