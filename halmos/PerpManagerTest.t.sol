@@ -21,7 +21,7 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
+import {PoolManagerMockSimplified} from "./mocks/PoolManagerMockSimplified.sol";
 import {BeaconMock} from "./mocks/BeaconMock.sol";
 
 // TODO: give a list of symbolic values assumed
@@ -31,7 +31,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
 
     // Contracts
-    PoolManagerMock internal poolManagerMock;
+    PoolManagerMockSimplified internal poolManagerMock;
     ERC20Mock internal usdcMock;
     PerpManagerHarness internal perpManager;
     BeaconMock internal beaconMock;
@@ -53,7 +53,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
     function setUp() public virtual {
         // Initialize mock contracts
-        poolManagerMock = new PoolManagerMock();
+        poolManagerMock = new PoolManagerMockSimplified();
         usdcMock = new ERC20Mock();
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
         // TODO: remove hardcoded typecast
