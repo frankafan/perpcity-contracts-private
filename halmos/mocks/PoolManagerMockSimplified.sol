@@ -85,9 +85,9 @@ contract PoolManagerMock {
     /// @notice Initialize a new pool
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         PoolId id = key.toId();
-        uint24 lpFee = key.fee.getInitialLPFee();
+        uint24 lpFee = key.fee;
 
-        tick = _poolStates[id].initialize(sqrtPriceX96, lpFee);
+        tick = PoolMock.initialize(_poolStates[id], sqrtPriceX96, lpFee);
 
         emit Initialize(
             id,
@@ -110,7 +110,8 @@ contract PoolManagerMock {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
 
-        (BalanceDelta principalDelta, BalanceDelta fees) = _poolStates[id].modifyLiquidity(
+        (BalanceDelta principalDelta, BalanceDelta fees) = PoolMock.modifyLiquidity(
+            _poolStates[id],
             PoolMock.ModifyLiquidityParams({
                 owner: msg.sender,
                 tickLower: params.tickLower,
@@ -133,7 +134,8 @@ contract PoolManagerMock {
         PoolId id = key.toId();
         PoolMock.State storage pool = _poolStates[id];
 
-        (delta, , , ) = pool.swap(
+        (delta, , , ) = PoolMock.swap(
+            pool,
             PoolMock.SwapParams({
                 tickSpacing: key.tickSpacing,
                 zeroForOne: params.zeroForOne,
@@ -165,7 +167,7 @@ contract PoolManagerMock {
     ) external returns (BalanceDelta delta) {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
-        delta = _poolStates[id].donate(amount0, amount1);
+        delta = PoolMock.donate(_poolStates[id], amount0, amount1);
         _accountDeltas(key, delta, msg.sender);
         emit Donate(id, msg.sender, amount0, amount1);
     }
