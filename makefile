@@ -1,4 +1,4 @@
-LOOP ?= 1
+LOOP ?= 2
 HALMOS_OUTPUT_DIR := halmos/out
 
 
