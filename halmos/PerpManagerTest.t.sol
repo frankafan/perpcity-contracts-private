@@ -92,14 +92,14 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         vm.roll(blockNumber);
         vm.warp(blockTimestamp);
-
-        // Create perp
-        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
     }
 
     // TODO: write out methodology / justifications in docstring
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
         // TODO: verify the function arguments are symbolic
+
+        // Create perp
+        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
 
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
