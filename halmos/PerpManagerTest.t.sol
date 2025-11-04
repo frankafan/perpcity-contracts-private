@@ -44,9 +44,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
     // Test actors
     address internal creator;
-    address internal maker;
-    address internal taker;
-    address internal liquidator;
 
     // Perps
     PoolId internal perpId1;
@@ -79,24 +76,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // TODO: try with concrete vs symbolic and see if the number of paths is different
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
-        maker = svm.createAddress("maker");
-        taker = svm.createAddress("taker");
-        liquidator = svm.createAddress("liquidator");
 
         // Assumptions for actors
         vm.assume(creator != address(0));
-        vm.assume(maker != address(0));
-        vm.assume(taker != address(0));
-        vm.assume(liquidator != address(0));
         vm.assume(creator != address(perpManager));
-        vm.assume(maker != address(perpManager));
-        vm.assume(taker != address(perpManager));
-        vm.assume(creator != maker);
-        vm.assume(creator != taker);
-        vm.assume(creator != liquidator);
-        vm.assume(maker != taker);
-        vm.assume(maker != liquidator);
-        vm.assume(taker != liquidator);
 
         // TODO: remove if possible
         // Set symbolic block number and timestamp
