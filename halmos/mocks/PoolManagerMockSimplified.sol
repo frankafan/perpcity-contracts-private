@@ -17,7 +17,7 @@ import {UnsafeMath} from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
 /// @notice Simplified PoolManager mock for Halmos testing
 /// @dev Barebones implementation focusing on core logic with minimal complexity
 /// @dev All pool logic is inlined to reduce symbolic execution overhead
-contract PoolManagerMockSimplified {
+contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
     using SafeCast for *;
 

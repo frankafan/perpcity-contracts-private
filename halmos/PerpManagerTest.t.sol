@@ -21,7 +21,8 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {PoolManagerMockSimplified} from "./mocks/PoolManagerMockSimplified.sol";
+// import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
+import {PoolManagerMock} from "./mocks/PoolManagerMockSimplified.sol";
 import {BeaconMock} from "./mocks/BeaconMock.sol";
 
 // TODO: give a list of symbolic values assumed
@@ -31,7 +32,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
 
     // Contracts
-    PoolManagerMockSimplified internal poolManagerMock;
+    PoolManagerMock internal poolManagerMock;
     ERC20Mock internal usdcMock;
     PerpManagerHarness internal perpManager;
     BeaconMock internal beaconMock;
@@ -50,7 +51,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
     function setUp() public virtual {
         // Initialize mock contracts
-        poolManagerMock = new PoolManagerMockSimplified();
+        poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock();
         beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
         // TODO: remove hardcoded typecast
@@ -113,7 +114,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        _callPerpManagerNTimes(selector, caller, perpId1, 1);
+        _callPerpManagerNTimes(selector, caller, perpId1, 10);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);

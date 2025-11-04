@@ -85,7 +85,7 @@ contract PoolManagerMock {
     event Transfer(address indexed caller, address indexed from, address indexed to, uint256 id, uint256 amount);
 
     /* STRUCTS - from Pool library */
-    
+
     /// @dev Slot0 contains the current price and tick
     struct Slot0 {
         uint160 sqrtPriceX96;
@@ -158,7 +158,7 @@ contract PoolManagerMock {
     int24 private constant MIN_TICK_SPACING = TickMath.MIN_TICK_SPACING;
 
     /* STORAGE */
-    
+
     /// @dev Pool states mapping
     mapping(PoolId => PoolState) internal _pools;
 
@@ -204,12 +204,7 @@ contract PoolManagerMock {
         // Initialize using TickMathSimplified
         tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
 
-        pool.slot0 = Slot0({
-            sqrtPriceX96: sqrtPriceX96,
-            tick: tick,
-            protocolFee: 0,
-            lpFee: key.fee
-        });
+        pool.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: 0, lpFee: key.fee});
 
         emit Initialize(
             id,
@@ -418,16 +413,16 @@ contract PoolManagerMock {
         // Handle position state (simplified - no fee tracking for mock)
         bytes32 positionKey = Position.calculatePositionKey(params.owner, tickLower, tickUpper, params.salt);
         Position.State storage position = pool.positions[positionKey];
-        
+
         uint128 liquidityBefore = position.liquidity;
         uint128 liquidityAfter;
-        
+
         if (liquidityDelta < 0) {
             liquidityAfter = liquidityBefore - uint128(-liquidityDelta);
         } else {
             liquidityAfter = liquidityBefore + uint128(liquidityDelta);
         }
-        
+
         position.liquidity = liquidityAfter;
 
         // Calculate deltas based on current tick position
@@ -480,12 +475,7 @@ contract PoolManagerMock {
     }
 
     /// @dev Update tick info when liquidity changes
-    function _updateTick(
-        PoolState storage pool,
-        int24 tick,
-        int128 liquidityDelta,
-        bool upper
-    ) internal {
+    function _updateTick(PoolState storage pool, int24 tick, int128 liquidityDelta, bool upper) internal {
         TickInfo storage info = pool.ticks[tick];
 
         uint128 liquidityGrossBefore = info.liquidityGross;
@@ -519,13 +509,10 @@ contract PoolManagerMock {
     }
 
     /// @dev Swap implementation with full tick crossing logic
-    function _swap(
-        PoolState storage pool,
-        SwapParamsInternal memory params
-    ) internal returns (BalanceDelta delta) {
+    function _swap(PoolState storage pool, SwapParamsInternal memory params) internal returns (BalanceDelta delta) {
         bool zeroForOne = params.zeroForOne;
         bool exactInput = params.amountSpecified < 0;
-        
+
         // Validate price limit
         if (zeroForOne) {
             if (params.sqrtPriceLimitX96 <= TickMath.MIN_SQRT_PRICE) {
@@ -560,7 +547,7 @@ contract PoolManagerMock {
         // Calculate amounts for the swap
         if (exactInput) {
             uint256 amountIn = uint256(-params.amountSpecified);
-            
+
             // Calculate new price after swap
             state.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
                 state.sqrtPriceX96,
@@ -589,7 +576,7 @@ contract PoolManagerMock {
             state.amountCalculated = -int256(step.amountOut);
         } else {
             uint256 amountOut = uint256(params.amountSpecified);
-            
+
             // Calculate new price after swap
             state.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
                 state.sqrtPriceX96,
@@ -625,7 +612,7 @@ contract PoolManagerMock {
         // Calculate final deltas
         int128 amount0;
         int128 amount1;
-        
+
         if (zeroForOne == exactInput) {
             amount0 = exactInput ? int128(-params.amountSpecified) : int128(state.amountCalculated);
             amount1 = exactInput ? int128(state.amountCalculated) : int128(params.amountSpecified);
