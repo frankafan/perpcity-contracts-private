@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(FOUNDRY_PROFILE=halmos:*)"
     ],
     "deny": [],
     "ask": []
