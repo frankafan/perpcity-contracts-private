@@ -15,10 +15,7 @@ import {PoolMock} from "./PoolMock.sol";
 contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
 
-    // ============================================================
-    // EVENTS
-    // ============================================================
-
+    // Events
     event Initialize(
         PoolId indexed id,
         Currency indexed currency0,
@@ -50,9 +47,7 @@ contract PoolManagerMock {
     event Donate(PoolId indexed id, address indexed sender, uint256 amount0, uint256 amount1);
     event Transfer(address indexed caller, address indexed from, address indexed to, uint256 id, uint256 amount);
 
-    // ============================================================
-    // STATE
-    // ============================================================
+    // State
 
     /// @dev Lock state - true when unlocked, false when locked
     bool internal _unlocked;
@@ -66,9 +61,7 @@ contract PoolManagerMock {
     /// @dev Currency deltas for current unlock session: currency => address => delta
     mapping(Currency => mapping(address => int256)) internal _deltas;
 
-    // ============================================================
-    // LOCK MECHANISM
-    // ============================================================
+    // Lock mechanism
 
     /// @notice Unlocks the pool manager and executes callback
     function unlock(bytes calldata data) external returns (bytes memory result) {
@@ -78,9 +71,7 @@ contract PoolManagerMock {
         _unlocked = false;
     }
 
-    // ============================================================
-    // POOL OPERATIONS
-    // ============================================================
+    // Pool operations
 
     /// @notice Initialize a new pool
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
@@ -172,9 +163,7 @@ contract PoolManagerMock {
         emit Donate(id, msg.sender, amount0, amount1);
     }
 
-    // ============================================================
-    // TOKEN OPERATIONS (ERC6909-like)
-    // ============================================================
+    // Token operations (ERC6909-like)
 
     /// @notice Mint tokens (settle negative delta)
     function mint(address to, uint256 id, uint256 amount) external {
@@ -204,9 +193,7 @@ contract PoolManagerMock {
         // No-op for simplified mock
     }
 
-    // ============================================================
-    // VIEW FUNCTIONS
-    // ============================================================
+    // View functions
 
     /// @notice Get current price and tick for a pool
     function getSlot0(
@@ -239,9 +226,7 @@ contract PoolManagerMock {
         return _poolStates[id].tickBitmap[word];
     }
 
-    // ============================================================
-    // INTERNAL HELPERS
-    // ============================================================
+    // Internal helpers
 
     /// @dev Account a single currency delta
     function _accountDelta(Currency currency, int128 delta, address target) internal {
