@@ -12,7 +12,7 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 /// @notice Simplified PoolManager mock for Halmos testing
 /// @dev Barebones implementation focusing on core logic with minimal complexity
 /// @dev All pool logic is inlined to reduce symbolic execution overhead
-contract PoolManagerMock {
+contract PoolManagerMockSimplified {
     using PoolIdLibrary for PoolKey;
 
     // Structs
