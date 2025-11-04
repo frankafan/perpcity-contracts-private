@@ -123,7 +123,12 @@ contract PoolManagerMockSimplified {
         PoolId id = key.toId();
         uint24 lpFee = key.fee;
 
-        tick = _initializePool(_poolStates[id], sqrtPriceX96, lpFee);
+        PoolState storage self = _poolStates[id];
+        require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
+
+        tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+
+        self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: lpFee, lpFee: 0});
 
         emit Initialize(
             id,
@@ -145,18 +150,34 @@ contract PoolManagerMockSimplified {
     ) external returns (BalanceDelta callerDelta, BalanceDelta feesAccrued) {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
+        PoolState storage self = _poolStates[id];
 
-        (BalanceDelta principalDelta, BalanceDelta fees) = _modifyLiquidity(
-            _poolStates[id],
-            ModifyLiquidityParamsInternal({
-                owner: msg.sender,
-                tickLower: params.tickLower,
-                tickUpper: params.tickUpper,
-                liquidityDelta: int128(params.liquidityDelta),
-                tickSpacing: key.tickSpacing,
-                salt: params.salt
-            })
-        );
+        ModifyLiquidityParamsInternal memory paramsInternal = ModifyLiquidityParamsInternal({
+            owner: msg.sender,
+            tickLower: params.tickLower,
+            tickUpper: params.tickUpper,
+            liquidityDelta: int128(params.liquidityDelta),
+            tickSpacing: key.tickSpacing,
+            salt: params.salt
+        });
+
+        // Simplified: return approximate deltas
+        int128 amount0Delta = int128(paramsInternal.liquidityDelta / 2);
+        int128 amount1Delta = int128(paramsInternal.liquidityDelta / 2);
+
+        BalanceDelta principalDelta = toBalanceDelta(amount0Delta, amount1Delta);
+        BalanceDelta fees = toBalanceDelta(0, 0);
+
+        // Update liquidity
+        if (paramsInternal.liquidityDelta > 0) {
+            self.liquidity += uint128(paramsInternal.liquidityDelta);
+        } else if (paramsInternal.liquidityDelta < 0) {
+            self.liquidity -= uint128(-paramsInternal.liquidityDelta);
+        }
+
+        // Update tick info
+        _updateTick(self, paramsInternal.tickLower, paramsInternal.liquidityDelta);
+        _updateTick(self, paramsInternal.tickUpper, paramsInternal.liquidityDelta);
 
         callerDelta = principalDelta + fees;
         feesAccrued = fees;
@@ -170,16 +191,37 @@ contract PoolManagerMockSimplified {
         PoolId id = key.toId();
         PoolState storage pool = _poolStates[id];
 
-        (delta, , , ) = _swap(
-            pool,
-            SwapParamsInternal({
-                tickSpacing: key.tickSpacing,
-                zeroForOne: params.zeroForOne,
-                amountSpecified: params.amountSpecified,
-                sqrtPriceLimitX96: params.sqrtPriceLimitX96,
-                lpFeeOverride: 0
-            })
-        );
+        SwapParamsInternal memory paramsInternal = SwapParamsInternal({
+            tickSpacing: key.tickSpacing,
+            zeroForOne: params.zeroForOne,
+            amountSpecified: params.amountSpecified,
+            sqrtPriceLimitX96: params.sqrtPriceLimitX96,
+            lpFeeOverride: 0
+        });
+
+        require(paramsInternal.amountSpecified != 0, "Amount cannot be zero");
+
+        // Simplified: calculate approximate swap delta
+        int128 amount0Delta;
+        int128 amount1Delta;
+
+        if (paramsInternal.zeroForOne) {
+            amount0Delta = int128(paramsInternal.amountSpecified);
+            amount1Delta = -int128(paramsInternal.amountSpecified); // Simplified 1:1 swap
+        } else {
+            amount0Delta = -int128(paramsInternal.amountSpecified);
+            amount1Delta = int128(paramsInternal.amountSpecified);
+        }
+
+        delta = toBalanceDelta(amount0Delta, amount1Delta);
+
+        // Update pool state (simplified price impact)
+        if (paramsInternal.zeroForOne) {
+            pool.slot0.tick -= 1; // Price moves down
+        } else {
+            pool.slot0.tick += 1; // Price moves up
+        }
+        pool.slot0.sqrtPriceX96 = TickMath.getSqrtPriceAtTick(pool.slot0.tick);
 
         _accountDeltas(key, delta, msg.sender);
         emit Swap(
@@ -203,7 +245,8 @@ contract PoolManagerMockSimplified {
     ) external returns (BalanceDelta delta) {
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
-        delta = _donate(amount0, amount1);
+        // Simplified: donations are just added as deltas
+        delta = toBalanceDelta(-int128(uint128(amount0)), -int128(uint128(amount1)));
         _accountDeltas(key, delta, msg.sender);
         emit Donate(id, msg.sender, amount0, amount1);
     }
@@ -272,81 +315,6 @@ contract PoolManagerMockSimplified {
     }
 
     // Internal pool logic (was in PoolMock)
-
-    /// @dev Initialize a pool
-    function _initializePool(
-        PoolState storage self,
-        uint160 sqrtPriceX96,
-        uint24 protocolFee
-    ) internal returns (int24 tick) {
-        require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
-
-        tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
-
-        self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: protocolFee, lpFee: 0});
-    }
-
-    /// @dev Modify liquidity in the pool
-    function _modifyLiquidity(
-        PoolState storage self,
-        ModifyLiquidityParamsInternal memory params
-    ) internal returns (BalanceDelta delta, BalanceDelta feesAccrued) {
-        // Simplified: return approximate deltas
-        int128 amount0Delta = int128(params.liquidityDelta / 2);
-        int128 amount1Delta = int128(params.liquidityDelta / 2);
-
-        delta = toBalanceDelta(amount0Delta, amount1Delta);
-        feesAccrued = toBalanceDelta(0, 0);
-
-        // Update liquidity
-        if (params.liquidityDelta > 0) {
-            self.liquidity += uint128(params.liquidityDelta);
-        } else if (params.liquidityDelta < 0) {
-            self.liquidity -= uint128(-params.liquidityDelta);
-        }
-
-        // Update tick info
-        _updateTick(self, params.tickLower, params.liquidityDelta);
-        _updateTick(self, params.tickUpper, params.liquidityDelta);
-    }
-
-    /// @dev Execute a swap
-    function _swap(
-        PoolState storage self,
-        SwapParamsInternal memory params
-    ) internal returns (BalanceDelta delta, uint160, uint24, uint128) {
-        require(params.amountSpecified != 0, "Amount cannot be zero");
-
-        // Simplified: calculate approximate swap delta
-        int128 amount0Delta;
-        int128 amount1Delta;
-
-        if (params.zeroForOne) {
-            amount0Delta = int128(params.amountSpecified);
-            amount1Delta = -int128(params.amountSpecified); // Simplified 1:1 swap
-        } else {
-            amount0Delta = -int128(params.amountSpecified);
-            amount1Delta = int128(params.amountSpecified);
-        }
-
-        delta = toBalanceDelta(amount0Delta, amount1Delta);
-
-        // Update pool state (simplified price impact)
-        if (params.zeroForOne) {
-            self.slot0.tick -= 1; // Price moves down
-        } else {
-            self.slot0.tick += 1; // Price moves up
-        }
-        self.slot0.sqrtPriceX96 = TickMath.getSqrtPriceAtTick(self.slot0.tick);
-
-        return (delta, self.slot0.sqrtPriceX96, 0, self.liquidity);
-    }
-
-    /// @dev Donate to the pool
-    function _donate(uint256 amount0, uint256 amount1) internal pure returns (BalanceDelta delta) {
-        // Simplified: donations are just added as deltas
-        delta = toBalanceDelta(-int128(uint128(amount0)), -int128(uint128(amount1)));
-    }
 
     /// @dev Helper to update tick info
     function _updateTick(PoolState storage self, int24 tick, int128 liquidityDelta) private {
