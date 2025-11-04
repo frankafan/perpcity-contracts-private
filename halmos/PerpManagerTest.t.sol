@@ -23,7 +23,7 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
 // import {PoolManagerMock} from "./mocks/PoolManagerMockSimplified.sol";
-import {BeaconMock} from "./mocks/BeaconMock.sol";
+import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 
 // TODO: give a list of symbolic values assumed
 
@@ -35,7 +35,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PoolManagerMock internal poolManagerMock;
     ERC20Mock internal usdcMock;
     PerpManagerHarness internal perpManager;
-    BeaconMock internal beaconMock;
+    OwnableBeacon internal beaconMock;
 
     // Modules
     Fees internal fees;
@@ -53,7 +53,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Initialize mock contracts
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock();
-        beaconMock = new BeaconMock(address(this), 50 * UINT_Q96, 100);
+        beaconMock = new OwnableBeacon(address(this), 50 * UINT_Q96, 100);
         // TODO: remove hardcoded typecast
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
