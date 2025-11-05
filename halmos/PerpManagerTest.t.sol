@@ -32,7 +32,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
 
     // Constants
-    uint256 public constant NUM_CALLS = 0;
+    uint256 public constant NUM_CALLS = 1;
 
     // Contracts
     PoolManagerMock internal poolManagerMock;
@@ -41,10 +41,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
     OwnableBeacon internal beaconMock;
 
     // Modules
-    Fees internal fees;
-    MarginRatios internal marginRatios;
-    Lockup internal lockup;
-    SqrtPriceImpactLimit internal sqrtPriceImpactLimit;
+    Fees internal _fees;
+    MarginRatios internal _marginRatios;
+    Lockup internal _lockup;
+    SqrtPriceImpactLimit internal _sqrtPriceImpactLimit;
 
     // Test actors
     address internal creator;
@@ -65,16 +65,16 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // svm.enableSymbolicStorage(address(poolManagerMock));
 
         // Initialize and register modules
-        fees = new Fees();
-        marginRatios = new MarginRatios();
-        lockup = new Lockup();
-        sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
+        _fees = new Fees();
+        _marginRatios = new MarginRatios();
+        _lockup = new Lockup();
+        _sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
 
         // TODO: make sure the rest also aligns with the current version PerpManager
-        perpManager.registerFeesModule(fees);
-        perpManager.registerMarginRatiosModule(marginRatios);
-        perpManager.registerLockupPeriodModule(lockup);
-        perpManager.registerSqrtPriceImpactLimitModule(sqrtPriceImpactLimit);
+        perpManager.registerFeesModule(_fees);
+        perpManager.registerMarginRatiosModule(_marginRatios);
+        perpManager.registerLockupPeriodModule(_lockup);
+        perpManager.registerSqrtPriceImpactLimitModule(_sqrtPriceImpactLimit);
 
         // TODO: try with concrete vs symbolic and see if the number of paths is different
         // Create symbolic addresses for test actors
@@ -127,7 +127,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Calculate total effective margin in open positions
         uint256 totalEffectiveMargin = 0;
         for (uint128 i = 0; i < nextPosId; i++) {
-            // TODO: add check for if the position is already closed
             IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
             if (pos.holder != address(0)) {
                 // Use quoteClosePosition to get effective margin for this position
@@ -159,14 +158,30 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         beaconMock = new OwnableBeacon(beaconOwner, initialIndexX96, initialCardinalityCap);
 
-        IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(address(beaconMock));
+        IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(
+            address(beaconMock),
+            _fees,
+            _marginRatios,
+            _lockup,
+            _sqrtPriceImpactLimit
+        );
         vm.prank(perpCreator);
         return perpManager.createPerp(perpParams);
     }
 
     /// @notice Create symbolic perp parameters
     /// @param beacon The beacon address to use for the perp
-    function _createSymbolicPerpParams(address beacon) internal returns (IPerpManager.CreatePerpParams memory) {
+    /// @param fees The fees module
+    /// @param marginRatios The margin ratios module
+    /// @param lockup The lockup period module
+    /// @param sqrtPriceImpactLimit The sqrt price impact limit module
+    function _createSymbolicPerpParams(
+        address beacon,
+        IFees fees,
+        IMarginRatios marginRatios,
+        ILockupPeriod lockup,
+        ISqrtPriceImpactLimit sqrtPriceImpactLimit
+    ) internal returns (IPerpManager.CreatePerpParams memory) {
         uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
 
         // TODO: use their hardcoded constant
@@ -175,7 +190,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(startingSqrtPriceX96 >= 4295128739);
         vm.assume(startingSqrtPriceX96 <= type(uint160).max);
 
-        // TODO: take variables from arguments or this
         return
             IPerpManager.CreatePerpParams({
                 beacon: beacon,
@@ -234,57 +248,38 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @param caller Address to call from
     /// @param perpId Perp ID to use
     function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
-        // Get function selectors from contract
-        // TODO: don't make variables for these
-        bytes4 openMakerPositionSel = perpManager.openMakerPos.selector;
-        bytes4 openTakerPositionSel = perpManager.openTakerPos.selector;
-        bytes4 addMarginSel = perpManager.addMargin.selector;
-        bytes4 closePositionSel = perpManager.closePosition.selector;
-        bytes4 increaseCardinalityCapSel = perpManager.increaseCardinalityCap.selector;
-
         // Limit the functions tested
         // TODO: document that these are entry points
         // TODO: check vault balance integrity by only calling one entry point one time manually - the sum of all should be the same as calling callPerpManager once
         vm.assume(
-            selector == openMakerPositionSel ||
-                selector == openTakerPositionSel ||
-                selector == addMarginSel ||
-                selector == closePositionSel ||
-                selector == increaseCardinalityCapSel
+            selector == perpManager.openMakerPos.selector ||
+                selector == perpManager.openTakerPos.selector ||
+                selector == perpManager.addMargin.selector ||
+                selector == perpManager.closePosition.selector ||
+                selector == perpManager.increaseCardinalityCap.selector
         );
-
-        // Create symbolic parameters
-        IPerpManager.OpenMakerPositionParams memory makerParams = _createSymbolicMakerParams();
-        IPerpManager.OpenTakerPositionParams memory takerParams = _createSymbolicTakerParams();
-
-        // TODO: make a wrapper for svm.createUint that does the same thing called simulateAllPossibleValues
-        // TODO: put these symbolic variables into the if-else block
-        uint128 posId = uint128(svm.createUint(128, "posId"));
-
-        // addMargin parameters
-        uint256 addMarginAmount = svm.createUint256("addMarginAmount");
-
-        // closePosition parameters
-        uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
-        uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
-        uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
-
-        // increaseCardinalityCap parameters
-        uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
 
         bytes memory args;
 
-        if (selector == openMakerPositionSel) {
+        if (selector == perpManager.openMakerPos.selector) {
+            IPerpManager.OpenMakerPositionParams memory makerParams = _createSymbolicMakerParams();
             args = abi.encode(perpId, makerParams);
-        } else if (selector == openTakerPositionSel) {
+        } else if (selector == perpManager.openTakerPos.selector) {
+            IPerpManager.OpenTakerPositionParams memory takerParams = _createSymbolicTakerParams();
             args = abi.encode(perpId, takerParams);
-        } else if (selector == addMarginSel) {
+        } else if (selector == perpManager.addMargin.selector) {
+            uint128 posId = uint128(svm.createUint(128, "posId"));
+            uint256 addMarginAmount = svm.createUint256("addMarginAmount");
             IPerpManager.AddMarginParams memory params = IPerpManager.AddMarginParams({
                 posId: posId,
                 amtToAdd: addMarginAmount
             });
             args = abi.encode(perpId, params);
-        } else if (selector == closePositionSel) {
+        } else if (selector == perpManager.closePosition.selector) {
+            uint128 posId = uint128(svm.createUint(128, "posId"));
+            uint128 minAmt0Out = uint128(svm.createUint(128, "minAmt0Out"));
+            uint128 minAmt1Out = uint128(svm.createUint(128, "minAmt1Out"));
+            uint128 maxAmt1In = uint128(svm.createUint(128, "maxAmt1In"));
             IPerpManager.ClosePositionParams memory params = IPerpManager.ClosePositionParams({
                 posId: posId,
                 minAmt0Out: minAmt0Out,
@@ -292,7 +287,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
                 maxAmt1In: maxAmt1In
             });
             args = abi.encode(perpId, params);
-        } else if (selector == increaseCardinalityCapSel) {
+        } else if (selector == perpManager.increaseCardinalityCap.selector) {
+            uint16 cardinalityCap = uint16(svm.createUint(16, "cardinalityCap"));
             args = abi.encode(perpId, cardinalityCap);
         } else {
             args = svm.createBytes(1024, "data");
