@@ -48,6 +48,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
     // Test actors
     address internal creator;
+    address internal beaconOwner;
 
     // Perps
     PoolId internal perpId1;
@@ -56,8 +57,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Initialize mock contracts
         poolManagerMock = new PoolManagerMock();
         usdcMock = new ERC20Mock();
-        beaconMock = new OwnableBeacon(address(this), 50 * UINT_Q96, 100);
-        // TODO: remove hardcoded typecast
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
         // Create symbolic storage
@@ -80,10 +79,12 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // TODO: try with concrete vs symbolic and see if the number of paths is different
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
+        beaconOwner = svm.createAddress("beacon.owner");
 
         // Assumptions for actors
         vm.assume(creator != address(0));
         vm.assume(creator != address(perpManager));
+        vm.assume(beaconOwner != address(0));
 
         // TODO: remove if possible
         // Set symbolic block number and timestamp
@@ -149,6 +150,15 @@ contract PerpManagerHalmosTest is SymTest, Test {
     /// @notice Create symbolic perp
     /// @param perpCreator Address creating the perp
     function _createPerp(address perpCreator) internal returns (PoolId) {
+        // Create beaconMock with symbolic inputs
+        uint256 initialIndexX96 = svm.createUint256("beacon.initialIndexX96");
+        uint16 initialCardinalityCap = uint16(svm.createUint(16, "beacon.initialCardinalityCap"));
+
+        // Assumptions for beacon parameters
+        vm.assume(initialCardinalityCap > 0);
+
+        beaconMock = new OwnableBeacon(beaconOwner, initialIndexX96, initialCardinalityCap);
+
         IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(address(beaconMock));
         vm.prank(perpCreator);
         return perpManager.createPerp(perpParams);
