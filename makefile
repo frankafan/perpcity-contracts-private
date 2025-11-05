@@ -1,5 +1,6 @@
 LOOP ?= 2
-HALMOS_OUTPUT_DIR := halmos/out
+TIMESTAMP := $(shell date +%m%d_%H%M%S)
+HALMOS_OUTPUT_DIR := halmos/out-$(TIMESTAMP)
 
 
 .PHONY: test-halmos test-halmos-usdc
@@ -7,7 +8,8 @@ HALMOS_OUTPUT_DIR := halmos/out
 compile:
 	FOUNDRY_PROFILE=halmos forge build
 
-test-halmos: clean
+test-halmos:
+	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	mkdir -p $(HALMOS_OUTPUT_DIR)/smt
 	FOUNDRY_PROFILE=halmos halmos \
 		--contract PerpManagerHalmosTest \
@@ -37,13 +39,11 @@ test-halmos: clean
 	make analyze
 
 test-halmos-timed:
+	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	@/usr/bin/time -p make test-halmos 2>&1 | tee $(HALMOS_OUTPUT_DIR)/time.log
 
 analyze:
 	python halmos/analyze_out.py $(HALMOS_OUTPUT_DIR)/halmos_test.json
-
-clean:
-	rm -rf $(HALMOS_OUTPUT_DIR)/*
 
 build-dockerfile:
 	cd halmos && docker build -t perpcityhalmos -f dockerfile .
