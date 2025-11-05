@@ -21,7 +21,7 @@ import {PerpManagerHarness} from "../PerpManagerHarness.sol";
 
 // Mocks
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {PoolManagerMockSimplified as PoolManagerMock} from "../mocks/PoolManagerMockSimplified.sol";
+import {PoolManagerMock} from "../mocks/PoolManagerMockSimplified.sol";
 import {OwnableBeacon} from "../../src/beacons/ownable/OwnableBeacon.sol";
 
 /// @custom:halmos --solver-timeout-assertion 0
