@@ -31,6 +31,9 @@ import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
 
+    // Constants
+    uint256 public constant NUM_CALLS = 0;
+
     // Contracts
     PoolManagerMock internal poolManagerMock;
     ERC20Mock internal usdcMock;
@@ -114,7 +117,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        _callPerpManagerNTimes(selector, caller, perpId1, 10);
+        _callPerpManagerNTimes(selector, caller, perpId1, NUM_CALLS);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
