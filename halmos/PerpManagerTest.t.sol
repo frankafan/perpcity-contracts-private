@@ -184,11 +184,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
     ) internal returns (IPerpManager.CreatePerpParams memory) {
         uint160 startingSqrtPriceX96 = uint160(svm.createUint(160, "startingSqrtPriceX96"));
 
-        // TODO: use their hardcoded constant
         // Assume valid sqrt price range
-        // MIN_SQRT_RATIO = 4295128739, MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
+        // From TickMath.sol: MIN_SQRT_PRICE = 4295128739, MAX_SQRT_PRICE = 1461446703485210103287273052203988822378723970342
         vm.assume(startingSqrtPriceX96 >= 4295128739);
-        vm.assume(startingSqrtPriceX96 <= type(uint160).max);
+        vm.assume(startingSqrtPriceX96 <= 1461446703485210103287273052203988822378723970342);
 
         return
             IPerpManager.CreatePerpParams({
