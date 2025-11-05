@@ -13,6 +13,7 @@ import {LiquidityMath} from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
 import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import {FixedPoint128} from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
 import {UnsafeMath} from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
+import {TickBitmap} from "@uniswap/v4-core/src/libraries/TickBitmap.sol";
 
 /// @notice Simplified PoolManager mock for Halmos testing
 /// @dev Barebones implementation focusing on core logic with minimal complexity
@@ -20,6 +21,7 @@ import {UnsafeMath} from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
 contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
     using SafeCast for *;
+    using TickBitmap for mapping(int16 => uint256);
 
     // Structs
 
@@ -114,6 +116,9 @@ contract PoolManagerMock {
     /// @dev Currency deltas for current unlock session: currency => address => delta
     mapping(Currency => mapping(address => int256)) internal _deltas;
 
+    /// @dev Count of nonzero deltas - used for flash accounting validation
+    uint256 internal _nonzeroDeltaCount;
+
     // Lock mechanism
 
     /// @notice Unlocks the pool manager and executes callback
@@ -121,6 +126,8 @@ contract PoolManagerMock {
         require(!_unlocked, "Already unlocked");
         _unlocked = true;
         result = IUnlockCallback(msg.sender).unlockCallback(data);
+        // Ensure all deltas are settled before locking
+        require(_nonzeroDeltaCount == 0, "Currency not settled");
         _unlocked = false;
     }
 
@@ -129,14 +136,18 @@ contract PoolManagerMock {
     /// @notice Initialize a new pool
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         PoolId id = key.toId();
-        uint24 lpFee = key.fee;
 
         PoolState storage self = _poolStates[id];
         require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
 
+        // Validate sqrtPriceX96 bounds
+        require(sqrtPriceX96 >= TickMath.MIN_SQRT_PRICE, "Price too low");
+        require(sqrtPriceX96 <= TickMath.MAX_SQRT_PRICE, "Price too high");
+
         tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
 
-        self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: lpFee, lpFee: 0});
+        // Protocol fee is assumed to be 0 for testing; LP fee is set from key.fee
+        self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: 0, lpFee: key.fee});
 
         emit Initialize(
             id,
@@ -173,6 +184,14 @@ contract PoolManagerMock {
         int128 liquidityDelta = paramsInternal.liquidityDelta;
         int24 tickLower = paramsInternal.tickLower;
         int24 tickUpper = paramsInternal.tickUpper;
+        int24 tickSpacing = paramsInternal.tickSpacing;
+
+        // Validate ticks
+        require(tickLower < tickUpper, "Ticks misordered");
+        require(tickLower >= TickMath.MIN_TICK, "tickLower out of bounds");
+        require(tickUpper <= TickMath.MAX_TICK, "tickUpper out of bounds");
+        require(tickLower % tickSpacing == 0, "tickLower not aligned to spacing");
+        require(tickUpper % tickSpacing == 0, "tickUpper not aligned to spacing");
 
         // Update tick info
         _updateTick(self, tickLower, liquidityDelta, false);
@@ -251,6 +270,15 @@ contract PoolManagerMock {
         uint160 sqrtPriceX96 = pool.slot0.sqrtPriceX96;
         uint128 liquidity = pool.liquidity;
 
+        // Validate price limit
+        if (zeroForOne) {
+            require(paramsInternal.sqrtPriceLimitX96 < sqrtPriceX96, "Price limit already exceeded");
+            require(paramsInternal.sqrtPriceLimitX96 > TickMath.MIN_SQRT_PRICE, "Price limit out of bounds");
+        } else {
+            require(paramsInternal.sqrtPriceLimitX96 > sqrtPriceX96, "Price limit already exceeded");
+            require(paramsInternal.sqrtPriceLimitX96 < TickMath.MAX_SQRT_PRICE, "Price limit out of bounds");
+        }
+
         // Simplified swap (no iteration through ticks)
         uint160 sqrtPriceX96Next;
         uint256 amountIn;
@@ -259,9 +287,23 @@ contract PoolManagerMock {
         if (exactInput) {
             // Exact input swap
             uint256 amountSpecifiedAbs = uint256(-paramsInternal.amountSpecified);
-            sqrtPriceX96Next = zeroForOne
-                ? SqrtPriceMath.getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, amountSpecifiedAbs, zeroForOne)
-                : SqrtPriceMath.getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, amountSpecifiedAbs, zeroForOne);
+            sqrtPriceX96Next = SqrtPriceMath.getNextSqrtPriceFromInput(
+                sqrtPriceX96,
+                liquidity,
+                amountSpecifiedAbs,
+                zeroForOne
+            );
+
+            // Clamp to price limit
+            if (zeroForOne) {
+                if (sqrtPriceX96Next < paramsInternal.sqrtPriceLimitX96) {
+                    sqrtPriceX96Next = paramsInternal.sqrtPriceLimitX96;
+                }
+            } else {
+                if (sqrtPriceX96Next > paramsInternal.sqrtPriceLimitX96) {
+                    sqrtPriceX96Next = paramsInternal.sqrtPriceLimitX96;
+                }
+            }
 
             amountIn = amountSpecifiedAbs;
 
@@ -273,9 +315,23 @@ contract PoolManagerMock {
         } else {
             // Exact output swap
             uint256 amountSpecifiedAbs = uint256(paramsInternal.amountSpecified);
-            sqrtPriceX96Next = zeroForOne
-                ? SqrtPriceMath.getNextSqrtPriceFromOutput(sqrtPriceX96, liquidity, amountSpecifiedAbs, zeroForOne)
-                : SqrtPriceMath.getNextSqrtPriceFromOutput(sqrtPriceX96, liquidity, amountSpecifiedAbs, zeroForOne);
+            sqrtPriceX96Next = SqrtPriceMath.getNextSqrtPriceFromOutput(
+                sqrtPriceX96,
+                liquidity,
+                amountSpecifiedAbs,
+                zeroForOne
+            );
+
+            // Clamp to price limit
+            if (zeroForOne) {
+                if (sqrtPriceX96Next < paramsInternal.sqrtPriceLimitX96) {
+                    sqrtPriceX96Next = paramsInternal.sqrtPriceLimitX96;
+                }
+            } else {
+                if (sqrtPriceX96Next > paramsInternal.sqrtPriceLimitX96) {
+                    sqrtPriceX96Next = paramsInternal.sqrtPriceLimitX96;
+                }
+            }
 
             amountOut = amountSpecifiedAbs;
 
@@ -376,6 +432,14 @@ contract PoolManagerMock {
         // No-op for simplified mock
     }
 
+    /// @notice Get the balance of an account for a token (ERC6909)
+    /// @param owner The address to query the balance of
+    /// @param id The token ID (currency address as uint256)
+    /// @return The balance of the account
+    function balanceOf(address owner, uint256 id) external view returns (uint256) {
+        return _tokenBalances[owner][id];
+    }
+
     // View functions
 
     /// @notice Get current price and tick for a pool
@@ -441,13 +505,33 @@ contract PoolManagerMock {
         // Update liquidityGross and liquidityNet
         info.liquidityGross = liquidityGrossAfter;
         info.liquidityNet = liquidityNet;
+
+        // Update tick bitmap when tick is initialized or uninitialized
+        if (liquidityGrossBefore == 0 && liquidityGrossAfter > 0) {
+            // Tick is being initialized - flip it on
+            self.tickBitmap.flipTick(tick, int24(1));
+        } else if (liquidityGrossBefore > 0 && liquidityGrossAfter == 0) {
+            // Tick is being uninitialized - flip it off
+            self.tickBitmap.flipTick(tick, int24(1));
+        }
     }
 
     // Internal helpers
 
     /// @dev Account a single currency delta
     function _accountDelta(Currency currency, int128 delta, address target) internal {
-        if (delta != 0) _deltas[currency][target] += delta;
+        if (delta == 0) return;
+
+        int256 previous = _deltas[currency][target];
+        int256 next = previous + delta;
+        _deltas[currency][target] = next;
+
+        // Track nonzero delta count for flash accounting validation
+        if (next == 0 && previous != 0) {
+            _nonzeroDeltaCount--;
+        } else if (next != 0 && previous == 0) {
+            _nonzeroDeltaCount++;
+        }
     }
 
     /// @dev Account deltas for both currencies in a pool

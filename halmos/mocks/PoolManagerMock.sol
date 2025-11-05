@@ -171,6 +171,9 @@ contract PoolManagerMock {
     /// @dev Lock state - true when unlocked
     bool internal _unlocked;
 
+    /// @dev Count of nonzero deltas - used for flash accounting validation
+    uint256 internal _nonzeroDeltaCount;
+
     /* CORE FUNCTIONS - from PoolManager */
 
     /// @notice Unlocks the pool manager and executes callback
@@ -181,6 +184,9 @@ contract PoolManagerMock {
 
         // Callback to the caller
         result = IUnlockCallback(msg.sender).unlockCallback(data);
+
+        // Ensure all deltas are settled before locking
+        if (_nonzeroDeltaCount != 0) revert CurrencyNotSettled();
 
         // Lock again after callback
         _unlocked = false;
@@ -200,6 +206,11 @@ contract PoolManagerMock {
 
         // Check not already initialized
         if (pool.slot0.sqrtPriceX96 != 0) revert PoolAlreadyInitialized();
+
+        // Validate sqrtPriceX96 bounds
+        if (sqrtPriceX96 < TickMath.MIN_SQRT_PRICE || sqrtPriceX96 > TickMath.MAX_SQRT_PRICE) {
+            revert PriceLimitOutOfBounds(sqrtPriceX96);
+        }
 
         // Initialize using TickMathSimplified
         tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
@@ -350,6 +361,14 @@ contract PoolManagerMock {
 
     /* VIEW FUNCTIONS */
 
+    /// @notice Get the balance of an account for a token (ERC6909)
+    /// @param owner The address to query the balance of
+    /// @param id The token ID (currency address as uint256)
+    /// @return The balance of the account
+    function balanceOf(address owner, uint256 id) external view returns (uint256) {
+        return _balances[owner][id];
+    }
+
     /// @notice Get slot0 data for a pool
     function getSlot0(
         PoolId id
@@ -403,8 +422,13 @@ contract PoolManagerMock {
         int128 liquidityDelta = params.liquidityDelta;
         int24 tickLower = params.tickLower;
         int24 tickUpper = params.tickUpper;
+        int24 tickSpacing = params.tickSpacing;
 
         _checkTicks(tickLower, tickUpper);
+
+        // Validate tick spacing alignment
+        if (tickLower % tickSpacing != 0) revert TicksMisordered(tickLower, tickUpper);
+        if (tickUpper % tickSpacing != 0) revert TicksMisordered(tickLower, tickUpper);
 
         // Update tick info
         _updateTick(pool, tickLower, liquidityDelta, false);
@@ -639,7 +663,17 @@ contract PoolManagerMock {
     /// @dev Accounts a delta for a currency and address
     function _accountDelta(Currency currency, int128 delta, address target) internal {
         if (delta == 0) return;
-        _currencyDeltas[currency][target] += delta;
+
+        int256 previous = _currencyDeltas[currency][target];
+        int256 next = previous + delta;
+        _currencyDeltas[currency][target] = next;
+
+        // Track nonzero delta count for flash accounting validation
+        if (next == 0 && previous != 0) {
+            _nonzeroDeltaCount--;
+        } else if (next != 0 && previous == 0) {
+            _nonzeroDeltaCount++;
+        }
     }
 
     /// @dev Accounts pool balance deltas for both currencies
