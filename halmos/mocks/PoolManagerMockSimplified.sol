@@ -252,6 +252,7 @@ contract PoolManagerMock {
 
     /// @notice Execute a swap in a pool
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata) external returns (BalanceDelta delta) {
+        require(params.amountSpecified != 0, "Swap amount cannot be zero");
         require(_unlocked, "Manager locked");
         PoolId id = key.toId();
         PoolState storage pool = _poolStates[id];
@@ -264,8 +265,6 @@ contract PoolManagerMock {
             sqrtPriceLimitX96: params.sqrtPriceLimitX96,
             lpFeeOverride: 0
         });
-
-        require(paramsInternal.amountSpecified != 0, "Amount cannot be zero");
 
         bool zeroForOne = paramsInternal.zeroForOne;
         bool exactInput = paramsInternal.amountSpecified < 0;
