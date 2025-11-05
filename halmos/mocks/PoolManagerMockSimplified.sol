@@ -136,17 +136,19 @@ contract PoolManagerMock {
     /// @notice Initialize a new pool
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         PoolId id = key.toId();
-
         PoolState storage self = _poolStates[id];
-        require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
 
-        // Validate sqrtPriceX96 bounds
+        // Validations
+        require(self.slot0.sqrtPriceX96 == 0, "Already initialized");
+        require(key.currency0 < key.currency1, "Currencies out of order or equal");
+        require(key.tickSpacing > TickMath.MIN_TICK_SPACING, "Tick spacing too small");
+        require(key.tickSpacing < TickMath.MAX_TICK_SPACING, "Tick spacing too large");
         require(sqrtPriceX96 >= TickMath.MIN_SQRT_PRICE, "Price too low");
         require(sqrtPriceX96 <= TickMath.MAX_SQRT_PRICE, "Price too high");
 
         tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
 
-        // Protocol fee is assumed to be 0 for testing; LP fee is set from key.fee
+        // Protocol fee is assumed to be 0 for now
         self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, protocolFee: 0, lpFee: key.fee});
 
         emit Initialize(
