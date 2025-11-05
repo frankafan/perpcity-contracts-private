@@ -44,9 +44,12 @@ contract PoolManagerMock is IPoolManager, ProtocolFees, NoDelegateCall, ERC6909C
 
     mapping(PoolId id => Pool.State) internal _pools;
 
+    /// @dev Simplified lock state for Halmos testing
+    bool internal _unlocked;
+
     /// @notice This will revert if the contract is locked
     modifier onlyWhenUnlocked() {
-        if (!Lock.isUnlocked()) ManagerLocked.selector.revertWith();
+        if (!_unlocked) ManagerLocked.selector.revertWith();
         _;
     }
 
@@ -54,15 +57,15 @@ contract PoolManagerMock is IPoolManager, ProtocolFees, NoDelegateCall, ERC6909C
 
     /// @inheritdoc IPoolManager
     function unlock(bytes calldata data) external override returns (bytes memory result) {
-        if (Lock.isUnlocked()) AlreadyUnlocked.selector.revertWith();
+        if (_unlocked) AlreadyUnlocked.selector.revertWith();
 
-        Lock.unlock();
+        _unlocked = true;
 
         // the caller does everything in this callback, including paying what they owe via calls to settle
         result = IUnlockCallback(msg.sender).unlockCallback(data);
 
         if (NonzeroDeltaCount.read() != 0) CurrencyNotSettled.selector.revertWith();
-        Lock.lock();
+        _unlocked = false;
     }
 
     /// @inheritdoc IPoolManager
@@ -344,6 +347,6 @@ contract PoolManagerMock is IPoolManager, ProtocolFees, NoDelegateCall, ERC6909C
 
     /// @notice Implementation of the _isUnlocked function defined in ProtocolFees
     function _isUnlocked() internal view override returns (bool) {
-        return Lock.isUnlocked();
+        return _unlocked;
     }
 }
