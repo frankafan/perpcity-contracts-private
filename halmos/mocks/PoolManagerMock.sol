@@ -140,7 +140,7 @@ contract PoolManagerMock {
         uint128 lpFeeOverride;
     }
 
-    /// @dev Swap step state
+    /// @dev Swap step state (matching Pool.sol StepComputations)
     struct SwapStepState {
         uint160 sqrtPriceStartX96;
         int24 tickNext;
@@ -149,6 +149,17 @@ contract PoolManagerMock {
         uint256 amountIn;
         uint256 amountOut;
         uint256 feeAmount;
+        uint256 feeGrowthGlobalX128;
+    }
+
+    /// @dev Tracks the state of a pool throughout a swap, and returns these values at the end of the swap
+    struct SwapResult {
+        // the current sqrt(price)
+        uint160 sqrtPriceX96;
+        // the tick associated with the current price
+        int24 tick;
+        // the current liquidity in range
+        uint128 liquidity;
     }
 
     /// @dev Swap state
@@ -632,120 +643,214 @@ contract PoolManagerMock {
         info.liquidityNet = liquidityNet;
     }
 
-    /// @dev Swap implementation with full tick crossing logic
-    function _swap(PoolState storage pool, SwapParamsInternal memory params) internal returns (BalanceDelta delta) {
+    /// @notice Executes a swap against the state (SIMPLIFIED - matches Pool.sol structure but without tick crossing loop)
+    /// @dev Structure matches Pool.sol for easier comparison despite simplifications
+    /// @param params Swap parameters matching Pool.SwapParams structure
+    /// @return swapDelta The balance delta from the swap
+    function _swap(PoolState storage pool, SwapParamsInternal memory params) internal returns (BalanceDelta swapDelta) {
+        Slot0 memory slot0Start = pool.slot0;
         bool zeroForOne = params.zeroForOne;
-        bool exactInput = params.amountSpecified < 0;
 
-        // Validate price limit
+        // SIMPLIFIED: No protocol fee tracking
+        // In original: protocolFee = zeroForOne ? slot0Start.protocolFee().getZeroForOneFee() : ...
+
+        // the amount remaining to be swapped in/out of the input/output asset. initially set to the amountSpecified
+        int256 amountSpecifiedRemaining = params.amountSpecified;
+        // the amount swapped out/in of the output/input asset. initially set to 0
+        int256 amountCalculated = 0;
+
+        // Initialize result state to current pool state
+        SwapResult memory result;
+        result.sqrtPriceX96 = slot0Start.sqrtPriceX96;
+        result.tick = slot0Start.tick;
+        result.liquidity = pool.liquidity;
+
+        // SIMPLIFIED: No fee override, no swapFee calculation
+        // In original:
+        //   uint24 lpFee = params.lpFeeOverride.isOverride() ? ... : slot0Start.lpFee();
+        //   swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
+        //   if (swapFee >= SwapMath.MAX_SWAP_FEE && params.amountSpecified > 0) revert InvalidFeeForExactOut();
+
+        // Price limit validation (matching Pool.sol lines 322-338)
         if (zeroForOne) {
+            if (params.sqrtPriceLimitX96 >= slot0Start.sqrtPriceX96) {
+                revert PriceLimitAlreadyExceeded(slot0Start.sqrtPriceX96, params.sqrtPriceLimitX96);
+            }
+            // Swaps can never occur at MIN_TICK, only at MIN_TICK + 1
             if (params.sqrtPriceLimitX96 <= TickMath.MIN_SQRT_PRICE) {
                 revert PriceLimitOutOfBounds(params.sqrtPriceLimitX96);
             }
-            if (params.sqrtPriceLimitX96 >= pool.slot0.sqrtPriceX96) {
-                revert PriceLimitAlreadyExceeded(pool.slot0.sqrtPriceX96, params.sqrtPriceLimitX96);
-            }
         } else {
+            if (params.sqrtPriceLimitX96 <= slot0Start.sqrtPriceX96) {
+                revert PriceLimitAlreadyExceeded(slot0Start.sqrtPriceX96, params.sqrtPriceLimitX96);
+            }
             if (params.sqrtPriceLimitX96 >= TickMath.MAX_SQRT_PRICE) {
                 revert PriceLimitOutOfBounds(params.sqrtPriceLimitX96);
             }
-            if (params.sqrtPriceLimitX96 <= pool.slot0.sqrtPriceX96) {
-                revert PriceLimitAlreadyExceeded(pool.slot0.sqrtPriceX96, params.sqrtPriceLimitX96);
-            }
         }
 
-        SwapState memory state = SwapState({
-            amountSpecifiedRemaining: params.amountSpecified,
-            amountCalculated: 0,
-            sqrtPriceX96: pool.slot0.sqrtPriceX96,
-            tick: pool.slot0.tick,
-            feeGrowthGlobalX128: zeroForOne ? pool.feeGrowthGlobal0X128 : pool.feeGrowthGlobal1X128,
-            liquidity: pool.liquidity
-        });
-
-        // Simplified swap - single step without tick crossing for symbolic execution efficiency
-        // In production, this would loop through ticks
         SwapStepState memory step;
-        step.sqrtPriceStartX96 = state.sqrtPriceX96;
+        step.feeGrowthGlobalX128 = zeroForOne ? pool.feeGrowthGlobal0X128 : pool.feeGrowthGlobal1X128;
 
-        // Calculate amounts for the swap
-        if (exactInput) {
-            uint256 amountIn = uint256(-params.amountSpecified);
+        // continue swapping as long as we haven't used the entire input/output and haven't reached the price limit
+        while (!(amountSpecifiedRemaining == 0 || result.sqrtPriceX96 == params.sqrtPriceLimitX96)) {
+            step.sqrtPriceStartX96 = result.sqrtPriceX96;
 
-            // Calculate new price after swap
-            state.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-                state.sqrtPriceX96,
-                state.liquidity,
-                amountIn,
-                zeroForOne
-            );
+            // SIMPLIFIED: Skip tick bitmap search, use current tick as next tick (no tick crossing)
+            // In original:
+            //   (step.tickNext, step.initialized) = self.tickBitmap.nextInitializedTickWithinOneWord(...)
+            //   if (step.tickNext <= TickMath.MIN_TICK) step.tickNext = TickMath.MIN_TICK;
+            //   if (step.tickNext >= TickMath.MAX_TICK) step.tickNext = TickMath.MAX_TICK;
+            //   step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);
 
-            // Calculate output amount
-            if (zeroForOne) {
-                step.amountOut = SqrtPriceMath.getAmount1Delta(
-                    state.sqrtPriceX96,
-                    step.sqrtPriceStartX96,
-                    state.liquidity,
-                    false
+            // SIMPLIFIED: Use price limit as the target price (no intermediate ticks)
+            step.sqrtPriceNextX96 = params.sqrtPriceLimitX96;
+
+            // SIMPLIFIED: Direct calculation instead of SwapMath.computeSwapStep
+            // In original:
+            //   (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) =
+            //       SwapMath.computeSwapStep(
+            //           result.sqrtPriceX96,
+            //           SwapMath.getSqrtPriceTarget(zeroForOne, step.sqrtPriceNextX96, params.sqrtPriceLimitX96),
+            //           result.liquidity,
+            //           amountSpecifiedRemaining,
+            //           swapFee
+            //       );
+
+            // Direct price and amount calculation without fees
+            // if exactOutput
+            if (params.amountSpecified > 0) {
+                step.amountOut = uint256(amountSpecifiedRemaining);
+
+                // Calculate new price after swap (no fees)
+                result.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
+                    result.sqrtPriceX96,
+                    result.liquidity,
+                    step.amountOut,
+                    zeroForOne
                 );
+
+                // Calculate input amount
+                if (zeroForOne) {
+                    step.amountIn = SqrtPriceMath.getAmount0Delta(
+                        result.sqrtPriceX96,
+                        step.sqrtPriceStartX96,
+                        result.liquidity,
+                        true
+                    );
+                } else {
+                    step.amountIn = SqrtPriceMath.getAmount1Delta(
+                        step.sqrtPriceStartX96,
+                        result.sqrtPriceX96,
+                        result.liquidity,
+                        true
+                    );
+                }
+
+                step.feeAmount = 0; // SIMPLIFIED: No fees
+
+                unchecked {
+                    amountSpecifiedRemaining -= step.amountOut.toInt256();
+                }
+                amountCalculated -= (step.amountIn + step.feeAmount).toInt256();
             } else {
-                step.amountOut = SqrtPriceMath.getAmount0Delta(
-                    step.sqrtPriceStartX96,
-                    state.sqrtPriceX96,
-                    state.liquidity,
-                    false
+                // exactInput
+                step.amountIn = uint256(-amountSpecifiedRemaining);
+
+                // Calculate new price after swap (no fees)
+                result.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
+                    result.sqrtPriceX96,
+                    result.liquidity,
+                    step.amountIn,
+                    zeroForOne
                 );
+
+                // Calculate output amount
+                if (zeroForOne) {
+                    step.amountOut = SqrtPriceMath.getAmount1Delta(
+                        result.sqrtPriceX96,
+                        step.sqrtPriceStartX96,
+                        result.liquidity,
+                        false
+                    );
+                } else {
+                    step.amountOut = SqrtPriceMath.getAmount0Delta(
+                        step.sqrtPriceStartX96,
+                        result.sqrtPriceX96,
+                        result.liquidity,
+                        false
+                    );
+                }
+
+                step.feeAmount = 0; // SIMPLIFIED: No fees
+
+                unchecked {
+                    amountSpecifiedRemaining += (step.amountIn + step.feeAmount).toInt256();
+                }
+                amountCalculated += step.amountOut.toInt256();
             }
 
-            state.amountCalculated = -int256(step.amountOut);
-        } else {
-            uint256 amountOut = uint256(params.amountSpecified);
+            // SIMPLIFIED: No protocol fee split
+            // In original:
+            //   if (protocolFee > 0) {
+            //       uint256 delta = (swapFee == protocolFee) ? step.feeAmount : (step.amountIn + step.feeAmount) * protocolFee / PIPS_DENOMINATOR;
+            //       step.feeAmount -= delta;
+            //       amountToProtocol += delta;
+            //   }
 
-            // Calculate new price after swap
-            state.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
-                state.sqrtPriceX96,
-                state.liquidity,
-                amountOut,
-                zeroForOne
-            );
+            // SIMPLIFIED: No fee growth update
+            // In original:
+            //   if (result.liquidity > 0) {
+            //       step.feeGrowthGlobalX128 += UnsafeMath.simpleMulDiv(step.feeAmount, FixedPoint128.Q128, result.liquidity);
+            //   }
 
-            // Calculate input amount
-            if (zeroForOne) {
-                step.amountIn = SqrtPriceMath.getAmount0Delta(
-                    state.sqrtPriceX96,
-                    step.sqrtPriceStartX96,
-                    state.liquidity,
-                    true
+            // SIMPLIFIED: No tick crossing since we consume all remaining amount in one step
+            // In original:
+            //   if (result.sqrtPriceX96 == step.sqrtPriceNextX96) {
+            //       if (step.initialized) {
+            //           (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128) = ...
+            //           int128 liquidityNet = Pool.crossTick(self, step.tickNext, feeGrowthGlobal0X128, feeGrowthGlobal1X128);
+            //           if (zeroForOne) liquidityNet = -liquidityNet;
+            //           result.liquidity = LiquidityMath.addDelta(result.liquidity, liquidityNet);
+            //       }
+            //       result.tick = zeroForOne ? step.tickNext - 1 : step.tickNext;
+            //   } else if (result.sqrtPriceX96 != step.sqrtPriceStartX96) {
+            //       result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);
+            //   }
+
+            // Update tick based on final price (recompute unless we're on a lower tick boundary and haven't moved)
+            if (result.sqrtPriceX96 != step.sqrtPriceStartX96) {
+                result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);
+            }
+        }
+
+        // Update pool state (matching Pool.sol lines 439-449)
+        pool.slot0.sqrtPriceX96 = result.sqrtPriceX96;
+        pool.slot0.tick = result.tick;
+
+        // SIMPLIFIED: Liquidity doesn't change (no tick crossing)
+        // In original: if (self.liquidity != result.liquidity) self.liquidity = result.liquidity;
+
+        // SIMPLIFIED: No fee growth update
+        // In original:
+        //   if (!zeroForOne) { self.feeGrowthGlobal1X128 = step.feeGrowthGlobalX128; }
+        //   else { self.feeGrowthGlobal0X128 = step.feeGrowthGlobalX128; }
+
+        // Calculate balance delta (matching Pool.sol lines 451-462)
+        unchecked {
+            // "if currency1 is specified"
+            if (zeroForOne != (params.amountSpecified < 0)) {
+                swapDelta = toBalanceDelta(
+                    amountCalculated.toInt128(),
+                    (params.amountSpecified - amountSpecifiedRemaining).toInt128()
                 );
             } else {
-                step.amountIn = SqrtPriceMath.getAmount1Delta(
-                    step.sqrtPriceStartX96,
-                    state.sqrtPriceX96,
-                    state.liquidity,
-                    true
+                swapDelta = toBalanceDelta(
+                    (params.amountSpecified - amountSpecifiedRemaining).toInt128(),
+                    amountCalculated.toInt128()
                 );
             }
-
-            state.amountCalculated = int256(step.amountIn);
         }
-
-        // Update pool state
-        pool.slot0.sqrtPriceX96 = state.sqrtPriceX96;
-        pool.slot0.tick = TickMath.getTickAtSqrtPrice(state.sqrtPriceX96);
-
-        // Calculate final deltas
-        int128 amount0;
-        int128 amount1;
-
-        if (zeroForOne == exactInput) {
-            amount0 = exactInput ? int128(-params.amountSpecified) : int128(state.amountCalculated);
-            amount1 = exactInput ? int128(state.amountCalculated) : int128(params.amountSpecified);
-        } else {
-            amount0 = exactInput ? int128(state.amountCalculated) : int128(-params.amountSpecified);
-            amount1 = exactInput ? int128(-params.amountSpecified) : int128(state.amountCalculated);
-        }
-
-        delta = toBalanceDelta(amount0, amount1);
     }
 
     /* HELPER FUNCTIONS */
