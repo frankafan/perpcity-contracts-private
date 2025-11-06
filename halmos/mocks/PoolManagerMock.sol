@@ -792,7 +792,7 @@ contract PoolManagerMock {
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
                 result.sqrtPriceX96,
-                SwapMath.getSqrtPriceTarget(zeroForOne, step.sqrtPriceNextX96, params.sqrtPriceLimitX96), 
+                SwapMath.getSqrtPriceTarget(zeroForOne, step.sqrtPriceNextX96, params.sqrtPriceLimitX96),
                 result.liquidity,
                 amountSpecifiedRemaining,
                 swapFee
@@ -812,13 +812,22 @@ contract PoolManagerMock {
                 amountCalculated += step.amountOut.toInt256();
             }
 
-            // SIMPLIFIED: No protocol fee split
-            // In a full implementation:
-            //   if (protocolFee > 0) {
-            //       uint256 delta = (swapFee == protocolFee) ? step.feeAmount : (step.amountIn + step.feeAmount) * protocolFee / PIPS_DENOMINATOR;
-            //       step.feeAmount -= delta;
-            //       amountToProtocol += delta;
-            //   }
+            // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
+            uint256 amountToProtocol = 0;
+            if (protocolFee > 0) {
+                unchecked {
+                    // step.amountIn does not include the swap fee, as it's already been taken from it,
+                    // so add it back to get the total amountIn and use that to calculate the amount of fees owed to the protocol
+                    // cannot overflow due to limits on the size of protocolFee and params.amountSpecified
+                    // this rounds down to favor LPs over the protocol
+                    uint256 delta = (swapFee == protocolFee)
+                        ? step.feeAmount // lp fee is 0, so the entire fee is owed to the protocol instead
+                        : ((step.amountIn + step.feeAmount) * protocolFee) / ProtocolFeeLibrary.PIPS_DENOMINATOR;
+                    // subtract it from the total fee and add it to the protocol fee
+                    step.feeAmount -= delta;
+                    amountToProtocol += delta;
+                }
+            }
 
             // update global fee tracker
             if (result.liquidity > 0) {
