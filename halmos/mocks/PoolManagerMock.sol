@@ -13,6 +13,7 @@ import {SqrtPriceMath} from "@uniswap/v4-core/src/libraries/SqrtPriceMath.sol";
 import {LiquidityMath} from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
 import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import {FixedPoint128} from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {UnsafeMath} from "@uniswap/v4-core/src/libraries/UnsafeMath.sol";
 import {SwapMath} from "@uniswap/v4-core/src/libraries/SwapMath.sol";
 import {TickBitmap} from "@uniswap/v4-core/src/libraries/TickBitmap.sol";
@@ -36,6 +37,7 @@ contract PoolManagerMock {
     error TickLowerOutOfBounds(int24 tickLower);
     error TickUpperOutOfBounds(int24 tickUpper);
     error TickLiquidityOverflow(int24 tick);
+    error CannotUpdateEmptyPosition();
     error PoolAlreadyInitialized();
     error PoolNotInitialized();
     error PriceLimitAlreadyExceeded(uint160 sqrtPriceCurrentX96, uint160 sqrtPriceLimitX96);
@@ -470,11 +472,87 @@ contract PoolManagerMock {
         delete pool.ticks[tick];
     }
 
+    /// @dev Retrieves fee growth data inside a tick range
+    /// @param pool The Pool state struct
+    /// @param tickLower The lower tick boundary of the position
+    /// @param tickUpper The upper tick boundary of the position
+    /// @return feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+    /// @return feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    function _getFeeGrowthInside(
+        PoolState storage pool,
+        int24 tickLower,
+        int24 tickUpper
+    ) internal view returns (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) {
+        TickInfo storage lower = pool.ticks[tickLower];
+        TickInfo storage upper = pool.ticks[tickUpper];
+        int24 tickCurrent = pool.slot0.tick;
+
+        unchecked {
+            if (tickCurrent < tickLower) {
+                feeGrowthInside0X128 = lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+                feeGrowthInside1X128 = lower.feeGrowthOutside1X128 - upper.feeGrowthOutside1X128;
+            } else if (tickCurrent >= tickUpper) {
+                feeGrowthInside0X128 = upper.feeGrowthOutside0X128 - lower.feeGrowthOutside0X128;
+                feeGrowthInside1X128 = upper.feeGrowthOutside1X128 - lower.feeGrowthOutside1X128;
+            } else {
+                feeGrowthInside0X128 =
+                    pool.feeGrowthGlobal0X128 -
+                    lower.feeGrowthOutside0X128 -
+                    upper.feeGrowthOutside0X128;
+                feeGrowthInside1X128 =
+                    pool.feeGrowthGlobal1X128 -
+                    lower.feeGrowthOutside1X128 -
+                    upper.feeGrowthOutside1X128;
+            }
+        }
+    }
+
+    /// @dev Updates a position and returns the fees owed
+    /// @param position The position to update
+    /// @param liquidityDelta The change in liquidity
+    /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+    /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    /// @return feesOwed0 The amount of token0 fees owed to the position owner
+    /// @return feesOwed1 The amount of token1 fees owed to the position owner
+    function _updatePosition(
+        Position.State storage position,
+        int128 liquidityDelta,
+        uint256 feeGrowthInside0X128,
+        uint256 feeGrowthInside1X128
+    ) internal returns (uint256 feesOwed0, uint256 feesOwed1) {
+        uint128 liquidity = position.liquidity;
+
+        if (liquidityDelta == 0) {
+            // disallow pokes for 0 liquidity positions
+            if (liquidity == 0) revert CannotUpdateEmptyPosition();
+        } else {
+            position.liquidity = LiquidityMath.addDelta(liquidity, liquidityDelta);
+        }
+
+        // calculate accumulated fees. overflow in the subtraction of fee growth is expected
+        unchecked {
+            feesOwed0 = FullMath.mulDiv(
+                feeGrowthInside0X128 - position.feeGrowthInside0LastX128,
+                liquidity,
+                FixedPoint128.Q128
+            );
+            feesOwed1 = FullMath.mulDiv(
+                feeGrowthInside1X128 - position.feeGrowthInside1LastX128,
+                liquidity,
+                FixedPoint128.Q128
+            );
+        }
+
+        // update the position
+        position.feeGrowthInside0LastX128 = feeGrowthInside0X128;
+        position.feeGrowthInside1LastX128 = feeGrowthInside1X128;
+    }
+
     /// @notice Effect changes to a position in a pool
     /// @dev PoolManager checks that the pool is initialized before calling
     /// @param params the position details and the change to the position's liquidity to effect
     /// @return delta the deltas of the token balances of the pool, from the liquidity change
-    /// @return feeDelta the fees generated by the liquidity range (always zero in mock)
+    /// @return feeDelta the fees generated by the liquidity range
     function _modifyLiquidity(
         PoolState storage pool,
         ModifyLiquidityParamsInternal memory params
@@ -522,30 +600,25 @@ contract PoolManagerMock {
             }
 
             {
-                // SIMPLIFIED: No fee growth tracking in mock
-                // In original Pool.sol:
-                //   (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) =
-                //       getFeeGrowthInside(self, tickLower, tickUpper);
-                //   Position.State storage position = self.positions.get(params.owner, tickLower, tickUpper, params.salt);
-                //   (uint256 feesOwed0, uint256 feesOwed1) =
-                //       position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128);
+                // Calculate fee growth inside the position's tick range
+                (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) = _getFeeGrowthInside(
+                    pool,
+                    tickLower,
+                    tickUpper
+                );
 
                 Position.State storage position = pool.positions.get(params.owner, tickLower, tickUpper, params.salt);
 
-                // Update position liquidity (without fee calculations)
-                uint128 liquidityBefore = position.liquidity;
-                uint128 liquidityAfter;
+                // Update position and calculate fees owed
+                (uint256 feesOwed0, uint256 feesOwed1) = _updatePosition(
+                    position,
+                    liquidityDelta,
+                    feeGrowthInside0X128,
+                    feeGrowthInside1X128
+                );
 
-                if (liquidityDelta < 0) {
-                    liquidityAfter = liquidityBefore - uint128(-liquidityDelta);
-                } else {
-                    liquidityAfter = liquidityBefore + uint128(liquidityDelta);
-                }
-
-                position.liquidity = liquidityAfter;
-
-                // Fees earned from LPing are calculated, and returned (SIMPLIFIED: always zero in mock)
-                feeDelta = toBalanceDelta(0, 0);
+                // Fees earned from LPing are calculated and returned
+                feeDelta = toBalanceDelta(feesOwed0.toInt128(), feesOwed1.toInt128());
             }
 
             // clear any tick data that is no longer needed
