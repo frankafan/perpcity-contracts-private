@@ -421,6 +421,37 @@ contract PoolManagerMock {
     }
 
     /// @dev Modify liquidity implementation
+    /// @notice Derives max liquidity per tick from given tick spacing
+    /// @dev Executed when adding liquidity
+    /// @param tickSpacing The amount of required tick separation, realized in multiples of `tickSpacing`
+    ///     e.g., a tickSpacing of 3 requires ticks to be initialized every 3rd tick i.e., ..., -6, -3, 0, 3, 6, ...
+    /// @return result The max liquidity per tick
+    function tickSpacingToMaxLiquidityPerTick(int24 tickSpacing) internal pure returns (uint128 result) {
+        // Equivalent to:
+        // int24 minTick = (TickMath.MIN_TICK / tickSpacing);
+        // if (TickMath.MIN_TICK  % tickSpacing != 0) minTick--;
+        // int24 maxTick = (TickMath.MAX_TICK / tickSpacing);
+        // uint24 numTicks = maxTick - minTick + 1;
+        // return type(uint128).max / numTicks;
+        int24 MAX_TICK = TickMath.MAX_TICK;
+        int24 MIN_TICK = TickMath.MIN_TICK;
+        // tick spacing will never be 0 since TickMath.MIN_TICK_SPACING is 1
+        assembly ("memory-safe") {
+            tickSpacing := signextend(2, tickSpacing)
+            let minTick := sub(sdiv(MIN_TICK, tickSpacing), slt(smod(MIN_TICK, tickSpacing), 0))
+            let maxTick := sdiv(MAX_TICK, tickSpacing)
+            let numTicks := add(sub(maxTick, minTick), 1)
+            result := div(sub(shl(128, 1), 1), numTicks)
+        }
+    }
+
+    /// @dev Clears tick data
+    /// @param pool The Pool state struct
+    /// @param tick The tick that will be cleared
+    function _clearTick(PoolState storage pool, int24 tick) internal {
+        delete pool.ticks[tick];
+    }
+
     function _modifyLiquidity(
         PoolState storage pool,
         ModifyLiquidityParamsInternal memory params
