@@ -36,14 +36,14 @@ test-halmos:
 		# --ffi \
 		# --symbolic-jump \
 	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
-	make analyze
+	make analyze DIR=$(HALMOS_OUTPUT_DIR)
 
 test-halmos-timed:
 	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	@/usr/bin/time -p make test-halmos 2>&1 | tee $(HALMOS_OUTPUT_DIR)/time.log
 
 analyze:
-	python halmos/analyze_out.py $(HALMOS_OUTPUT_DIR)/halmos_test.json
+	python halmos/analyze_out.py $(DIR)/halmos_test.json
 
 build-dockerfile:
 	cd halmos && docker build -t perpcityhalmos -f dockerfile .
