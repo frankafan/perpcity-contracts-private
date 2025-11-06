@@ -720,8 +720,28 @@ contract PoolManagerMock {
         info.liquidityNet = liquidityNet;
     }
 
-    /// @notice Executes a swap against the state (SIMPLIFIED - matches Pool.sol structure but without tick crossing loop)
-    /// @dev Structure matches Pool.sol for easier comparison despite simplifications
+    /// @notice Transitions to next tick as needed by price movement
+    /// @param pool The pool state
+    /// @param tick The tick being crossed
+    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
+    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
+    /// @return liquidityNet The amount of liquidity added (subtracted) when tick is crossed from left to right (right to left)
+    function _crossTick(
+        PoolState storage pool,
+        int24 tick,
+        uint256 feeGrowthGlobal0X128,
+        uint256 feeGrowthGlobal1X128
+    ) internal returns (int128 liquidityNet) {
+        unchecked {
+            TickInfo storage info = pool.ticks[tick];
+            info.feeGrowthOutside0X128 = feeGrowthGlobal0X128 - info.feeGrowthOutside0X128;
+            info.feeGrowthOutside1X128 = feeGrowthGlobal1X128 - info.feeGrowthOutside1X128;
+            liquidityNet = info.liquidityNet;
+        }
+    }
+
+    /// @notice Executes a swap against the state - matches Pool.sol implementation with tick crossing
+    /// @dev Full implementation matching Pool.sol with TickMathSimplified
     /// @param params Swap parameters matching Pool.SwapParams structure
     /// @return swapDelta The balance delta from the swap
     function _swap(PoolState storage pool, SwapParamsInternal memory params) internal returns (BalanceDelta swapDelta) {
@@ -779,15 +799,22 @@ contract PoolManagerMock {
         while (!(amountSpecifiedRemaining == 0 || result.sqrtPriceX96 == params.sqrtPriceLimitX96)) {
             step.sqrtPriceStartX96 = result.sqrtPriceX96;
 
-            // SIMPLIFIED: Skip tick bitmap search, use current tick as next tick (no tick crossing)
-            // In original:
-            //   (step.tickNext, step.initialized) = self.tickBitmap.nextInitializedTickWithinOneWord(...)
-            //   if (step.tickNext <= TickMath.MIN_TICK) step.tickNext = TickMath.MIN_TICK;
-            //   if (step.tickNext >= TickMath.MAX_TICK) step.tickNext = TickMath.MAX_TICK;
-            //   step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);
+            (step.tickNext, step.initialized) = pool.tickBitmap.nextInitializedTickWithinOneWord(
+                result.tick,
+                params.tickSpacing,
+                zeroForOne
+            );
 
-            // SIMPLIFIED: Use price limit as the target price (no intermediate ticks)
-            step.sqrtPriceNextX96 = params.sqrtPriceLimitX96;
+            // ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
+            if (step.tickNext <= TickMath.MIN_TICK) {
+                step.tickNext = TickMath.MIN_TICK;
+            }
+            if (step.tickNext >= TickMath.MAX_TICK) {
+                step.tickNext = TickMath.MAX_TICK;
+            }
+
+            // get the price for the next tick
+            step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);
 
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
@@ -840,22 +867,31 @@ contract PoolManagerMock {
                 }
             }
 
-            // SIMPLIFIED: No tick crossing since we consume all remaining amount in one step
-            // In original:
-            //   if (result.sqrtPriceX96 == step.sqrtPriceNextX96) {
-            //       if (step.initialized) {
-            //           (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128) = ...
-            //           int128 liquidityNet = Pool.crossTick(self, step.tickNext, feeGrowthGlobal0X128, feeGrowthGlobal1X128);
-            //           if (zeroForOne) liquidityNet = -liquidityNet;
-            //           result.liquidity = LiquidityMath.addDelta(result.liquidity, liquidityNet);
-            //       }
-            //       result.tick = zeroForOne ? step.tickNext - 1 : step.tickNext;
-            //   } else if (result.sqrtPriceX96 != step.sqrtPriceStartX96) {
-            //       result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);
-            //   }
+            // Shift tick if we reached the next price, and preemptively decrement for zeroForOne swaps to tickNext - 1.
+            // If the swap doesn't continue (if amountRemaining == 0 or sqrtPriceLimit is met), slot0.tick will be 1 less
+            // than getTickAtSqrtPrice(slot0.sqrtPrice). This doesn't affect swaps, but donation calls should verify both
+            // price and tick to reward the correct LPs.
+            if (result.sqrtPriceX96 == step.sqrtPriceNextX96) {
+                // if the tick is initialized, run the tick transition
+                if (step.initialized) {
+                    (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128) = zeroForOne
+                        ? (step.feeGrowthGlobalX128, pool.feeGrowthGlobal1X128)
+                        : (pool.feeGrowthGlobal0X128, step.feeGrowthGlobalX128);
+                    int128 liquidityNet = _crossTick(pool, step.tickNext, feeGrowthGlobal0X128, feeGrowthGlobal1X128);
+                    // if we're moving leftward, we interpret liquidityNet as the opposite sign
+                    // safe because liquidityNet cannot be type(int128).min
+                    unchecked {
+                        if (zeroForOne) liquidityNet = -liquidityNet;
+                    }
 
-            // Update tick based on final price (recompute unless we're on a lower tick boundary and haven't moved)
-            if (result.sqrtPriceX96 != step.sqrtPriceStartX96) {
+                    result.liquidity = LiquidityMath.addDelta(result.liquidity, liquidityNet);
+                }
+
+                unchecked {
+                    result.tick = zeroForOne ? step.tickNext - 1 : step.tickNext;
+                }
+            } else if (result.sqrtPriceX96 != step.sqrtPriceStartX96) {
+                // recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
                 result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);
             }
         }
@@ -863,8 +899,8 @@ contract PoolManagerMock {
         pool.slot0.sqrtPriceX96 = result.sqrtPriceX96;
         pool.slot0.tick = result.tick;
 
-        // SIMPLIFIED: Liquidity doesn't change (no tick crossing)
-        // In original: if (self.liquidity != result.liquidity) self.liquidity = result.liquidity;
+        // update liquidity if it changed
+        if (pool.liquidity != result.liquidity) pool.liquidity = result.liquidity;
 
         // update fee growth global
         if (zeroForOne) {
