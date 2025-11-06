@@ -174,6 +174,9 @@ contract PoolManagerMock {
     /// @dev Count of nonzero deltas - used for flash accounting validation
     uint256 internal _nonzeroDeltaCount;
 
+    /// @dev The currency that has been synced (for settle() to know which currency to settle)
+    Currency internal _syncedCurrency;
+
     /* CORE FUNCTIONS - from PoolManager */
 
     /// @notice Unlocks the pool manager and executes callback
@@ -328,8 +331,11 @@ contract PoolManagerMock {
         emit Donate(id, msg.sender, amount0, amount1);
     }
 
-    /// @notice Sync currency state (no-op for mock)
-    function sync(Currency) external {}
+    /// @notice Sync currency state
+    function sync(Currency currency) external {
+        if (!_unlocked) revert ManagerLocked();
+        _syncedCurrency = currency;
+    }
 
     /// @notice Settle with native currency
     function settle() external payable returns (uint256 paid) {
@@ -652,10 +658,26 @@ contract PoolManagerMock {
 
     /// @dev Settles currency for a recipient
     function _settle(address recipient) internal returns (uint256 paid) {
-        // Simplified for mock - would handle actual token transfers in real implementation
-        paid = msg.value;
+        Currency currency = _syncedCurrency;
+
+        // If not previously synced, expects native currency to be settled
+        if (Currency.unwrap(currency) == address(0)) {
+            paid = msg.value;
+        } else {
+            int256 currentDelta = _currencyDeltas[currency][recipient];
+            
+            if (currentDelta < 0) {
+                // There's a negative delta (debt), settle it by accounting for a payment
+                paid = uint256(-currentDelta);
+            } else {
+                paid = 0;
+            }
+            
+            // Reset synced currency
+            _syncedCurrency = Currency.wrap(address(0));
+        }
+
         if (paid > 0) {
-            Currency currency = Currency.wrap(address(0));
             _accountDelta(currency, int128(uint128(paid)), recipient);
         }
     }
