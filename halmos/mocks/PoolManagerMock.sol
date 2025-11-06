@@ -504,38 +504,42 @@ contract PoolManagerMock {
         fees = toBalanceDelta(0, 0); // Simplified - no fee tracking
     }
 
-    /// @dev Update tick info when liquidity changes
-    function _updateTick(PoolState storage pool, int24 tick, int128 liquidityDelta, bool upper) internal {
+    /// @notice Updates a tick and returns true if the tick was flipped from initialized to uninitialized, or vice versa
+    /// @param self The mapping containing all tick information for initialized ticks
+    /// @param tick The tick that will be updated
+    /// @param liquidityDelta A new amount of liquidity to be added (subtracted) when tick is crossed from left to right (right to left)
+    /// @param upper true for updating a position's upper tick, or false for updating a position's lower tick
+    /// @return flipped Whether the tick was flipped from initialized to uninitialized, or vice versa
+    /// @return liquidityGrossAfter The total amount of liquidity for all positions that references the tick after the update
+    function _updateTick(
+        PoolState storage pool,
+        int24 tick,
+        int128 liquidityDelta,
+        bool upper
+    ) internal returns (bool flipped, uint128 liquidityGrossAfter) {
         TickInfo storage info = pool.ticks[tick];
 
         uint128 liquidityGrossBefore = info.liquidityGross;
-        uint128 liquidityGrossAfter = LiquidityMath.addDelta(liquidityGrossBefore, liquidityDelta);
+        int128 liquidityNetBefore = info.liquidityNet;
 
-        // If this is the first time the tick is being used, initialize fee growth
-        if (liquidityGrossBefore == 0 && liquidityGrossAfter > 0) {
-            // By convention, assume all growth before a tick was initialized happened below the tick
+        liquidityGrossAfter = LiquidityMath.addDelta(liquidityGrossBefore, liquidityDelta);
+
+        flipped = (liquidityGrossAfter == 0) != (liquidityGrossBefore == 0);
+
+        if (liquidityGrossBefore == 0) {
+            // by convention, we assume that all growth before a tick was initialized happened _below_ the tick
             if (tick <= pool.slot0.tick) {
                 info.feeGrowthOutside0X128 = pool.feeGrowthGlobal0X128;
                 info.feeGrowthOutside1X128 = pool.feeGrowthGlobal1X128;
             }
         }
 
-        // Update liquidity net
-        // When the lower (upper) tick is crossed left to right, liquidity must be added (removed)
-        // When the lower (upper) tick is crossed right to left, liquidity must be removed (added)
-        int128 liquidityNet = upper ? info.liquidityNet - liquidityDelta : info.liquidityNet + liquidityDelta;
+        // when the lower (upper) tick is crossed left to right, liquidity must be added (removed)
+        // when the lower (upper) tick is crossed right to left, liquidity must be removed (added)
+        int128 liquidityNet = upper ? liquidityNetBefore - liquidityDelta : liquidityNetBefore + liquidityDelta;
 
         info.liquidityGross = liquidityGrossAfter;
         info.liquidityNet = liquidityNet;
-
-        // Flip the tick in the bitmap if transitioning between initialized/uninitialized
-        if (liquidityGrossBefore == 0) {
-            // Tick is being initialized
-            pool.tickBitmap.flipTick(tick, int24(1)); // tickSpacing of 1 for simplification
-        } else if (liquidityGrossAfter == 0) {
-            // Tick is being removed
-            pool.tickBitmap.flipTick(tick, int24(1));
-        }
     }
 
     /// @dev Swap implementation with full tick crossing logic
@@ -665,14 +669,14 @@ contract PoolManagerMock {
             paid = msg.value;
         } else {
             int256 currentDelta = _currencyDeltas[currency][recipient];
-            
+
             if (currentDelta < 0) {
                 // There's a negative delta (debt), settle it by accounting for a payment
                 paid = uint256(-currentDelta);
             } else {
                 paid = 0;
             }
-            
+
             // Reset synced currency
             _syncedCurrency = Currency.wrap(address(0));
         }
