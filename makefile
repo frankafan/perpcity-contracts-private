@@ -9,7 +9,6 @@ compile:
 	FOUNDRY_PROFILE=halmos forge build
 
 test-halmos:
-	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	mkdir -p $(HALMOS_OUTPUT_DIR)/smt
 	FOUNDRY_PROFILE=halmos halmos \
 		--contract PerpManagerHalmosTest \
@@ -36,6 +35,7 @@ test-halmos:
 		# --cache-solver \
 		# --ffi \
 		# --symbolic-jump \
+	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	make analyze
 
 test-halmos-timed:
