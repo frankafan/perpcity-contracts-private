@@ -242,6 +242,59 @@ contract PerpManagerHalmosTest is SymTest, Test {
             });
     }
 
+    // Set to internal for now (skipped)
+    function check_vaultBalanceIntegrity_2(address caller) internal {
+        // Create perp
+        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
+
+        (, , address vault, , , , , ) = perpManager.configs(perpId1);
+
+        uint128 initialInsurance = perpManager.getInsurance(perpId1);
+        uint256 initialVaultBalance = usdcMock.balanceOf(vault);
+
+        // Initial assumptions
+        vm.assume(vault != address(0));
+        vm.assume(initialVaultBalance >= initialInsurance);
+        vm.assume(caller != address(0));
+        vm.assume(caller != address(perpManager));
+        vm.assume(caller != vault);
+
+        IPerpManager.OpenMakerPositionParams memory openMakerPosParams = _createSymbolicMakerParams();
+
+        vm.prank(caller);
+        perpManager.openMakerPos(perpId1, openMakerPosParams);
+
+        // IPerpManager.AddMarginParams memory addMarginParams = IPerpManager.AddMarginParams({
+        //     posId: uint128(svm.createUint(128, "posId")),
+        //     amtToAdd: svm.createUint256("addMarginAmount")
+        // });
+
+        // vm.prank(caller);
+        // perpManager.addMargin(perpId1, addMarginParams);
+
+        // uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
+        // uint128 insuranceAfter = perpManager.getInsurance(perpId1);
+        // uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
+
+        // // Calculate total effective margin in open positions
+        // uint256 totalEffectiveMargin = 0;
+        // for (uint128 i = 0; i < nextPosId; i++) {
+        //     IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
+        //     if (pos.holder != address(0)) {
+        //         // Use quoteClosePosition to get effective margin for this position
+        //         (bool success, uint256 netMargin) = perpManager.getNetMargin(perpId1, i);
+        //         if (!success) {
+        //             // XXX: bug if valid position cannot be quoted
+        //             assert(false);
+        //         }
+        //         totalEffectiveMargin += netMargin;
+        //     }
+        // }
+
+        // // Invariant
+        // assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
+    }
+
     /// @notice Call PerpManager with symbolic arguments
     /// @param selector Function selector to call
     /// @param caller Address to call from
