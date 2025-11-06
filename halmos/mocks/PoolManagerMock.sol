@@ -19,6 +19,8 @@ import {SwapMath} from "@uniswap/v4-core/src/libraries/SwapMath.sol";
 import {TickBitmap} from "@uniswap/v4-core/src/libraries/TickBitmap.sol";
 import {Position} from "@uniswap/v4-core/src/libraries/Position.sol";
 import {CustomRevert} from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
+import {ProtocolFeeLibrary} from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
+import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 /// @notice PoolManager mock for Halmos testing - inherits real PoolManager logic with mocked TickMath
 /// @dev This mock replicates the full PoolManager and Pool logic from Uniswap v4-core
@@ -31,6 +33,8 @@ contract PoolManagerMock {
     using Position for mapping(bytes32 => Position.State);
     using Position for Position.State;
     using CustomRevert for bytes4;
+    using ProtocolFeeLibrary for *;
+    using LPFeeLibrary for uint24;
 
     /* ERRORS - from Pool library */
     error TicksMisordered(int24 tickLower, int24 tickUpper);
@@ -139,7 +143,7 @@ contract PoolManagerMock {
         bool zeroForOne;
         int256 amountSpecified;
         uint160 sqrtPriceLimitX96;
-        uint128 lpFeeOverride;
+        uint24 lpFeeOverride;
     }
 
     /// @dev Swap step state (matching Pool.sol StepComputations)
@@ -724,8 +728,10 @@ contract PoolManagerMock {
         Slot0 memory slot0Start = pool.slot0;
         bool zeroForOne = params.zeroForOne;
 
-        // SIMPLIFIED: No protocol fee tracking
-        // In original: protocolFee = zeroForOne ? slot0Start.protocolFee().getZeroForOneFee() : ...
+        // Extract the protocol fee for the swap direction
+        uint256 protocolFee = zeroForOne
+            ? slot0Start.protocolFee.getZeroForOneFee()
+            : slot0Start.protocolFee.getOneForZeroFee();
 
         // the amount remaining to be swapped in/out of the input/output asset. initially set to the amountSpecified
         int256 amountSpecifiedRemaining = params.amountSpecified;
@@ -738,13 +744,17 @@ contract PoolManagerMock {
         result.tick = slot0Start.tick;
         result.liquidity = pool.liquidity;
 
-        // SIMPLIFIED: No fee override, no swapFee calculation
-        // In original:
-        //   uint24 lpFee = params.lpFeeOverride.isOverride() ? ... : slot0Start.lpFee();
-        //   swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
-        //   if (swapFee >= SwapMath.MAX_SWAP_FEE && params.amountSpecified > 0) revert InvalidFeeForExactOut();
+        // if the beforeSwap hook returned a valid fee override, use that as the LP fee, otherwise load from storage
+        // lpFee, swapFee, and protocolFee are all in pips
+        uint24 swapFee;
+        {
+            uint24 lpFee = params.lpFeeOverride.isOverride()
+                ? params.lpFeeOverride.removeOverrideFlagAndValidate()
+                : slot0Start.lpFee;
 
-        // Price limit validation (matching Pool.sol lines 322-338)
+            swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
+        }
+
         if (zeroForOne) {
             if (params.sqrtPriceLimitX96 >= slot0Start.sqrtPriceX96) {
                 revert PriceLimitAlreadyExceeded(slot0Start.sqrtPriceX96, params.sqrtPriceLimitX96);
@@ -779,84 +789,23 @@ contract PoolManagerMock {
             // SIMPLIFIED: Use price limit as the target price (no intermediate ticks)
             step.sqrtPriceNextX96 = params.sqrtPriceLimitX96;
 
-            // SIMPLIFIED: Direct calculation instead of SwapMath.computeSwapStep
-            // In original:
-            //   (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) =
-            //       SwapMath.computeSwapStep(
-            //           result.sqrtPriceX96,
-            //           SwapMath.getSqrtPriceTarget(zeroForOne, step.sqrtPriceNextX96, params.sqrtPriceLimitX96),
-            //           result.liquidity,
-            //           amountSpecifiedRemaining,
-            //           swapFee
-            //       );
+            // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
+            (result.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
+                result.sqrtPriceX96,
+                SwapMath.getSqrtPriceTarget(zeroForOne, step.sqrtPriceNextX96, params.sqrtPriceLimitX96), 
+                result.liquidity,
+                amountSpecifiedRemaining,
+                swapFee
+            );
 
-            // Direct price and amount calculation without fees
             // if exactOutput
             if (params.amountSpecified > 0) {
-                step.amountOut = uint256(amountSpecifiedRemaining);
-
-                // Calculate new price after swap (no fees)
-                result.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
-                    result.sqrtPriceX96,
-                    result.liquidity,
-                    step.amountOut,
-                    zeroForOne
-                );
-
-                // Calculate input amount
-                if (zeroForOne) {
-                    step.amountIn = SqrtPriceMath.getAmount0Delta(
-                        result.sqrtPriceX96,
-                        step.sqrtPriceStartX96,
-                        result.liquidity,
-                        true
-                    );
-                } else {
-                    step.amountIn = SqrtPriceMath.getAmount1Delta(
-                        step.sqrtPriceStartX96,
-                        result.sqrtPriceX96,
-                        result.liquidity,
-                        true
-                    );
-                }
-
-                step.feeAmount = 0; // SIMPLIFIED: No fees
-
                 unchecked {
                     amountSpecifiedRemaining -= step.amountOut.toInt256();
                 }
                 amountCalculated -= (step.amountIn + step.feeAmount).toInt256();
             } else {
-                // exactInput
-                step.amountIn = uint256(-amountSpecifiedRemaining);
-
-                // Calculate new price after swap (no fees)
-                result.sqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-                    result.sqrtPriceX96,
-                    result.liquidity,
-                    step.amountIn,
-                    zeroForOne
-                );
-
-                // Calculate output amount
-                if (zeroForOne) {
-                    step.amountOut = SqrtPriceMath.getAmount1Delta(
-                        result.sqrtPriceX96,
-                        step.sqrtPriceStartX96,
-                        result.liquidity,
-                        false
-                    );
-                } else {
-                    step.amountOut = SqrtPriceMath.getAmount0Delta(
-                        step.sqrtPriceStartX96,
-                        result.sqrtPriceX96,
-                        result.liquidity,
-                        false
-                    );
-                }
-
-                step.feeAmount = 0; // SIMPLIFIED: No fees
-
+                // safe because we test that amountSpecified > amountIn + feeAmount in SwapMath
                 unchecked {
                     amountSpecifiedRemaining += (step.amountIn + step.feeAmount).toInt256();
                 }
@@ -864,18 +813,23 @@ contract PoolManagerMock {
             }
 
             // SIMPLIFIED: No protocol fee split
-            // In original:
+            // In a full implementation:
             //   if (protocolFee > 0) {
             //       uint256 delta = (swapFee == protocolFee) ? step.feeAmount : (step.amountIn + step.feeAmount) * protocolFee / PIPS_DENOMINATOR;
             //       step.feeAmount -= delta;
             //       amountToProtocol += delta;
             //   }
 
-            // SIMPLIFIED: No fee growth update
-            // In original:
-            //   if (result.liquidity > 0) {
-            //       step.feeGrowthGlobalX128 += UnsafeMath.simpleMulDiv(step.feeAmount, FixedPoint128.Q128, result.liquidity);
-            //   }
+            // update global fee tracker
+            if (result.liquidity > 0) {
+                unchecked {
+                    step.feeGrowthGlobalX128 += UnsafeMath.simpleMulDiv(
+                        step.feeAmount,
+                        FixedPoint128.Q128,
+                        result.liquidity
+                    );
+                }
+            }
 
             // SIMPLIFIED: No tick crossing since we consume all remaining amount in one step
             // In original:
@@ -897,19 +851,19 @@ contract PoolManagerMock {
             }
         }
 
-        // Update pool state (matching Pool.sol lines 439-449)
         pool.slot0.sqrtPriceX96 = result.sqrtPriceX96;
         pool.slot0.tick = result.tick;
 
         // SIMPLIFIED: Liquidity doesn't change (no tick crossing)
         // In original: if (self.liquidity != result.liquidity) self.liquidity = result.liquidity;
 
-        // SIMPLIFIED: No fee growth update
-        // In original:
-        //   if (!zeroForOne) { self.feeGrowthGlobal1X128 = step.feeGrowthGlobalX128; }
-        //   else { self.feeGrowthGlobal0X128 = step.feeGrowthGlobalX128; }
+        // update fee growth global
+        if (zeroForOne) {
+            pool.feeGrowthGlobal0X128 = step.feeGrowthGlobalX128;
+        } else {
+            pool.feeGrowthGlobal1X128 = step.feeGrowthGlobalX128;
+        }
 
-        // Calculate balance delta (matching Pool.sol lines 451-462)
         unchecked {
             // "if currency1 is specified"
             if (zeroForOne != (params.amountSpecified < 0)) {
