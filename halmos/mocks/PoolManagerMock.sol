@@ -312,7 +312,11 @@ contract PoolManagerMock {
             lpFeeOverride: 0
         });
 
+        uint24 swapFee;
+        SwapResult memory result;
         (swapDelta, , swapFee, result) = _swap(pool, paramsInternal);
+
+        _accountPoolBalanceDelta(key, swapDelta, msg.sender);
 
         emit Swap(
             id,
@@ -324,8 +328,6 @@ contract PoolManagerMock {
             result.tick,
             swapFee
         );
-
-        _accountPoolBalanceDelta(key, swapDelta, msg.sender);
     }
 
     /// @notice Donate tokens to a pool
