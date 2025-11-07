@@ -51,3 +51,5 @@ build-dockerfile:
 run-container:
 	docker run -it -v .:/workspace --entrypoint=/bin/bash perpcityhalmos
 
+test-concrete:
+	forge test --match-contract IncreaseCardinalityTest -vv
