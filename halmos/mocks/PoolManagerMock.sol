@@ -221,6 +221,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Initialize a new pool
+    // SIMPLIFIED: No hooks system (beforeInitialize/afterInitialize)
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         // Validate tick spacing
         if (key.tickSpacing > MAX_TICK_SPACING) revert TickSpacingTooLarge(key.tickSpacing);
@@ -258,6 +259,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Modify liquidity in a pool
+    // SIMPLIFIED: No hooks system (beforeModifyLiquidity/afterModifyLiquidity)
     function modifyLiquidity(
         PoolKey memory key,
         ModifyLiquidityParams memory params,
@@ -288,6 +290,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Execute a swap in a pool
+    // SIMPLIFIED: No hooks system (beforeSwap/afterSwap)
     function swap(
         PoolKey memory key,
         SwapParams memory params,
@@ -300,6 +303,7 @@ contract PoolManagerMock {
         PoolState storage pool = _pools[id];
         _checkPoolInitialized(pool);
 
+        // SIMPLIFIED: lpFeeOverride hardcoded to 0 (no dynamic fee override from hooks)
         SwapParamsInternal memory paramsInternal = SwapParamsInternal({
             tickSpacing: key.tickSpacing,
             zeroForOne: params.zeroForOne,
@@ -325,6 +329,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Donate tokens to a pool
+    // SIMPLIFIED: No hooks system (beforeDonate/afterDonate)
     function donate(
         PoolKey memory key,
         uint256 amount0,
@@ -357,6 +362,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Sync currency state
+    // SIMPLIFIED: Use simple _syncedCurrency storage instead of CurrencyReserves library
     function sync(Currency currency) external {
         if (!_unlocked) revert ManagerLocked();
         _syncedCurrency = currency;
@@ -369,6 +375,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Mint tokens (settle negative delta)
+    // SIMPLIFIED: Use simple balance mapping instead of ERC6909Claims library
     function mint(address to, uint256 id, uint256 amount) external {
         if (!_unlocked) revert ManagerLocked();
 
@@ -380,6 +387,7 @@ contract PoolManagerMock {
     }
 
     /// @notice Burn tokens (settle positive delta)
+    // SIMPLIFIED: Use simple balance mapping instead of ERC6909Claims library
     function burn(address from, uint256 id, uint256 amount) external {
         if (!_unlocked) revert ManagerLocked();
 
@@ -716,6 +724,7 @@ contract PoolManagerMock {
         // when the lower (upper) tick is crossed right to left, liquidity must be removed (added)
         int128 liquidityNet = upper ? liquidityNetBefore - liquidityDelta : liquidityNetBefore + liquidityDelta;
 
+        // SIMPLIFIED: Use separate storage writes instead of assembly sstore
         info.liquidityGross = liquidityGrossAfter;
         info.liquidityNet = liquidityNet;
     }
@@ -928,6 +937,7 @@ contract PoolManagerMock {
     /* HELPER FUNCTIONS */
 
     /// @dev Settles currency for a recipient
+    // SIMPLIFIED: Use simple _syncedCurrency instead of CurrencyReserves library
     function _settle(address recipient) internal returns (uint256 paid) {
         Currency currency = _syncedCurrency;
 
@@ -954,6 +964,7 @@ contract PoolManagerMock {
     }
 
     /// @dev Accounts a delta for a currency and address
+    // SIMPLIFIED: Use simple mapping instead of CurrencyDelta library
     function _accountDelta(Currency currency, int128 delta, address target) internal {
         if (delta == 0) return;
 
