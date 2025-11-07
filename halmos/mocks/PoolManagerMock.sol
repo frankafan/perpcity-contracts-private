@@ -308,20 +308,20 @@ contract PoolManagerMock {
             lpFeeOverride: 0
         });
 
-        swapDelta = _swap(pool, paramsInternal);
-
-        _accountPoolBalanceDelta(key, swapDelta, msg.sender);
+        (swapDelta, , swapFee, result) = _swap(pool, paramsInternal);
 
         emit Swap(
             id,
             msg.sender,
             swapDelta.amount0(),
             swapDelta.amount1(),
-            pool.slot0.sqrtPriceX96,
-            pool.liquidity,
-            pool.slot0.tick,
-            pool.slot0.lpFee
+            result.sqrtPriceX96,
+            result.liquidity,
+            result.tick,
+            swapFee
         );
+
+        _accountPoolBalanceDelta(key, swapDelta, msg.sender);
     }
 
     /// @notice Donate tokens to a pool
@@ -744,7 +744,10 @@ contract PoolManagerMock {
     /// @dev Full implementation matching Pool.sol with TickMathSimplified
     /// @param params Swap parameters matching Pool.SwapParams structure
     /// @return swapDelta The balance delta from the swap
-    function _swap(PoolState storage pool, SwapParamsInternal memory params) internal returns (BalanceDelta swapDelta) {
+    function _swap(
+        PoolState storage pool,
+        SwapParamsInternal memory params
+    ) internal returns (BalanceDelta swapDelta, uint256 amountToProtocol, uint24 swapFee, SwapResult memory result) {
         Slot0 memory slot0Start = pool.slot0;
         bool zeroForOne = params.zeroForOne;
 
@@ -759,14 +762,12 @@ contract PoolManagerMock {
         int256 amountCalculated = 0;
 
         // Initialize result state to current pool state
-        SwapResult memory result;
         result.sqrtPriceX96 = slot0Start.sqrtPriceX96;
         result.tick = slot0Start.tick;
         result.liquidity = pool.liquidity;
 
         // if the beforeSwap hook returned a valid fee override, use that as the LP fee, otherwise load from storage
         // lpFee, swapFee, and protocolFee are all in pips
-        uint24 swapFee;
         {
             uint24 lpFee = params.lpFeeOverride.isOverride()
                 ? params.lpFeeOverride.removeOverrideFlagAndValidate()
@@ -840,7 +841,6 @@ contract PoolManagerMock {
             }
 
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
-            uint256 amountToProtocol = 0;
             if (protocolFee > 0) {
                 unchecked {
                     // step.amountIn does not include the swap fee, as it's already been taken from it,
