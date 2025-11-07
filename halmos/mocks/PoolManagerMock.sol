@@ -785,6 +785,18 @@ contract PoolManagerMock {
             swapFee = protocolFee == 0 ? lpFee : uint16(protocolFee).calculateSwapFee(lpFee);
         }
 
+        // a swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the input is entirely consumed by the fee
+        if (swapFee >= SwapMath.MAX_SWAP_FEE) {
+            // if exactOutput
+            if (params.amountSpecified > 0) {
+                revert InvalidFeeForExactOut();
+            }
+        }
+
+        // swapFee is the pool's fee in pips (LP fee + protocol fee)
+        // when the amount swapped is 0, there is no protocolFee applied and the fee amount paid to the protocol is set to 0
+        if (params.amountSpecified == 0) return (BalanceDeltaLibrary.ZERO_DELTA, 0, swapFee, result);
+
         if (zeroForOne) {
             if (params.sqrtPriceLimitX96 >= slot0Start.sqrtPriceX96) {
                 revert PriceLimitAlreadyExceeded(slot0Start.sqrtPriceX96, params.sqrtPriceLimitX96);
