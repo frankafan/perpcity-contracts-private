@@ -1,13 +1,4 @@
-# TickMath Path Explosion Analysis Report
-
-## Executive Summary
-
-This report analyzes the path explosion problem encountered when using symbolic execution (Halmos) on Uniswap V4's
-`TickMath` library and documents the solution implemented in `TickMathSimplified.sol`. The original implementation's
-bit-manipulation approach creates exponential path explosion during symbolic execution, making formal verification
-infeasible. The simplified version uses linear approximation to reduce complexity from O(2^n) to O(1) paths.
-
----
+# TickMath Modeling
 
 ## 1. The Original TickMath Implementation
 
@@ -137,21 +128,30 @@ where $b_{k,i}$ is the value of bit $i$ in path $k$.
 
 The TickMath functions are called extensively throughout the pool operations:
 
-**In `halmos/mocks/PoolManagerMockSimplified.sol`:**
+**In `lib/v4-core/src/libraries/Pool.sol`:**
 
-- Line 149: `tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);`
-- Lines 214-215, 224, 227, 236-237: Multiple calls in `modifyLiquidity`
-- Line 361: `pool.slot0.tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96Next);`
+- Line 103: `tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);`
 
-**In `halmos/mocks/PoolManagerMock.sol`:**
+- Lines 214-215:
+  `SqrtPriceMath.getAmount0Delta(TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), liquidityDelta)`
 
-- Line 248: `tick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);`
-- Lines 681-682, 691, 694, 706-707: Multiple calls in liquidity operations
-- Line 862: `step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);`
-- Line 942: `result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);`
+- Line 220: `SqrtPriceMath.getAmount0Delta(sqrtPriceX96, TickMath.getSqrtPriceAtTick(tickUpper), liquidityDelta)`
 
-**Critical Impact**: Swap operations call `getSqrtPriceAtTick` during each tick crossing, and when `tick` values are
-symbolic (as they are in formal verification), this creates multiplicative path explosion across the entire swap logic.
+- Line 222: `SqrtPriceMath.getAmount1Delta(TickMath.getSqrtPriceAtTick(tickLower), sqrtPriceX96, liquidityDelta)`
+
+- Lines 233:
+  `SqrtPriceMath.getAmount1Delta(TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), liquidityDelta)`
+
+- Line 359: `step.sqrtPriceNextX96 = TickMath.getSqrtPriceAtTick(step.tickNext);`
+
+- Line 435: `result.tick = TickMath.getTickAtSqrtPrice(result.sqrtPriceX96);`
+
+**In `src/libraries/Funding.sol`:**
+
+- Lines 254-255:
+  `uint160 sqrtLowerX96 = TickMath.getSqrtPriceAtTick(makerPos.tickLower); uint160 sqrtUpperX96 = TickMath.getSqrtPriceAtTick(makerPos.tickUpper);`
+
+**Critical Impact**: Swap operations call `getSqrtPriceAtTick` during each tick crossing (Pool.sol:359).
 
 ### 2.4 Concrete Example of Path Explosion
 
@@ -214,9 +214,9 @@ $$\text{sqrtPriceX96} = P_0 + \frac{\text{tick}}{T_{\max}} \times (P_{\max} - P_
 
 where:
 
-- $P_0 = 79228162514264337593543950336$ (price at tick 0)
-- $P_{\max} = 1461446703485210103287273052203988822378723970342$ (price at MAX_TICK)
-- $T_{\max} = 887272$ (MAX_TICK)
+- $P_0 = $ Price at tick 0
+- $P\_{\max} = $ Price at `MAX_TICK`
+- $T\_{\max} = $ `MAX_TICK`
 
 #### For negative ticks ($\text{tick} < 0$):
 
@@ -224,8 +224,8 @@ $$\text{sqrtPriceX96} = P_0 - \frac{|\text{tick}|}{|T_{\min}|} \times (P_0 - P_{
 
 where:
 
-- $P_{\min} = 4295128739$ (price at MIN_TICK)
-- $T_{\min} = -887272$ (MIN_TICK)
+- $P\_{\min} = $ Price at `MIN_TICK`
+- $T\_{\min} = $ `MIN_TICK`
 
 #### Inverse function (getTickAtSqrtPrice):
 
@@ -249,78 +249,12 @@ $$\text{tick} = -\left\lfloor \frac{(P_0 - \text{sqrtPriceX96}) \times |T_{\min}
 
 #### Advantages:
 
-1. **Dramatic path reduction**: $O(2^{20}) \rightarrow O(1)$
-2. **Enables formal verification**: Makes Halmos analysis tractable
-3. **Simple to understand**: Linear interpolation is intuitive
-4. **Preserves boundary behavior**: Correct at MIN_TICK, 0, and MAX_TICK
+- **Dramatic path reduction**: $O(2^{20}) \rightarrow O(1)$ paths enables formal verification
+- **Preserves boundary behavior**: Identical at `MIN_TICK`, `0`, and `MAX_TICK`
+- **Preserves ordering**: If $\text{tick}_1 < \text{tick}_2$, then
+  $\text{getSqrtPriceAtTick}(\text{tick}_1) < \text{getSqrtPriceAtTick}(\text{tick}_2)$
 
 #### Disadvantages:
 
 1. **Not mathematically accurate**: Linear approximation of an exponential function
-2. **Cannot be used in production**: Price calculations will be incorrect
-3. **Limited to formal verification**: Only suitable for symbolic execution testing
-
-### 3.5 Error Bounds
-
-The true relationship is exponential:
-
-$$\text{sqrtPriceX96}_{\text{true}} = \sqrt{1.0001^{\text{tick}}} \times 2^{96}$$
-
-The approximation is linear:
-
-$$\text{sqrtPriceX96}_{\text{approx}} \approx P_0 + k \times \text{tick}$$
-
-Maximum relative error occurs at mid-range ticks where the exponential curve deviates most from the linear
-approximation. For a tick range of [-887272, 887272], the error can be significant:
-
-$$\epsilon(\text{tick}) = \left| \frac{\text{sqrtPriceX96}_{\text{true}} - \text{sqrtPriceX96}_{\text{approx}}}{\text{sqrtPriceX96}_{\text{true}}} \right|$$
-
-This error makes the approximation unsuitable for production but acceptable for formal verification where we're testing
-logical properties rather than precise arithmetic.
-
----
-
-## 4. Comparison Summary
-
-| Aspect                  | Original TickMath           | TickMathSimplified        |
-| ----------------------- | --------------------------- | ------------------------- |
-| **Algorithm**           | Bit decomposition           | Linear interpolation      |
-| **Accuracy**            | Mathematically exact        | Approximate               |
-| **Path Count**          | $2^{20} = 1{,}048{,}576$    | 3                         |
-| **Symbolic Execution**  | Infeasible (path explosion) | Tractable                 |
-| **Production Use**      | ✅ Yes                      | ❌ No                     |
-| **Formal Verification** | ❌ No (too complex)         | ✅ Yes                    |
-| **Gas Cost**            | ~20 conditional branches    | 2-3 arithmetic operations |
-| **Constants Required**  | 20 precomputed values       | 3 boundary values         |
-
----
-
-## 5. Conclusion
-
-The `TickMathSimplified` mock demonstrates a critical technique in formal verification: **strategic simplification to
-avoid path explosion**. By replacing the exponentially-complex bit decomposition with linear interpolation, the number
-of execution paths is reduced from over 1 million to just 3, making symbolic execution with Halmos feasible.
-
-This approach trades mathematical accuracy for verification tractability—a reasonable compromise when the goal is to
-verify logical properties (e.g., no invariant violations, correct state transitions) rather than precise numerical
-behavior.
-
-The simplified implementation enables formal verification of critical perpetual futures logic in `PerpManager` and
-related contracts, which would otherwise be impossible due to the state space explosion caused by the original TickMath
-implementation.
-
-### Key Takeaway
-
-**Path explosion is the primary enemy of symbolic execution.** When a symbolic variable flows through multiple
-conditional branches, the number of paths grows exponentially ($2^n$). Strategic simplification of complex arithmetic
-(like TickMath's bit decomposition) into simpler approximations (like linear interpolation) is essential for making
-formal verification practical on real-world DeFi protocols.
-
----
-
-## References
-
-- Original TickMath: `lib/v4-core/src/libraries/TickMath.sol`
-- Simplified TickMath: `halmos/mocks/TickMathSimplified.sol`
-- Usage locations: `halmos/mocks/PoolManagerMock.sol`, `halmos/mocks/PoolManagerMockSimplified.sol`
-- Halmos documentation: https://github.com/a16z/halmos
+2. **Limited to formal verification**: Only suitable for symbolic execution testing
