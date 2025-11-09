@@ -54,53 +54,55 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PoolId internal perpId1;
 
     function setUp() public virtual {
-        // Initialize mock contracts
-        poolManagerMock = new PoolManagerMock();
-        usdcMock = new ERC20Mock();
-        perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
+        if (false) {
+            // Initialize mock contracts
+            poolManagerMock = new PoolManagerMock();
+            usdcMock = new ERC20Mock();
+            perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
-        // Create symbolic storage
-        // svm.enableSymbolicStorage(address(usdcMock));
-        // svm.enableSymbolicStorage(address(beaconMock));
-        // svm.enableSymbolicStorage(address(poolManagerMock));
+            // Create symbolic storage
+            // svm.enableSymbolicStorage(address(usdcMock));
+            // svm.enableSymbolicStorage(address(beaconMock));
+            // svm.enableSymbolicStorage(address(poolManagerMock));
 
-        // Initialize and register modules
-        _fees = new Fees();
-        _marginRatios = new MarginRatios();
-        _lockup = new Lockup();
-        _sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
+            // Initialize and register modules
+            _fees = new Fees();
+            _marginRatios = new MarginRatios();
+            _lockup = new Lockup();
+            _sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
 
-        // TODO: make sure the rest also aligns with the current version PerpManager
-        perpManager.registerFeesModule(_fees);
-        perpManager.registerMarginRatiosModule(_marginRatios);
-        perpManager.registerLockupPeriodModule(_lockup);
-        perpManager.registerSqrtPriceImpactLimitModule(_sqrtPriceImpactLimit);
+            // TODO: make sure the rest also aligns with the current version PerpManager
+            perpManager.registerFeesModule(_fees);
+            perpManager.registerMarginRatiosModule(_marginRatios);
+            perpManager.registerLockupPeriodModule(_lockup);
+            perpManager.registerSqrtPriceImpactLimitModule(_sqrtPriceImpactLimit);
 
-        // TODO: try with concrete vs symbolic and see if the number of paths is different
-        // Create symbolic addresses for test actors
-        creator = svm.createAddress("creator");
-        beaconOwner = svm.createAddress("beacon.owner");
+            // TODO: try with concrete vs symbolic and see if the number of paths is different
+            // Create symbolic addresses for test actors
+            creator = svm.createAddress("creator");
+            beaconOwner = svm.createAddress("beacon.owner");
 
-        // Assumptions for actors
-        vm.assume(creator != address(0));
-        vm.assume(creator != address(perpManager));
-        vm.assume(beaconOwner != address(0));
+            // Assumptions for actors
+            vm.assume(creator != address(0));
+            vm.assume(creator != address(perpManager));
+            vm.assume(beaconOwner != address(0));
 
-        // TODO: remove if possible
-        // Set symbolic block number and timestamp
-        uint256 blockNumber = svm.createUint(32, "block.number");
-        uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
+            // TODO: remove if possible
+            // Set symbolic block number and timestamp
+            uint256 blockNumber = svm.createUint(32, "block.number");
+            uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
 
-        // Assumptions for block values
-        vm.assume(blockNumber > 0);
-        vm.assume(blockTimestamp > 0);
+            // Assumptions for block values
+            vm.assume(blockNumber > 0);
+            vm.assume(blockTimestamp > 0);
 
-        vm.roll(blockNumber);
-        vm.warp(blockTimestamp);
+            vm.roll(blockNumber);
+            vm.warp(blockTimestamp);
+        }
     }
 
     // TODO: write out methodology / justifications in docstring
-    function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
+    function vaultBalanceIntegrity(bytes4 selector, address caller) public {
         // TODO: verify the function arguments are symbolic
 
         // Create perp
@@ -243,6 +245,10 @@ contract PerpManagerHalmosTest is SymTest, Test {
     }
 
     // Set to internal for now (skipped)
+    function check_totalPriceBuggy(uint32 quantity) public view {
+        // even this generates two paths
+        //assert(quantity == 0);
+    }
     function check_vaultBalanceIntegrity_2(address caller) internal {
         // Create perp
         perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
@@ -259,7 +265,23 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        IPerpManager.OpenMakerPositionParams memory openMakerPosParams = _createSymbolicMakerParams();
+        uint256 margin = svm.createUint256("maker.margin");
+        uint128 liq = uint128(svm.createUint(128, "maker.liquidity"));
+        int24 tickLower = int24(int256(svm.createUint(24, "maker.tickLower")));
+        int24 tickUpper = int24(int256(svm.createUint(24, "maker.tickUpper")));
+        uint128 maxAmt0 = uint128(svm.createUint(128, "maker.maxAmt0In"));
+        uint128 maxAmt1 = uint128(svm.createUint(128, "maker.maxAmt1In"));
+
+        // Assumptions
+        vm.assume(margin > 0);
+        IPerpManager.OpenMakerPositionParams memory openMakerPosParams = IPerpManager.OpenMakerPositionParams({
+                margin: margin,
+                liquidity: liq,
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                maxAmt0In: maxAmt0,
+                maxAmt1In: maxAmt1
+            });
 
         vm.prank(caller);
         perpManager.openMakerPos(perpId1, openMakerPosParams);

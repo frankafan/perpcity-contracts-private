@@ -53,3 +53,28 @@ run-container:
 
 test-concrete:
 	forge test --match-contract IncreaseCardinalityTest -vv
+
+coverage:
+	# apt-get install lcov
+	genhtml coverage.log  --ignore-errors unmapped --output-directory report 
+
+step-halmos:
+	mkdir -p $(HALMOS_OUTPUT_DIR)/smt
+	FOUNDRY_PROFILE=halmos halmos \
+		--contract PerpManagerHalmosTest \
+		-v \
+		--loop $(LOOP) \
+		--statistics \
+		--json-output $(HALMOS_OUTPUT_DIR)/halmos_test.json \
+		--coverage-output $(HALMOS_OUTPUT_DIR)/coverage.log \
+		--dump-smt-queries \
+		--dump-smt-directory $(HALMOS_OUTPUT_DIR)/smt \
+		--no-status \
+		--print-steps \
+		--solver z3 | tee $(HALMOS_OUTPUT_DIR)/halmos_test.log
+		# --flamegraph \
+		# --cache-solver \
+		# --ffi \
+		# --symbolic-jump \
+	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
+	make analyze DIR=$(HALMOS_OUTPUT_DIR)
