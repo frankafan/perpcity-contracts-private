@@ -26,13 +26,23 @@ import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
 import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
 
 // TODO: give a list of symbolic values assumed
+/*
+
+*/
 
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
     using PoolIdLibrary for PoolId;
+    uint256 DEBUG_SLOT;
+    uint32 DEBUG_SLOT2;
+    address DEBUG_SLOT3;
+    PoolId DEBUG_SLOT4;
+    string public message;
 
     // Constants
     uint256 public constant NUM_CALLS = 1;
+    //mapping(address => uint256) public test_balances;
+    //event LogInfo(uint256 amount, string message);
 
     // Contracts
     PoolManagerMock internal poolManagerMock;
@@ -54,7 +64,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PoolId internal perpId1;
 
     function setUp() public virtual {
-        if (false) {
+        if (true) {
             // Initialize mock contracts
             poolManagerMock = new PoolManagerMock();
             usdcMock = new ERC20Mock();
@@ -64,6 +74,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             // svm.enableSymbolicStorage(address(usdcMock));
             // svm.enableSymbolicStorage(address(beaconMock));
             // svm.enableSymbolicStorage(address(poolManagerMock));
+            // svm.enableSymbolicStorage(address(perpManagerMock));
 
             // Initialize and register modules
             _fees = new Fees();
@@ -160,6 +171,16 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         beaconMock = new OwnableBeacon(beaconOwner, initialIndexX96, initialCardinalityCap);
 
+        if (true) {
+                assembly {
+            //sstore(DEBUG_SLOT.slot, caller)
+            //sstore(DEBUG_SLOT2.slot, quantity2)
+            sstore(DEBUG_SLOT3.slot, perpCreator)
+             sstore(message.slot, "aaaae5")
+             stop()
+        }
+        }
+
         IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(
             address(beaconMock),
             _fees,
@@ -245,13 +266,38 @@ contract PerpManagerHalmosTest is SymTest, Test {
     }
 
     // Set to internal for now (skipped)
-    function check_totalPriceBuggy(uint32 quantity) public view {
-        // even this generates two paths
-        //assert(quantity == 0);
+    //function check_totalPriceBuggy(uint32 quantity) public view {
+    function check_totalPriceBuggy() internal view {
+        //test_balances[0x1111111111111111111111111111111111111111] = 100;
+        //svm.enableSymbolicStorage(address(test_balances));
+        //balance_sym = svm.createUint(256, "abhitest")
+        //test_balances[0x1111111111111111111111111111111111111110] = balance_sym;
+        // even empty code generates two paths
+        //assert(test_balances[0x1111111111111111111111111111111111111111] < 0);
     }
-    function check_vaultBalanceIntegrity_2(address caller) internal {
+    function check_vaultBalanceIntegrity_2(address _caller) public {
         // Create perp
+        if (false) {
+            assembly {
+        //sstore(DEBUG_SLOT.slot, caller)
+        //sstore(DEBUG_SLOT2.slot, quantity2)
+        sstore(DEBUG_SLOT3.slot, _caller)
+        sstore(DEBUG_SLOT4.slot, perpId1.slot)
+         sstore(message.slot, "hello")
+         stop()
+    }
+
+
+        }
         perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
+            assembly {
+        //sstore(DEBUG_SLOT.slot, caller)
+        //sstore(DEBUG_SLOT2.slot, quantity2)
+        sstore(DEBUG_SLOT3.slot, _caller)
+        sstore(DEBUG_SLOT4.slot, perpId1.slot)
+         sstore(message.slot, "eee3")
+         stop()
+    }
 
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
@@ -261,9 +307,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Initial assumptions
         vm.assume(vault != address(0));
         vm.assume(initialVaultBalance >= initialInsurance);
-        vm.assume(caller != address(0));
-        vm.assume(caller != address(perpManager));
-        vm.assume(caller != vault);
+        vm.assume(_caller != address(0));
+        vm.assume(_caller != address(perpManager));
+        vm.assume(_caller != vault);
 
         uint256 margin = svm.createUint256("maker.margin");
         uint128 liq = uint128(svm.createUint(128, "maker.liquidity"));
@@ -283,7 +329,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
                 maxAmt1In: maxAmt1
             });
 
-        vm.prank(caller);
+        vm.prank(_caller);
         perpManager.openMakerPos(perpId1, openMakerPosParams);
 
         // IPerpManager.AddMarginParams memory addMarginParams = IPerpManager.AddMarginParams({
@@ -294,9 +340,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // vm.prank(caller);
         // perpManager.addMargin(perpId1, addMarginParams);
 
-        // uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
-        // uint128 insuranceAfter = perpManager.getInsurance(perpId1);
-        // uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
+        uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
+        uint128 insuranceAfter = perpManager.getInsurance(perpId1);
+        uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
 
         // // Calculate total effective margin in open positions
         // uint256 totalEffectiveMargin = 0;

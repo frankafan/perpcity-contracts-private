@@ -69,4 +69,5 @@ ignored_error_codes = [
   solver_max_memory = 0
   loop_bound = 2
   unroll_bound = 3
-  extra_output=["storageLayout", "metadata", "evm.bytecode.sourceMap"]
+  extra_output=["storageLayout", "metadata", "evm.bytecode.sourceMap", "evm.deployedBytecode.sourceMap"]
+  extra_output_files = ["asm"]
