@@ -441,6 +441,11 @@ contract PoolManagerMock {
         return _pools[id].tickBitmap[word];
     }
 
+    /// @notice Check if a tick is initialized
+    function isTickInitialized(PoolId id, int24 tick) external view returns (bool) {
+        return _pools[id].ticks[tick].liquidityGross != 0;
+    }
+
     /* INTERNAL POOL LOGIC - Replicates Pool library with TickMathSimplified */
 
     /// @dev Check that a pool has been initialized
