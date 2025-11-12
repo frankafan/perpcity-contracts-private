@@ -1,9 +1,9 @@
 LOOP ?= 2
 TIMESTAMP := $(shell date +%m%d_%H%M%S)
-HALMOS_OUTPUT_DIR := halmos/out-$(TIMESTAMP)
+HALMOS_OUTPUT_DIR := halmos/out/$(TIMESTAMP)
 
 
-.PHONY: test-halmos test-halmos-usdc
+.PHONY: test-halmos
 
 compile:
 	FOUNDRY_PROFILE=halmos forge build
@@ -35,8 +35,9 @@ test-halmos:
 		# --cache-solver \
 		# --ffi \
 		# --symbolic-jump \
-	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	make analyze DIR=$(HALMOS_OUTPUT_DIR)
+	make coverage DIR=$(HALMOS_OUTPUT_DIR)
+	echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 
 test-halmos-timed:
 	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
@@ -44,6 +45,9 @@ test-halmos-timed:
 
 analyze:
 	python halmos/analyze_out.py $(DIR)/halmos_test.json
+
+coverage:
+	genhtml $(DIR)/coverage.log -o $(DIR)/coverage
 
 build-dockerfile:
 	cd halmos && docker build -t perpcityhalmos -f dockerfile .
