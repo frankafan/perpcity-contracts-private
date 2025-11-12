@@ -131,9 +131,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
 
         // Calculate total effective margin in open positions
         uint256 totalEffectiveMargin = 0;
-        // Only calculate effective margin if positions exist
-        if (nextPosId > 0) {
-            for (uint128 i = 0; i < nextPosId; i++) {
+        // Only calculate effective margin if positions exist (position IDs start at 1)
+        if (nextPosId > 1) {
+            for (uint128 i = 1; i < nextPosId; i++) {
                 IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
                 if (pos.holder != address(0)) {
                     // Use quoteClosePosition to get effective margin for this position
