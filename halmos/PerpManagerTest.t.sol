@@ -118,6 +118,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
+        // Setup caller balance
+        usdcMock.setBalance(caller, 1e15);
+        vm.prank(caller);
+        usdcMock.approve(address(perpManager), type(uint256).max); // approve perpManager to spend caller's USDC
+
         _callPerpManagerNTimes(selector, caller, perpId1, NUM_CALLS);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
