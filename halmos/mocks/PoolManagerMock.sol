@@ -24,7 +24,7 @@ import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 /// @notice PoolManager mock for Halmos testing - inherits real PoolManager logic with mocked TickMath
 /// @dev This mock replicates the full PoolManager and Pool logic from Uniswap v4-core
-/// @dev The ONLY difference is that TickMath is replaced with TickMathSimplified for symbolic execution
+/// @dev The main functional difference is that TickMath is replaced with TickMathSimplified for symbolic execution
 /// @dev This allows Halmos to verify the full pool management logic without the complexity of TickMath
 contract PoolManagerMock {
     using PoolIdLibrary for PoolKey;
