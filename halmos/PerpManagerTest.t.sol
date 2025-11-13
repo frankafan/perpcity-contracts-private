@@ -268,8 +268,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     }
 
     // Set to internal for now (skipped)
-    //function check_totalPriceBuggy(uint32 quantity) public view {
-    function check_totalPriceBuggy() public view {
+    function check_totalPriceBuggy(uint32 quantity) public view {
         //test_balances[0x1111111111111111111111111111111111111111] = 100;
         //svm.enableSymbolicStorage(address(test_balances));
         //balance_sym = svm.createUint(256, "abhitest")
