@@ -47,6 +47,7 @@ function check_totalPriceBuggy(uint32 quantity) public view {
 **Record**
 
 - **Q:** Which instruction generates the two paths? (Note file/line/opcode if possible.)
+- **A:** `JUMPI` instruction at PC `0x364`. Branch condition is `Concat(0x0, Extract(0x1f, 0x0, p_quantity_uint32_74c2a10_00)) == p_quantity_uint32_74c2a10_00`
 
 ---
 
