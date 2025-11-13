@@ -81,5 +81,14 @@ step-halmos:
 
 containertolocal:
 	cp /halmos/lib/python3.13/site-packages/halmos/*.py code-halmos/
+
 localtocontainer:
-	cp code-halmos/*.py /halmos/lib/python3.13/site-packages/halmos/*.py 
+	cp code-halmos/*.py /halmos/lib/python3.13/site-packages/halmos/*.py
+
+test-lab:
+	mkdir -p $(HALMOS_OUTPUT_DIR)/
+	FOUNDRY_PROFILE=halmos halmos \
+		--contract PerpManagerHalmosTest \
+		--function check_totalPriceBuggy \
+		--print-steps \
+		-v 2>&1 | tee $(HALMOS_OUTPUT_DIR)/halmos_lab_test.log
