@@ -1087,6 +1087,9 @@ def run_test(ctx: FunctionContext) -> TestResult:
         output = ex.context.output
         error_output = output.error
         panic_found = ex.is_panic_of(args.panic_error_codes)
+        
+        #ex.path.to_smt2(args)
+
 
         if panic_found or is_global_fail_set(ex.context):
             potential += 1

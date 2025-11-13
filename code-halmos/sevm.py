@@ -1315,8 +1315,8 @@ class Exec:  # an execution path
             "".join(
                 [
                     f"PC: {self.this()} {self.pc} {mnemonic(self.current_opcode())}\n",
-                    self.st.dump(print_mem=print_mem),
-                    f"\nBalance: {self.balance}\n",
+                    #self.st.dump(print_mem=print_mem),
+                    #f"\nBalance: {self.balance}\n",
                     "Storage:\n",
                     "".join(
                         map(
@@ -1324,35 +1324,35 @@ class Exec:  # an execution path
                             self.storage,
                         )
                     ),
-                    "Transient Storage:\n",
-                    "".join(
-                        map(
-                            lambda x: f"- {x}: {self.transient_storage[x]}\n",
-                            self.transient_storage,
-                        )
-                    ),
+                    #"Transient Storage:\n",
+                    #"".join(
+                    #    map(
+                    #        lambda x: f"- {x}: {self.transient_storage[x]}\n",
+                    #        self.transient_storage,
+                    #    )
+                    #),
                     f"Path:\n{self.path}",
-                    "Aliases:\n",
-                    "".join([f"- {k}: {v}\n" for k, v in self.alias.items()]),
-                    f"Output: {output.hex() if isinstance(output, bytes) else output}\n",
-                    "Balance updates:\n",
-                    "".join(
-                        map(
-                            lambda x: f"- {x}\n",
-                            sorted(self.balances.items(), key=lambda x: str(x[0])),
-                        )
-                    ),
-                    "Storage updates:\n",
-                    "".join(
-                        map(
-                            lambda x: f"- {x}\n",
-                            sorted(self.storages.items(), key=lambda x: str(x[0])),
-                        )
-                    ),
-                    "SHA3 hashes:\n",
-                    "".join(
-                        map(lambda x: f"- {self.sha3s.get_id(x)}: {x}\n", self.sha3s)
-                    ),
+                    #"Aliases:\n",
+                    #"".join([f"- {k}: {v}\n" for k, v in self.alias.items()]),
+                    #f"Output: {output.hex() if isinstance(output, bytes) else output}\n",
+                    #"Balance updates:\n",
+                    #"".join(
+                    #    map(
+                    #        lambda x: f"- {x}\n",
+                    #        sorted(self.balances.items(), key=lambda x: str(x[0])),
+                    #    )
+                    #),
+                    #"Storage updates:\n",
+                    #"".join(
+                    #    map(
+                    #        lambda x: f"- {x}\n",
+                    #        sorted(self.storages.items(), key=lambda x: str(x[0])),
+                    #    )
+                    #),
+                    #"SHA3 hashes:\n",
+                    #"".join(
+                    #    map(lambda x: f"- {self.sha3s.get_id(x)}: {x}\n", self.sha3s)
+                    #),
                 ]
             )
         )
@@ -2062,10 +2062,13 @@ class Worklist:
     completed_paths: int = 0
 
     def push(self, ex: Exec):
+        print("STACK PUSH --> new size", len(self.stack)+1)
         self.stack.append(ex)
 
     def pop(self) -> Exec | None:
         try:
+            if len(self.stack):
+                print("STACK POP --> new size", len(self.stack) -1)
             return self.stack.pop()
         except IndexError:
             return None
@@ -3121,7 +3124,16 @@ class SEVM:
                     continue
 
                 if print_steps:
+########################################
+##### ADD CODE HERE ######
+                    print('-------\n')
+                    if insn.source_file or insn.source_line:
+                        if 'PerpManagerTest.t.sol'.lower() in insn.source_file and str(insn.source_line) in ['87']:
+                            import ipdb; ipdb.set_trace()
+                        print("SRCMAP", insn.source_file, insn.source_line)
                     print(ex.dump(print_mem=print_mem))
+                    print('-------\n')
+########################################
 
                 # Reordered based on frequency data
                 if OP_PUSH1 <= opcode <= OP_PUSH31:
@@ -3214,6 +3226,7 @@ class SEVM:
                         continue
 
                     # handle symbolic conditions
+                    print(cond.as_z3(), "is the condition")
                     self.jumpi(ex, stack, target, cond)
                     continue
 

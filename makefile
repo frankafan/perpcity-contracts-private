@@ -78,3 +78,8 @@ step-halmos:
 		# --symbolic-jump \
 	@echo "Output directory: $(HALMOS_OUTPUT_DIR)"
 	make analyze DIR=$(HALMOS_OUTPUT_DIR)
+
+containertolocal:
+	cp /halmos/lib/python3.13/site-packages/halmos/*.py code-halmos/
+localtocontainer:
+	cp code-halmos/*.py /halmos/lib/python3.13/site-packages/halmos/*.py 
