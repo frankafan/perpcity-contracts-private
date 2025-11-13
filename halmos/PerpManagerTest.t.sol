@@ -172,13 +172,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
         beaconMock = new OwnableBeacon(beaconOwner, initialIndexX96, initialCardinalityCap);
 
         if (true) {
-                assembly {
-            //sstore(DEBUG_SLOT.slot, caller)
-            //sstore(DEBUG_SLOT2.slot, quantity2)
-            sstore(DEBUG_SLOT3.slot, perpCreator)
-             sstore(message.slot, "aaaae5")
-             stop()
-        }
+            assembly {
+                //sstore(DEBUG_SLOT.slot, caller)
+                //sstore(DEBUG_SLOT2.slot, quantity2)
+                sstore(DEBUG_SLOT3.slot, perpCreator)
+                sstore(message.slot, "aaaae5")
+                stop()
+            }
         }
 
         IPerpManager.CreatePerpParams memory perpParams = _createSymbolicPerpParams(
@@ -275,29 +275,28 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // even empty code generates two paths
         //assert(test_balances[0x1111111111111111111111111111111111111111] < 0);
     }
+
     function check_vaultBalanceIntegrity_2(address _caller) public {
         // Create perp
         if (false) {
             assembly {
-        //sstore(DEBUG_SLOT.slot, caller)
-        //sstore(DEBUG_SLOT2.slot, quantity2)
-        sstore(DEBUG_SLOT3.slot, _caller)
-        sstore(DEBUG_SLOT4.slot, perpId1.slot)
-         sstore(message.slot, "hello")
-         stop()
-    }
-
-
+                //sstore(DEBUG_SLOT.slot, caller)
+                //sstore(DEBUG_SLOT2.slot, quantity2)
+                sstore(DEBUG_SLOT3.slot, _caller)
+                sstore(DEBUG_SLOT4.slot, perpId1.slot)
+                sstore(message.slot, "hello")
+                stop()
+            }
         }
         perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
-            assembly {
-        //sstore(DEBUG_SLOT.slot, caller)
-        //sstore(DEBUG_SLOT2.slot, quantity2)
-        sstore(DEBUG_SLOT3.slot, _caller)
-        sstore(DEBUG_SLOT4.slot, perpId1.slot)
-         sstore(message.slot, "eee3")
-         stop()
-    }
+        assembly {
+            //sstore(DEBUG_SLOT.slot, caller)
+            //sstore(DEBUG_SLOT2.slot, quantity2)
+            sstore(DEBUG_SLOT3.slot, _caller)
+            sstore(DEBUG_SLOT4.slot, perpId1.slot)
+            sstore(message.slot, "eee3")
+            stop()
+        }
 
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
@@ -321,13 +320,13 @@ contract PerpManagerHalmosTest is SymTest, Test {
         // Assumptions
         vm.assume(margin > 0);
         IPerpManager.OpenMakerPositionParams memory openMakerPosParams = IPerpManager.OpenMakerPositionParams({
-                margin: margin,
-                liquidity: liq,
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                maxAmt0In: maxAmt0,
-                maxAmt1In: maxAmt1
-            });
+            margin: margin,
+            liquidity: liq,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            maxAmt0In: maxAmt0,
+            maxAmt1In: maxAmt1
+        });
 
         vm.prank(_caller);
         perpManager.openMakerPos(perpId1, openMakerPosParams);
