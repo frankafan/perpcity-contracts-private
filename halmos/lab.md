@@ -47,7 +47,8 @@ function check_totalPriceBuggy(uint32 quantity) public view {
 **Record**
 
 - **Q:** Which instruction generates the two paths? (Note file/line/opcode if possible.)
-- **A:** `JUMPI` instruction at PC `0x364`. Branch condition is `Concat(0x0, Extract(0x1f, 0x0, p_quantity_uint32_74c2a10_00)) == p_quantity_uint32_74c2a10_00`
+- **A:** `JUMPI` instruction at PC `0x364`. Branch condition is
+  `Concat(0x0, Extract(0x1f, 0x0, p_quantity_uint32_74c2a10_00)) == p_quantity_uint32_74c2a10_00`
 
 ---
 
@@ -200,15 +201,3 @@ function check_totalPriceBuggy() public view {
   1. **Storage write** to a known slot (numeric),
   2. **Event** emit (cleanest for human-readable),
   3. **Revert with data** (air-quotes “printf via revert”).
-
----
-
-### Results worksheet (fill as you go)
-
-- Part 1: instruction causing 2 paths → **************\_\_**************
-- Part 2: `assert` effect on path condition → **********\_\_\_\_**********
-- Part 3: `vm.assume` effect → ******************\_\_\_\_******************
-- Part 5: concrete `val` effect → ****************\_\_\_\_****************
-- Part 6: print number → ****\_\_**** ; print string → ****\_\_**** ; stop → ****\_\_****
-- Part 7: symbolic conditions from `setUp()` → **********\_\_\_\_**********
-- Part 8: symbolic conditions from `_createPerp()` → ********\_\_********
