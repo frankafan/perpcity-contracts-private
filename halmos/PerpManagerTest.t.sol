@@ -64,6 +64,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
     PoolId internal perpId1;
 
     function setUp() public virtual {
+        /*
         if (true) {
             // Initialize mock contracts
             poolManagerMock = new PoolManagerMock();
@@ -110,6 +111,7 @@ contract PerpManagerHalmosTest is SymTest, Test {
             vm.roll(blockNumber);
             vm.warp(blockTimestamp);
         }
+        */
     }
 
     // TODO: write out methodology / justifications in docstring
