@@ -2,13 +2,8 @@
 pragma solidity 0.8.30;
 
 interface IERC20 {
-    /* EVENTS */
-
     event Transfer(address indexed from, address indexed to, uint256 value);
-
     event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    /* FUNCTIONS */
 
     function totalSupply() external view returns (uint256);
 
@@ -23,8 +18,6 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
-// TODO: add justification - taken from morpho-blue
-// TODO: try using Solady ERC20
 contract ERC20Mock is IERC20 {
     uint256 public totalSupply;
 

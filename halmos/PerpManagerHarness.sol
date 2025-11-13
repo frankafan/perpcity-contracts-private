@@ -17,7 +17,6 @@ contract PerpManagerHarness is PerpManager {
         return states[perpId].insurance;
     }
 
-    // XXX: optional because configs is public
     function getVault(PoolId perpId) external view returns (address) {
         return configs[perpId].vault;
     }
@@ -31,7 +30,6 @@ contract PerpManagerHarness is PerpManager {
     }
 
     function getNetMargin(PoolId perpId, uint128 posId) external returns (bool success, uint256 netMargin) {
-        // Create close params with minimal restrictions to avoid reverts
         ClosePositionParams memory params = ClosePositionParams({
             posId: posId,
             minAmt0Out: 0,
@@ -39,19 +37,13 @@ contract PerpManagerHarness is PerpManager {
             maxAmt1In: type(uint128).max
         });
 
-        // First, quote the close by calling with revertChanges=true
-        // This will revert with Quoter.CloseQuote containing the netMargin
         try PerpLogic.closePosition(configs[perpId], states[perpId], POOL_MANAGER, USDC, params, true) {
-            // Should always revert when revertChanges=true
             return (false, 0);
         } catch (bytes memory reason) {
-            // Parse the revert reason to extract netMargin and other values
             int256 pnl;
             int256 funding;
             bool wasLiquidated;
 
-            // TODO: try to just read net margin from the perp directly before and after actually closing the position
-            // TODO: use the emitted event from new position to get the margin - use getRecordedLogs
             (success, pnl, funding, netMargin, wasLiquidated) = Quoter.parseClose(reason);
 
             if (!success) {

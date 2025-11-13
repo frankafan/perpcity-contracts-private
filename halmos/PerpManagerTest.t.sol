@@ -22,10 +22,7 @@ import {PerpManagerHarness} from "./PerpManagerHarness.sol";
 // Mocks
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PoolManagerMock} from "./mocks/PoolManagerMock.sol";
-// import {PoolManagerMock} from "./mocks/PoolManagerMockSimplified.sol";
 import {OwnableBeacon} from "../src/beacons/ownable/OwnableBeacon.sol";
-
-// TODO: give a list of symbolic values assumed
 
 /// @custom:halmos --solver-timeout-assertion 0
 contract PerpManagerHalmosTest is SymTest, Test {
@@ -59,24 +56,17 @@ contract PerpManagerHalmosTest is SymTest, Test {
         usdcMock = new ERC20Mock();
         perpManager = new PerpManagerHarness(IPoolManager(address(poolManagerMock)), address(usdcMock));
 
-        // Create symbolic storage
-        // svm.enableSymbolicStorage(address(usdcMock));
-        // svm.enableSymbolicStorage(address(beaconMock));
-        // svm.enableSymbolicStorage(address(poolManagerMock));
-
         // Initialize and register modules
         _fees = new Fees();
         _marginRatios = new MarginRatios();
         _lockup = new Lockup();
         _sqrtPriceImpactLimit = new SqrtPriceImpactLimit();
 
-        // TODO: make sure the rest also aligns with the current version PerpManager
         perpManager.registerFeesModule(_fees);
         perpManager.registerMarginRatiosModule(_marginRatios);
         perpManager.registerLockupPeriodModule(_lockup);
         perpManager.registerSqrtPriceImpactLimitModule(_sqrtPriceImpactLimit);
 
-        // TODO: try with concrete vs symbolic and see if the number of paths is different
         // Create symbolic addresses for test actors
         creator = svm.createAddress("creator");
         beaconOwner = svm.createAddress("beacon.owner");
@@ -86,7 +76,6 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(creator != address(perpManager));
         vm.assume(beaconOwner != address(0));
 
-        // TODO: remove if possible
         // Set symbolic block number and timestamp
         uint256 blockNumber = svm.createUint(32, "block.number");
         uint256 blockTimestamp = svm.createUint(32, "block.timestamp");
@@ -99,12 +88,9 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.warp(blockTimestamp);
     }
 
-    // TODO: write out methodology / justifications in docstring
     function check_vaultBalanceIntegrity(bytes4 selector, address caller) public {
-        // TODO: verify the function arguments are symbolic
-
         // Create perp
-        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
+        perpId1 = _createPerp(creator);
 
         (, , address vault, , , , , ) = perpManager.configs(perpId1);
 
@@ -118,28 +104,20 @@ contract PerpManagerHalmosTest is SymTest, Test {
         vm.assume(caller != address(perpManager));
         vm.assume(caller != vault);
 
-        // Setup caller balance
-        usdcMock.setBalance(caller, 1e15);
-        vm.prank(caller);
-        usdcMock.approve(address(perpManager), type(uint256).max); // approve perpManager to spend caller's USDC
-
         _callPerpManagerNTimes(selector, caller, perpId1, NUM_CALLS);
 
         uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
         uint128 insuranceAfter = perpManager.getInsurance(perpId1);
-        uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
+        uint128 nextPosId = perpManager.getNextPosId(perpId1);
 
         // Calculate total effective margin in open positions
         uint256 totalEffectiveMargin = 0;
-        // Only calculate effective margin if positions exist (position IDs start at 1)
         if (nextPosId > 1) {
             for (uint128 i = 1; i < nextPosId; i++) {
                 IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
                 if (pos.holder != address(0)) {
-                    // Use quoteClosePosition to get effective margin for this position
                     (bool success, uint256 netMargin) = perpManager.getNetMargin(perpId1, i);
                     if (!success) {
-                        // XXX: bug if valid position cannot be quoted
                         assert(false);
                     }
                     totalEffectiveMargin += netMargin;
@@ -148,11 +126,8 @@ contract PerpManagerHalmosTest is SymTest, Test {
         }
 
         // Invariant
-        // TODO: print and verify these are all symbolic
         assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
     }
-
-    /* HELPER FUNCTIONS */
 
     /// @notice Create symbolic perp
     /// @param perpCreator Address creating the perp
@@ -250,67 +225,11 @@ contract PerpManagerHalmosTest is SymTest, Test {
             });
     }
 
-    // Set to internal for now (skipped)
-    function check_vaultBalanceIntegrity_2(address caller) internal {
-        // Create perp
-        perpId1 = _createPerp(creator); // TODO: document that we assume independence of markets / market fungible
-
-        (, , address vault, , , , , ) = perpManager.configs(perpId1);
-
-        uint128 initialInsurance = perpManager.getInsurance(perpId1);
-        uint256 initialVaultBalance = usdcMock.balanceOf(vault);
-
-        // Initial assumptions
-        vm.assume(vault != address(0));
-        vm.assume(initialVaultBalance >= initialInsurance);
-        vm.assume(caller != address(0));
-        vm.assume(caller != address(perpManager));
-        vm.assume(caller != vault);
-
-        IPerpManager.OpenMakerPositionParams memory openMakerPosParams = _createSymbolicMakerParams();
-
-        vm.prank(caller);
-        perpManager.openMakerPos(perpId1, openMakerPosParams);
-
-        // IPerpManager.AddMarginParams memory addMarginParams = IPerpManager.AddMarginParams({
-        //     posId: uint128(svm.createUint(128, "posId")),
-        //     amtToAdd: svm.createUint256("addMarginAmount")
-        // });
-
-        // vm.prank(caller);
-        // perpManager.addMargin(perpId1, addMarginParams);
-
-        // uint256 vaultBalanceAfter = usdcMock.balanceOf(vault);
-        // uint128 insuranceAfter = perpManager.getInsurance(perpId1);
-        // uint128 nextPosId = perpManager.getNextPosId(perpId1); // TODO: verify if this always gives open position
-
-        // // Calculate total effective margin in open positions
-        // uint256 totalEffectiveMargin = 0;
-        // for (uint128 i = 0; i < nextPosId; i++) {
-        //     IPerpManager.Position memory pos = perpManager.getPosition(perpId1, i);
-        //     if (pos.holder != address(0)) {
-        //         // Use quoteClosePosition to get effective margin for this position
-        //         (bool success, uint256 netMargin) = perpManager.getNetMargin(perpId1, i);
-        //         if (!success) {
-        //             // XXX: bug if valid position cannot be quoted
-        //             assert(false);
-        //         }
-        //         totalEffectiveMargin += netMargin;
-        //     }
-        // }
-
-        // // Invariant
-        // assert(vaultBalanceAfter >= totalEffectiveMargin + insuranceAfter);
-    }
-
     /// @notice Call PerpManager with symbolic arguments
     /// @param selector Function selector to call
     /// @param caller Address to call from
     /// @param perpId Perp ID to use
     function _callPerpManager(bytes4 selector, address caller, PoolId perpId) internal {
-        // Limit the functions tested
-        // TODO: document that these are entry points
-        // TODO: check vault balance integrity by only calling one entry point one time manually - the sum of all should be the same as calling callPerpManager once
         vm.assume(
             selector == perpManager.openMakerPos.selector ||
                 selector == perpManager.openTakerPos.selector ||
